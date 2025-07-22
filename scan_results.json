@@ -1,92 +1,22 @@
 [
   {
-    "ticker": "ADI",
+    "ticker": "AGIO",
     "strategy": "momentum",
-    "score": 71.19783728862761
-  },
-  {
-    "ticker": "AAOI",
-    "strategy": "hypergrowth",
-    "score": 100.0
+    "score": 79.74691731139771
   },
   {
     "ticker": "ADSK",
     "strategy": "momentum",
-    "score": 65.72721523990197
-  },
-  {
-    "ticker": "AEVA",
-    "strategy": "momentum",
-    "score": 84.52191235059759
-  },
-  {
-    "ticker": "AAPU",
-    "strategy": "momentum",
-    "score": 81.48550724637683
-  },
-  {
-    "ticker": "ABVX",
-    "strategy": "hypergrowth",
-    "score": 79.1762375
-  },
-  {
-    "ticker": "ABEO",
-    "strategy": "momentum",
-    "score": 76.47222222222223
-  },
-  {
-    "ticker": "AAON",
-    "strategy": "momentum",
-    "score": 76.23107643726199
-  },
-  {
-    "ticker": "ACHC",
-    "strategy": "momentum",
-    "score": 67.16852540272616
+    "score": 79.50701015095353
   },
   {
     "ticker": "AAL",
-    "strategy": "hypergrowth",
-    "score": 86.28229363579081
-  },
-  {
-    "ticker": "ACWI",
     "strategy": "momentum",
-    "score": 70.13449727787163
+    "score": 78.75043452321209
   },
   {
-    "ticker": "ADTN",
+    "ticker": "ADI",
     "strategy": "momentum",
-    "score": 86.59949622166246
-  },
-  {
-    "ticker": "AGEN",
-    "strategy": "hypergrowth",
-    "score": 100.0
-  },
-  {
-    "ticker": "ABNB",
-    "strategy": "momentum",
-    "score": 71.32897026556708
-  },
-  {
-    "ticker": "AAPL",
-    "strategy": "momentum",
-    "score": 73.66483535117169
-  },
-  {
-    "ticker": "ACLX",
-    "strategy": "momentum",
-    "score": 42.86217396166301
-  },
-  {
-    "ticker": "AGIO",
-    "strategy": "momentum",
-    "score": 61.51610989436621
-  },
-  {
-    "ticker": "ACWX",
-    "strategy": "momentum",
-    "score": 60.876615233676375
+    "score": 77.76087537141021
   }
 ]
