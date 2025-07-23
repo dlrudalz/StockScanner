@@ -30,6 +30,17 @@ VolatilityRegime = Literal["low_vol", "medium_vol", "high_vol"]
 class Debugger:
     """Enhanced centralized debugging functionality with better control"""
     
+    # Terminal formatting codes
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+    END = '\033[0m'
+    
     def __init__(self, enabled: bool = False, level: str = "INFO", log_file: Optional[str] = None):
         self.enabled = enabled
         self.level = self._validate_level(level.upper())
@@ -91,46 +102,48 @@ class Debugger:
         self.log(message, "DEBUG")
         
     def info(self, message: str):
+        print(self.BLUE + message + self.END)
         self.log(message, "INFO")
         
     def warning(self, message: str):
+        print(self.YELLOW + message + self.END)
         self.log(message, "WARNING")
         
     def error(self, message: str):
+        print(self.RED + message + self.END)
         self.log(message, "ERROR")
         
     def critical(self, message: str):
+        print(self.RED + self.BOLD + message + self.END)
         self.log(message, "CRITICAL")
         
+    def success(self, message: str):
+        print(self.GREEN + message + self.END)
+        self.log(message, "INFO")
+        
+    def section(self, title: str):
+        """Print a section header with formatting"""
+        print(f"\n{self.BOLD}{self.UNDERLINE}{title.upper()}{self.END}")
+        
+    def table(self, headers: List[str], rows: List[List[str]], col_widths: Optional[List[int]] = None):
+        """Print formatted table output"""
+        if not rows:
+            return
+            
+        if col_widths is None:
+            col_widths = [max(len(str(row[i])) for row in rows + [headers]) for i in range(len(headers))]
+        
+        # Print headers
+        header_str = "  ".join(str(h).ljust(w) for h, w in zip(headers, col_widths))
+        print(self.CYAN + header_str + self.END)
+        
+        # Print rows
+        for row in rows:
+            print("  ".join(str(col).ljust(w) for col, w in zip(row, col_widths)))
+            
     def exception(self, message: str):
         if self._should_log("ERROR"):
             self.logger.exception(message)
-            
-    def log_dataframe(self, df: pd.DataFrame, message: str = "", level: str = "DEBUG"):
-        if not self._should_log(level):
-            return
-            
-        if message:
-            self.log(message, level)
-            
-        buf = io.StringIO()
-        df.info(buf=buf)
-        self.log("\n" + buf.getvalue(), level)
-        
-        if len(df) <= 10:
-            self.log("\n" + str(df), level)
-        else:
-            self.log(f"\nFirst 5 rows:\n{df.head()}\n\nLast 5 rows:\n{df.tail()}", level)
-            
-    def log_dict(self, data: dict, message: str = "", level: str = "DEBUG"):
-        if not self._should_log(level):
-            return
-            
-        if message:
-            self.log(message, level)
-            
-        formatted = json.dumps(data, indent=2, default=str)
-        self.log(f"\n{formatted}", level)
 
 class NASDAQTraderFTP:
     """Class to handle NASDAQ Trader FTP operations for ticker data"""
@@ -1025,14 +1038,15 @@ class StockScanner:
                     "max_price": 500.00,
                     "min_market_cap": 300_000_000,
                     "min_revenue_growth": 0.25,
-                    "min_fcf_margin": 0.05,  # Minimum FCF Margin ≥ 5%
-                    "min_rule_of_40": 40,    # Rule of 40 (Revenue Growth + FCF Margin ≥ 40%)
-                    "max_cac_payback": 12,    # CAC Payback < 12 months
-                    "min_institutional_buys": 0.05,  # Institutional Net Buys (13F) > 5%
+                    "min_fcf_margin": 0.05,
+                    "min_rule_of_40": 40,
+                    "max_cac_payback": 12,
+                    "min_institutional_buys": 0.05,
                     "min_volume_ratio": 1.5,
                     "min_price_relative": 1.1,
                     "min_momentum": 0.10,
                     "max_volatility": 0.40,
+                    "min_volatility": 0.05,
                     "momentum_days": 30,
                     "min_relative_strength": 1.1,
                     "days_to_scan": 90,
@@ -1050,12 +1064,13 @@ class StockScanner:
                     "min_price": 5.00,
                     "max_price": 500.00,
                     "min_market_cap": 300_000_000,
-                    "min_adx": 30,  # ADX ≥ 30 (from 25)
-                    "min_positive_earnings_revisions": 2,  # ≥2 Positive Earnings Revisions (30D)
-                    "max_sector_correlation": 0.6,  # Sector Correlation < 0.6
-                    "volume_condition": "10D MA > 20D MA",  # Volume 10D MA > 20D MA
+                    "min_adx": 30,
+                    "min_positive_earnings_revisions": 2,
+                    "max_sector_correlation": 0.6,
+                    "volume_condition": "10D MA > 20D MA",
                     "min_trend_duration": 60,
                     "max_volatility": 0.30,
+                    "min_volatility": 0.05,
                     "momentum_days": 30,
                     "min_relative_strength": 1.1,
                     "days_to_scan": 90,
@@ -1073,12 +1088,14 @@ class StockScanner:
                     "min_price": 5.00,
                     "max_price": 300.00,
                     "min_market_cap": 300_000_000,
-                    "min_short_interest": 0.15,  # Short Interest > 15% Float
-                    "min_institutional_volume_spike": 3,  # Institutional Volume Spike (3x normal)
+                    "min_short_interest": 0.15,
+                    "min_institutional_volume_spike": 3,
                     "consolidation_days": 10,
                     "max_consolidation": 0.10,
-                    "min_prebreakout_rs": 1.2,  # Pre-Breakout Relative Strength > 1.2
+                    "min_prebreakout_rs": 1.2,
                     "min_volume_ratio": 1.5,
+                    "min_volatility": 0.05,
+                    "max_volatility": 0.30,
                     "momentum_days": 30,
                     "min_relative_strength": 1.1,
                     "days_to_scan": 90,
@@ -1156,7 +1173,7 @@ class StockScanner:
 
         # Step 1: Lightweight prefilter (no scoring)
         self.debugger.info("Running prefilter scan...")
-        self.prefiltered_tickers = await self._run_prefilter_scan()  # Store as instance variable
+        self.prefiltered_tickers = await self._run_prefilter_scan()
         
         if not self.prefiltered_tickers:
             self.debugger.warning("No stocks passed prefilter")
@@ -1174,7 +1191,7 @@ class StockScanner:
         self._normalize_scores()
         
         # Step 4: Resolve strategy overlaps with enhanced hybrid detection
-        self._resolve_strategy_overlaps()
+        await self._resolve_strategy_overlaps()  # Now using await
         
         # Step 5: Balance allocations based on normalized scores
         self._balance_strategy_allocations()
@@ -1208,7 +1225,7 @@ class StockScanner:
         for stock in self.scan_results:
             stock['normalized_score'] = ((stock['score'] - min_score) / score_range * 100)
 
-    def _resolve_strategy_overlaps(self):
+    async def _resolve_strategy_overlaps(self):
         """Enhanced hybrid candidate detection system with strategy dominance assessment"""
         if not self.scan_results:
             return
@@ -1233,13 +1250,13 @@ class StockScanner:
         for ticker in self.hybrid_candidates:
             strategies = ticker_strategies[ticker]
             
-            # Get dominance assessment
-            dominant_strategy = self._assess_strategy_dominance(ticker, strategies)
+            # Get dominance assessment - now using await
+            dominant_strategy = await self._assess_strategy_dominance(ticker, strategies)
             
             if dominant_strategy:
                 # Remove all other strategy entries for this ticker
                 self.scan_results = [s for s in self.scan_results 
-                                   if s['ticker'] != ticker or s['strategy'] == dominant_strategy]
+                                if s['ticker'] != ticker or s['strategy'] == dominant_strategy]
                 self.strategy_assignments.append({
                     'ticker': ticker,
                     'original_strategies': [s['strategy'] for s in strategies],
@@ -1250,13 +1267,13 @@ class StockScanner:
         
         self.debugger.info("Completed strategy overlap resolution")
 
-    def _assess_strategy_dominance(self, ticker: str, strategies: List[Dict]) -> Optional[str]:
+    async def _assess_strategy_dominance(self, ticker: str, strategies: List[Dict]) -> Optional[str]:
         """Strategy dominance assessment function with multiple factors"""
         if len(strategies) == 1:
             return strategies[0]['strategy']
             
-        # Get market regime info
-        trend_regime, vol_regime = asyncio.run(self.regime_detector.get_current_regime())
+        # Get market regime info - using await instead of asyncio.run()
+        trend_regime, vol_regime = await self.regime_detector.get_current_regime()
         
         strategy_scores = {}
         for s in strategies:
@@ -1394,10 +1411,11 @@ class StockScanner:
         bar = '█' * filled + ' ' * (bar_length - filled)
         
         progress_line = (
-            f"[{datetime.now().strftime('%H:%M:%S')}] "
-            f"Prefiltering: {bar} {progress:.0%} ({current}/{total}) | "
-            f"Speed: {rate:.1f} tickers/sec | "
-            f"ETA: {timedelta(seconds=int(remaining))}"
+            f"{self.debugger.BLUE}[{datetime.now().strftime('%H:%M:%S')}] "
+            f"Prefiltering:{self.debugger.END} {bar} {progress:.0%} "
+            f"({current}/{total}) | "
+            f"{self.debugger.YELLOW}Speed:{self.debugger.END} {rate:.1f} tickers/sec | "
+            f"{self.debugger.CYAN}ETA:{self.debugger.END} {timedelta(seconds=int(remaining))}"
         )
         
         # Use \r to return to start of line and overwrite
@@ -1417,7 +1435,11 @@ class StockScanner:
         batch_size = 50
         start_time = time.time()
         
-        print(f"\n[Starting prefilter scan of {len(self.tickers_to_scan)} tickers]")
+        self.debugger.section("Starting Prefilter Scan")
+        self.debugger.info(f"Scanning {len(self.tickers_to_scan)} tickers with criteria:")
+        self.debugger.info(f"Min Volume: {prefilter_criteria['min_avg_volume']:,} | "
+                         f"Max Price: ${prefilter_criteria['max_price']:,.2f} | "
+                         f"Min Days: {prefilter_criteria['min_days_data']}")
         
         for i in range(0, len(self.tickers_to_scan), batch_size):
             batch = self.tickers_to_scan[i:i + batch_size]
@@ -1430,10 +1452,10 @@ class StockScanner:
             self._print_progress(i + batch_size, len(self.tickers_to_scan), start_time)
         
         # Clear the progress line when done
-        sys.stdout.write('\r' + ' ' * 100 + '\r')
+        sys.stdout.write('\r' + ' ' * 120 + '\r')
         sys.stdout.flush()
         
-        self.debugger.info(f"Prefilter complete. {len(prefiltered)} tickers passed initial screening")
+        self.debugger.success(f"\nPrefilter complete. {len(prefiltered)} tickers passed initial screening")
         return prefiltered
 
     async def _check_prefilter_criteria(self, ticker: str, criteria: Dict) -> bool:
@@ -1457,12 +1479,28 @@ class StockScanner:
         base_criteria = await self.regime_detector.get_scan_criteria()
         criteria = self._get_strategy_criteria(strategy_name, base_criteria)
         
-        self.debugger.info(f"Scanning for {strategy_name} with criteria: {criteria}")
+        self.debugger.info(f"\n{self.debugger.BOLD}Scanning for {strategy_name.upper()}{self.debugger.END}")
+        self.debugger.info(f"Criteria: {', '.join(f'{k}={v}' for k,v in criteria.items() if not isinstance(v, list))}")
         
         strategy_results = []
         batch_size = 50
         
-        with tqdm(total=len(prefiltered_tickers), desc=f"Scanning {strategy_name}") as pbar:
+        # Create a custom progress bar format
+        bar_format = (
+            f"{self.debugger.BLUE}{{desc}}:{self.debugger.END} "
+            f"{self.debugger.CYAN}{{percentage:3.0f}}%{self.debugger.END} |"
+            f"{self.debugger.GREEN}{{bar}}{self.debugger.END}| "
+            f"{self.debugger.YELLOW}{{n_fmt}}/{{total_fmt}}{self.debugger.END} "
+            f"[{{elapsed}}<{{remaining}}, {{rate_fmt}}]"
+        )
+        
+        with tqdm(
+            total=len(prefiltered_tickers),
+            desc=f"{strategy_name[:10]:<10}",
+            bar_format=bar_format,
+            colour='green',
+            ncols=100
+        ) as pbar:
             for i in range(0, len(prefiltered_tickers), batch_size):
                 batch = prefiltered_tickers[i:i + batch_size]
                 tasks = [self._scan_single_ticker(ticker, criteria, strategy_name) 
@@ -1482,9 +1520,15 @@ class StockScanner:
                         strategy_results.append(result)
                 
                 pbar.update(len(batch))
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.1)  # Small delay to prevent rate limiting
         
+        self.debugger.success(f"\nCompleted {strategy_name.upper()} scan: Found {len(strategy_results)} candidates")
         self.scan_results.extend(strategy_results)
+
+    def _log_rejection(self, ticker: str, reason: str):
+        """Track why tickers are being rejected from consideration"""
+        self.rejection_stats[reason] += 1
+        self.debugger.debug(f"Rejected {ticker}: {reason}")
 
     def _get_strategy_criteria(self, strategy: str, base_criteria: Dict) -> Dict:
         strategy_criteria = base_criteria.copy()
@@ -1824,59 +1868,89 @@ class StockScanner:
 
     def print_summary(self):
         if not self.scan_results:
-            self.debugger.info("No qualifying stocks found")
+            self.debugger.warning("No qualifying stocks found")
             return
             
-        self.debugger.info("\nStrategy Allocation:")
-        self.debugger.info("-------------------")
+        self.debugger.section("Strategy Allocation Summary")
         counts = defaultdict(int)
         for stock in self.scan_results:
             counts[stock['strategy']] += 1
             
+        alloc_rows = []
         for strategy, config in self.strategy_config.items():
             count = counts.get(strategy, 0)
             pct = (count / len(self.scan_results)) * 100
-            self.debugger.info(f"{strategy.upper():<12}: {count:>3} stocks ({pct:.1f}%)")
+            alloc_rows.append([
+                strategy.upper(),
+                str(count),
+                f"{pct:.1f}%",
+                f"{config['allocation'][0]*100:.0f}-{config['allocation'][1]*100:.0f}%"
+            ])
+            
+        self.debugger.table(
+            ["Strategy", "Count", "Actual %", "Target Range"],
+            alloc_rows,
+            col_widths=[12, 8, 10, 12]
+        )
         
         if self.hybrid_candidates:
-            self.debugger.info("\nStrategy Overlap Resolution:")
-            self.debugger.info("---------------------------")
+            self.debugger.section("Strategy Overlap Resolution")
+            overlap_rows = []
             for assignment in self.strategy_assignments:
                 orig = ", ".join(assignment['original_strategies'])
-                self.debugger.info(f"{assignment['ticker']}: {orig} → {assignment['final_strategy']}")
+                overlap_rows.append([
+                    assignment['ticker'],
+                    orig,
+                    assignment['final_strategy'],
+                    assignment['dominance_reason']
+                ])
+                
+            self.debugger.table(
+                ["Ticker", "Original", "Final", "Reason"],
+                overlap_rows,
+                col_widths=[8, 20, 12, 50]
+            )
         
         for strategy in self.strategy_config.keys():
             strategy_stocks = [s for s in self.scan_results if s['strategy'] == strategy]
             if not strategy_stocks:
                 continue
                 
-            self.debugger.info(f"\nTop {strategy.upper()} Candidates:")
-            self.debugger.info("----------------------")
-            headers = ["Ticker", "Price", "Score", "Momentum", "Volatility", "Patterns"]
-            self.debugger.info("{:<6} {:<8} {:<6} {:<9} {:<10} {}".format(*headers))
+            self.debugger.section(f"Top {strategy.upper()} Candidates")
             
-            for stock in sorted(strategy_stocks, key=lambda x: x['normalized_score'], reverse=True)[:10]:
-                self.debugger.info(
-                    f"{stock['ticker']:<6} "
-                    f"${stock['data']['c'].iloc[-1]:>7.2f} "
-                    f"{stock['normalized_score']:>5.1f} "
-                    f"{stock['indicators']['momentum']:>8.1f}% "
-                    f"{stock['indicators']['volatility']:>9.2f}% "
-                    f"{', '.join(stock['patterns'])}"
-                )
-
-    def _log_rejection(self, ticker: str, reason: str):
-        self.rejection_stats[reason] += 1
-        self.debugger.debug(f"Rejected {ticker}: {reason}")
+            top_stocks = sorted(strategy_stocks, key=lambda x: x['normalized_score'], reverse=True)[:10]
+            stock_rows = []
+            for stock in top_stocks:
+                stock_rows.append([
+                    stock['ticker'],
+                    f"${stock['data']['c'].iloc[-1]:.2f}",
+                    f"{stock['normalized_score']:.1f}",
+                    f"{stock['indicators']['momentum']:.1f}%",
+                    f"{stock['indicators']['volatility']:.2f}%",
+                    ", ".join(stock['patterns'])
+                ])
+                
+            self.debugger.table(
+                ["Ticker", "Price", "Score", "Momentum", "Volatility", "Patterns"],
+                stock_rows,
+                col_widths=[8, 10, 8, 12, 12, 30]
+            )
 
     def print_rejection_summary(self):
         if not self.rejection_stats:
             return
             
-        self.debugger.info("\nRejection Reasons:")
-        self.debugger.info("-----------------")
+        self.debugger.section("Rejection Reasons")
+        
+        reject_rows = []
         for reason, count in sorted(self.rejection_stats.items(), key=lambda x: -x[1]):
-            self.debugger.info(f"{count:>5} | {reason}")
+            reject_rows.append([str(count), reason])
+            
+        self.debugger.table(
+            ["Count", "Reason"],
+            reject_rows,
+            col_widths=[8, 60]
+        )
 
 class FixedHypergrowthStrategy(Strategy):
     def init(self):
@@ -2185,34 +2259,102 @@ async def optimize_hypergrowth_params(df: pd.DataFrame):
     
     return best_params, best_score
 
-async def main():
+async def main(strategies_to_run: Optional[List[str]] = None):
+    """Run the stock scanner with selected strategies.
+    
+    Args:
+        strategies_to_run: List of strategy names to run. 
+                          None or empty list runs all strategies.
+                          Valid options: 'hypergrowth', 'momentum', 'breakout'
+    """
     POLYGON_API_KEY = "OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z"
+    debugger = Debugger(enabled=True)
     
-    # Initialize debugger with logging disabled
-    debugger = Debugger(enabled=False)
-    # Or alternatively, only show warnings and errors:
-    # debugger = Debugger(enabled=True, level="WARNING")
-    
-    async with AsyncPolygonIOClient(POLYGON_API_KEY, debugger) as client:
-        scanner = StockScanner(client, debugger, max_tickers_to_scan=None)
-        
-        if not await scanner.initialize():
-            debugger.error("Scanner initialization failed")
-            return
+    try:
+        async with AsyncPolygonIOClient(POLYGON_API_KEY, debugger) as client:
+            scanner = StockScanner(client, debugger, max_tickers_to_scan=100)
             
-        regime = await scanner.regime_detector.get_regime_description()
-        debugger.info(f"\nCurrent Market Regime:\n{json.dumps(regime, indent=2)}")
-        
-        await scanner.scan_tickers()
-        
-        if scanner.scan_results:
-            with open('scan_results.json', 'w') as f:
-                json.dump([{
-                    'ticker': r['ticker'],
-                    'strategy': r['strategy'],
-                    'score': r['normalized_score']
-                } for r in scanner.scan_results], f, indent=2)
+            # Initialize scanner
+            if not await scanner.initialize():
+                debugger.error("Scanner initialization failed")
+                return
+                
+            # Set which strategies to run (default to all)
+            if not strategies_to_run:
+                strategies_to_run = list(scanner.strategy_config.keys())
+                debugger.info("Running ALL strategies")
+            else:
+                # Convert to lowercase and validate
+                strategies_to_run = [s.lower() for s in strategies_to_run]
+                valid_strategies = []
+                
+                for strategy in strategies_to_run:
+                    if strategy in scanner.strategy_config:
+                        valid_strategies.append(strategy)
+                    else:
+                        debugger.warning(f"Ignoring unknown strategy: {strategy}")
+                
+                if not valid_strategies:
+                    debugger.error("No valid strategies to run")
+                    return
+                    
+                strategies_to_run = valid_strategies
+                debugger.info(f"Running SELECTED strategies: {', '.join(strategies_to_run)}")
+            
+            # Run prefilter scan
+            scanner.prefiltered_tickers = await scanner._run_prefilter_scan()
+            if not scanner.prefiltered_tickers:
+                debugger.warning("No stocks passed prefilter")
+                return
+            
+            # Run only the selected strategy scans
+            scan_tasks = [
+                scanner._scan_for_strategy(strategy, scanner.prefiltered_tickers)
+                for strategy in strategies_to_run
+            ]
+            await asyncio.gather(*scan_tasks)
+            
+            # Process results (unchanged)
+            scanner._normalize_scores()
+            await scanner._resolve_strategy_overlaps()
+            scanner._balance_strategy_allocations()
+            
+            if scanner.scan_results:
+                debugger.success(f"\nScan complete! Found {len(scanner.scan_results)} qualifying stocks")
+                
+                # Save results with strategy info in filename
+                results_file = f"scan_results_{'_'.join(strategies_to_run)}.json"
+                with open(results_file, 'w') as f:
+                    json.dump([{
+                        'ticker': r['ticker'],
+                        'strategy': r['strategy'],
+                        'score': r['normalized_score'],
+                        'price': r['data']['c'].iloc[-1],
+                        'momentum': r['indicators']['momentum'],
+                        'patterns': r['patterns']
+                    } for r in scanner.scan_results], f, indent=2)
+                
+                scanner.print_summary()
+                await scanner._backtest_top_candidates()
+            else:
+                debugger.warning("No qualifying stocks found")
+                
+    except Exception as e:
+        debugger.error(f"Fatal error: {str(e)}")
+        raise
 
+def run_scanner(strategies: Optional[List[str]] = None):
+    """Helper function to run from command line or other scripts"""
+    asyncio.run(main(strategies))
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # EXAMPLE USAGE:
+    
+    # 1. Run all strategies (default)
+    # run_scanner()
+    
+    # 2. Run specific strategies
+    run_scanner(['hypergrowth', 'momentum'])
+    
+    # 3. Run single strategy
+    # run_scanner(['breakout'])
