@@ -1,0 +1,36 @@
+[
+  {
+    "ticker": "ABVX",
+    "strategy": "momentum",
+    "score": 100.0,
+    "price": 10.0,
+    "momentum": 63.666121112929616,
+    "patterns": []
+  },
+  {
+    "ticker": "AGIO",
+    "strategy": "momentum",
+    "score": 46.754785618025096,
+    "price": 39.66,
+    "momentum": 18.956208758248327,
+    "patterns": []
+  },
+  {
+    "ticker": "ADPT",
+    "strategy": "momentum",
+    "score": 43.21032265818855,
+    "price": 10.53,
+    "momentum": -0.28409090909091717,
+    "patterns": [
+      "bullish_engulfing"
+    ]
+  },
+  {
+    "ticker": "AAOI",
+    "strategy": "momentum",
+    "score": 36.163646274598065,
+    "price": 26.35,
+    "momentum": 16.747895436420034,
+    "patterns": []
+  }
+]

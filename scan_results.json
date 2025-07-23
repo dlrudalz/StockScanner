@@ -2,111 +2,31 @@
   {
     "ticker": "ABVX",
     "strategy": "momentum",
+    "score": 42.32824510475445
+  },
+  {
+    "ticker": "AGIO",
+    "strategy": "momentum",
+    "score": 19.790480254600148
+  },
+  {
+    "ticker": "ADPT",
+    "strategy": "momentum",
+    "score": 18.2901712853133
+  },
+  {
+    "ticker": "AAOI",
+    "strategy": "momentum",
+    "score": 15.307436833928273
+  },
+  {
+    "ticker": "ACWI",
+    "strategy": "momentum",
+    "score": 12.263118624581358
+  },
+  {
+    "ticker": "ACB",
+    "strategy": "breakout",
     "score": 100.0
-  },
-  {
-    "ticker": "WTFC",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "ITOS",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "ALAB",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "UPXI",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "HSDT",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "RXRX",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "SOLT",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "GCTK",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "MNMD",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "RIOT",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "IREN",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "XRPI",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "URGN",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "EXE",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "GVH",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "DYNX",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "ABCL",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "TTMI",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "CENX",
-    "strategy": "momentum",
-    "score": 100.0
-  },
-  {
-    "ticker": "LITE",
-    "strategy": "momentum",
-    "score": 98.80507295425197
-  },
-  {
-    "ticker": "TMDX",
-    "strategy": "momentum",
-    "score": 97.07559561618099
   }
 ]
