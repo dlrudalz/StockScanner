@@ -1,22 +1,112 @@
 [
   {
-    "ticker": "AGIO",
+    "ticker": "ABVX",
     "strategy": "momentum",
-    "score": 79.74691731139771
+    "score": 100.0
   },
   {
-    "ticker": "ADSK",
+    "ticker": "WTFC",
     "strategy": "momentum",
-    "score": 79.50701015095353
+    "score": 100.0
   },
   {
-    "ticker": "AAL",
+    "ticker": "ITOS",
     "strategy": "momentum",
-    "score": 78.75043452321209
+    "score": 100.0
   },
   {
-    "ticker": "ADI",
+    "ticker": "ALAB",
     "strategy": "momentum",
-    "score": 77.76087537141021
+    "score": 100.0
+  },
+  {
+    "ticker": "UPXI",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "HSDT",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "RXRX",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "SOLT",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "GCTK",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "MNMD",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "RIOT",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "IREN",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "XRPI",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "URGN",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "EXE",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "GVH",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "DYNX",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "ABCL",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "TTMI",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "CENX",
+    "strategy": "momentum",
+    "score": 100.0
+  },
+  {
+    "ticker": "LITE",
+    "strategy": "momentum",
+    "score": 98.80507295425197
+  },
+  {
+    "ticker": "TMDX",
+    "strategy": "momentum",
+    "score": 97.07559561618099
   }
 ]

@@ -297,7 +297,7 @@ class AsyncPolygonIOClient:
 
                             if "results" not in data:
                                 self.debugger.warning("No results in ticker response")
-                                break
+                                break  # This break is correctly inside the while loop
 
                             filtered = [
                                 t for t in data["results"] 
@@ -314,7 +314,7 @@ class AsyncPolygonIOClient:
                                 endpoint = data["next_url"].replace(self.base_url, "")
                                 params = {"apiKey": self.api_key}
                             else:
-                                break
+                                break  # This is the correct break for the while loop
 
             return tickers
 
@@ -756,6 +756,9 @@ class StockScanner:
         self.rejection_stats = defaultdict(int)
         self.tickers_to_scan = []
         self.max_tickers_to_scan = max_tickers_to_scan
+        self.prefiltered_tickers = []
+        self.hybrid_candidates = []
+        self.strategy_assignments = []
         
         self.strategy_config = {
             "hypergrowth": {
@@ -764,13 +767,23 @@ class StockScanner:
                 "stop_loss": 0.15,
                 "profit_targets": [(0.25, 0.5), (0.5, 0.3), (1.0, 0.2)],
                 "filters": {
+                    "min_volume": 1_000_000,
+                    "min_price": 10.00,
+                    "max_price": 500.00,
+                    "min_market_cap": 300_000_000,
                     "min_revenue_growth": 0.25,
+                    "min_fcf_margin": 0.05,  # Minimum FCF Margin ≥ 5%
+                    "min_rule_of_40": 40,    # Rule of 40 (Revenue Growth + FCF Margin ≥ 40%)
+                    "max_cac_payback": 12,    # CAC Payback < 12 months
+                    "min_institutional_buys": 0.05,  # Institutional Net Buys (13F) > 5%
                     "min_volume_ratio": 1.5,
                     "min_price_relative": 1.1,
                     "min_momentum": 0.10,
-                    "min_volume": 1_000_000,
-                    "min_price": 10.00,
-                    "max_volatility": 0.40
+                    "max_volatility": 0.40,
+                    "momentum_days": 30,
+                    "min_relative_strength": 1.1,
+                    "days_to_scan": 90,
+                    "pattern_priority": ["breakout", "golden_cross", "bullish_ma_stack"]
                 },
                 "backtest_class": FixedHypergrowthStrategy
             },
@@ -780,27 +793,43 @@ class StockScanner:
                 "stop_loss": 0.25,
                 "profit_targets": [(0.5, 0.5), (1.0, 0.5)],
                 "filters": {
-                    "ma_condition": "50ma > 200ma",
-                    "min_adx": 25,
+                    "min_volume": 750_000,
+                    "min_price": 5.00,
+                    "max_price": 500.00,
+                    "min_market_cap": 300_000_000,
+                    "min_adx": 30,  # ADX ≥ 30 (from 25)
+                    "min_positive_earnings_revisions": 2,  # ≥2 Positive Earnings Revisions (30D)
+                    "max_sector_correlation": 0.6,  # Sector Correlation < 0.6
+                    "volume_condition": "10D MA > 20D MA",  # Volume 10D MA > 20D MA
                     "min_trend_duration": 60,
                     "max_volatility": 0.30,
-                    "min_volume": 750_000,
-                    "min_price": 5.00
+                    "momentum_days": 30,
+                    "min_relative_strength": 1.1,
+                    "days_to_scan": 90,
+                    "pattern_priority": ["breakout", "golden_cross", "bullish_ma_stack"]
                 },
                 "backtest_class": FixedMomentumStrategy
             },
             "breakout": {
-                "allocation": (0.1, 0.2),
+                "allocation": (0.2, 0.3),
                 "holding_period": (7, 21),
                 "stop_loss": 0.08,
                 "profit_targets": [(0.15, 0.5), (0.25, 0.5)],
                 "filters": {
-                    "min_volume_ratio": 2.5,
-                    "min_volatility": 0.05,
-                    "consolidation_days": 10,
-                    "max_price": 300,
                     "min_volume": 1_500_000,
-                    "max_consolidation": 0.10
+                    "min_price": 5.00,
+                    "max_price": 300.00,
+                    "min_market_cap": 300_000_000,
+                    "min_short_interest": 0.15,  # Short Interest > 15% Float
+                    "min_institutional_volume_spike": 3,  # Institutional Volume Spike (3x normal)
+                    "consolidation_days": 10,
+                    "max_consolidation": 0.10,
+                    "min_prebreakout_rs": 1.2,  # Pre-Breakout Relative Strength > 1.2
+                    "min_volume_ratio": 1.5,
+                    "momentum_days": 30,
+                    "min_relative_strength": 1.1,
+                    "days_to_scan": 90,
+                    "pattern_priority": ["breakout", "golden_cross", "bullish_ma_stack"]
                 },
                 "backtest_class": FixedBreakoutStrategy
             }
@@ -867,47 +896,305 @@ class StockScanner:
         except Exception as e:
             self.debugger.error(f"Error loading tickers: {str(e)}")
             return []
-
+        
     async def scan_tickers(self):
         if not await self.initialize():
             return
-            
-        base_criteria = await self.regime_detector.get_scan_criteria()
-        self.debugger.info(f"Base scan criteria: {base_criteria}")
+
+        # Step 1: Lightweight prefilter (no scoring)
+        self.debugger.info("Running prefilter scan...")
+        self.prefiltered_tickers = await self._run_prefilter_scan()  # Store as instance variable
         
+        if not self.prefiltered_tickers:
+            self.debugger.warning("No stocks passed prefilter")
+            return
+
+        # Step 2: Run all strategies on prefiltered stocks
         scan_tasks = [
-            self._scan_for_strategy("hypergrowth", base_criteria),
-            self._scan_for_strategy("momentum", base_criteria),
-            self._scan_for_strategy("breakout", base_criteria)
+            self._scan_for_strategy("hypergrowth", self.prefiltered_tickers),
+            self._scan_for_strategy("momentum", self.prefiltered_tickers),
+            self._scan_for_strategy("breakout", self.prefiltered_tickers)
         ]
         await asyncio.gather(*scan_tasks)
         
+        # Step 3: Normalize scores across all strategies (0-100 scale)
+        self._normalize_scores()
+        
+        # Step 4: Resolve strategy overlaps with enhanced hybrid detection
+        self._resolve_strategy_overlaps()
+        
+        # Step 5: Balance allocations based on normalized scores
         self._balance_strategy_allocations()
         
         if self.scan_results:
             self.print_summary()
             await self._backtest_top_candidates()
-        else:
-            self.debugger.warning("No qualifying stocks found")
 
-    async def _scan_for_strategy(self, strategy: str, base_criteria: Dict):
-        criteria = self._get_strategy_criteria(strategy, base_criteria)
-        self.debugger.info(f"Scanning for {strategy} with criteria: {criteria}")
+    def _normalize_scores(self):
+        """Normalize all strategy scores to a 0-100 scale"""
+        if not self.scan_results:
+            return
+            
+        # Group scores by strategy
+        strategy_scores = defaultdict(list)
+        for stock in self.scan_results:
+            strategy_scores[stock['strategy']].append(stock['score'])
+            
+        # Calculate normalization parameters
+        all_scores = [score for scores in strategy_scores.values() for score in scores]
+        min_score = min(all_scores)
+        max_score = max(all_scores)
+        score_range = max_score - min_score
+        
+        if score_range == 0:  # All scores are identical
+            for stock in self.scan_results:
+                stock['normalized_score'] = 50.0
+            return
+            
+        # Apply normalization
+        for stock in self.scan_results:
+            stock['normalized_score'] = ((stock['score'] - min_score) / score_range * 100)
+
+    def _resolve_strategy_overlaps(self):
+        """Enhanced hybrid candidate detection system with strategy dominance assessment"""
+        if not self.scan_results:
+            return
+            
+        # First identify all stocks that qualify for multiple strategies
+        ticker_strategies = defaultdict(list)
+        for stock in self.scan_results:
+            ticker_strategies[stock['ticker']].append({
+                'strategy': stock['strategy'],
+                'score': stock['normalized_score'],
+                'data': stock
+            })
+            
+        self.hybrid_candidates = [t for t, s in ticker_strategies.items() if len(s) > 1]
+        
+        if not self.hybrid_candidates:
+            return
+            
+        self.debugger.info(f"\nFound {len(self.hybrid_candidates)} hybrid candidates")
+        
+        # For each hybrid candidate, apply priority rules
+        for ticker in self.hybrid_candidates:
+            strategies = ticker_strategies[ticker]
+            
+            # Get dominance assessment
+            dominant_strategy = self._assess_strategy_dominance(ticker, strategies)
+            
+            if dominant_strategy:
+                # Remove all other strategy entries for this ticker
+                self.scan_results = [s for s in self.scan_results 
+                                   if s['ticker'] != ticker or s['strategy'] == dominant_strategy]
+                self.strategy_assignments.append({
+                    'ticker': ticker,
+                    'original_strategies': [s['strategy'] for s in strategies],
+                    'final_strategy': dominant_strategy,
+                    'dominance_reason': self._get_dominance_reason(ticker, strategies, dominant_strategy),
+                    'timestamp': datetime.now().isoformat()
+                })
+        
+        self.debugger.info("Completed strategy overlap resolution")
+
+    def _assess_strategy_dominance(self, ticker: str, strategies: List[Dict]) -> Optional[str]:
+        """Strategy dominance assessment function with multiple factors"""
+        if len(strategies) == 1:
+            return strategies[0]['strategy']
+            
+        # Get market regime info
+        trend_regime, vol_regime = asyncio.run(self.regime_detector.get_current_regime())
+        
+        strategy_scores = {}
+        for s in strategies:
+            strategy = s['strategy']
+            data = s['data']
+            
+            # Base score is the normalized score
+            score = s['score']
+            
+            # Apply regime-based adjustments
+            score *= self._get_regime_adjustment(strategy, trend_regime, vol_regime)
+            
+            # Apply fundamental fitness adjustment
+            if strategy == 'hypergrowth':
+                score *= self._get_fundamental_fitness(data['details'])
+                
+            # Apply technical fitness adjustment
+            score *= self._get_technical_fitness(strategy, data['indicators'], data['patterns'])
+            
+            strategy_scores[strategy] = score
+            
+        return max(strategy_scores.items(), key=lambda x: x[1])[0]
+
+    def _get_regime_adjustment(self, strategy: str, trend: str, volatility: str) -> float:
+        """Market-regime adaptive thresholds for strategy scoring"""
+        adjustments = {
+            'hypergrowth': {
+                'strong_bull': 1.2,
+                'weak_bull': 1.1,
+                'neutral': 0.9,
+                'weak_bear': 0.8,
+                'strong_bear': 0.7,
+                'low_vol': 0.9,
+                'medium_vol': 1.0,
+                'high_vol': 1.1
+            },
+            'momentum': {
+                'strong_bull': 1.1,
+                'weak_bull': 1.0,
+                'neutral': 1.0,
+                'weak_bear': 0.9,
+                'strong_bear': 0.8,
+                'low_vol': 0.8,
+                'medium_vol': 1.0,
+                'high_vol': 1.2
+            },
+            'breakout': {
+                'strong_bull': 1.0,
+                'weak_bull': 1.0,
+                'neutral': 1.1,
+                'weak_bear': 1.2,
+                'strong_bear': 1.1,
+                'low_vol': 0.7,
+                'medium_vol': 1.0,
+                'high_vol': 1.3
+            }
+        }
+        
+        trend_adj = adjustments[strategy].get(trend, 1.0)
+        vol_adj = adjustments[strategy].get(volatility, 1.0)
+        return trend_adj * vol_adj
+
+    def _get_fundamental_fitness(self, details: Dict) -> float:
+        """Assess how well fundamentals match hypergrowth criteria"""
+        if not details:
+            return 0.7
+            
+        score = 0.5  # Base score
+        
+        # Revenue growth component
+        revenue_growth = details.get('revenue_growth_rate', 0)
+        score += min(revenue_growth / 0.5, 0.3)  # Max 0.3 for 50%+ growth
+        
+        # Profitability component
+        fcf_margin = details.get('fcf_margin', 0)
+        score += min(fcf_margin / 0.2, 0.2)  # Max 0.2 for 20%+ margin
+        
+        return min(score, 1.0)
+
+    def _get_technical_fitness(self, strategy: str, indicators: Dict, patterns: List[str]) -> float:
+        """Assess how well technicals match strategy criteria"""
+        if strategy == 'hypergrowth':
+            # Reward high momentum and moderate volatility
+            mom = indicators.get('momentum', 0) / 30  # Normalize to 0-1 range (30% momentum)
+            vol = 1 - min(indicators.get('volatility', 0) / 0.4, 1)  # Penalize high volatility
+            return 0.6 * mom + 0.4 * vol
+            
+        elif strategy == 'momentum':
+            # Reward strong trends and high ADX
+            trend_strength = indicators.get('adx', 0) / 60  # Normalize ADX (0-60)
+            ma_ratio = (indicators.get('sma_50', 1) / indicators.get('sma_200', 1)) - 1
+            return 0.7 * trend_strength + 0.3 * min(max(ma_ratio, 0) / 0.2, 1)
+            
+        elif strategy == 'breakout':
+            # Reward high volume and clean patterns
+            vol_ratio = indicators.get('volume', 1) / indicators.get('volume_ma', 1)
+            pattern_score = 0.5 if any(p in patterns for p in ['breakout', 'bullish_engulfing']) else 0.2
+            return 0.6 * min(vol_ratio / 3, 1) + 0.4 * pattern_score
+            
+        return 1.0
+
+    def _get_dominance_reason(self, ticker: str, strategies: List[Dict], dominant_strategy: str) -> str:
+        """Generate human-readable reason for strategy dominance"""
+        dominant_data = next(s for s in strategies if s['strategy'] == dominant_strategy)
+        
+        reasons = {
+            'hypergrowth': [
+                f"Strong fundamentals (Revenue growth: {dominant_data['data']['details'].get('revenue_growth_rate', 0):.1%})",
+                f"Consistent momentum ({dominant_data['data']['indicators'].get('momentum', 0):.1f}%)",
+                "Ideal for current market regime"
+            ],
+            'momentum': [
+                f"Strong trend (ADX: {dominant_data['data']['indicators'].get('adx', 0):.1f})",
+                f"Price above key MAs (50/200 ratio: {(dominant_data['data']['indicators'].get('sma_50', 1)/dominant_data['data']['indicators'].get('sma_200', 1))-1:.1%})",
+                "Favorable momentum characteristics"
+            ],
+            'breakout': [
+                f"High volume breakout ({dominant_data['data']['indicators'].get('volume', 1)/dominant_data['data']['indicators'].get('volume_ma', 1):.1f}x average)",
+                f"Clean pattern ({', '.join(dominant_data['data']['patterns'])})",
+                "Ideal volatility for breakout"
+            ]
+        }
+        
+        return f"Selected {dominant_strategy} because: " + "; ".join(reasons.get(dominant_strategy, ["Superior score across all metrics"]))
+
+    async def _run_prefilter_scan(self) -> List[str]:
+        """Ultra-light prefilter that only removes completely untradeable stocks"""
+        prefilter_criteria = {
+            "min_days_data": 5,        # Need at least some history
+            "min_avg_volume": 50_000,  # Absolute minimum liquidity
+            "max_price": 10_000,       # Only filter out extremely high-priced stocks
+            "days_to_scan": 30         # Short lookback period
+        }
+        
+        prefiltered = []
+        batch_size = 50
+        
+        with tqdm(total=len(self.tickers_to_scan), desc="Prefiltering") as pbar:
+            for i in range(0, len(self.tickers_to_scan), batch_size):
+                batch = self.tickers_to_scan[i:i + batch_size]
+                tasks = [self._check_prefilter_criteria(ticker, prefilter_criteria) 
+                        for ticker in batch]
+                results = await asyncio.gather(*tasks)
+                prefiltered.extend([ticker for ticker, passes in zip(batch, results) if passes])
+                pbar.update(len(batch))
+        
+        return prefiltered
+
+    async def _check_prefilter_criteria(self, ticker: str, criteria: Dict) -> bool:
+        """Basic yes/no check - only filters out completely invalid stocks"""
+        try:
+            price_data = await self.polygon.get_aggregates(ticker, days=criteria["days_to_scan"])
+            
+            # Absolute minimum checks
+            if (price_data is None or 
+                len(price_data) < criteria["min_days_data"] or 
+                price_data['v'].mean() < criteria["min_avg_volume"] or
+                price_data['c'].iloc[-1] > criteria["max_price"]):
+                return False
+                
+            return True
+        except Exception:
+            return False
+
+    async def _scan_for_strategy(self, strategy_name, prefiltered_tickers):
+        # Get dynamic criteria based on current regime
+        base_criteria = await self.regime_detector.get_scan_criteria()
+        criteria = self._get_strategy_criteria(strategy_name, base_criteria)
+        
+        self.debugger.info(f"Scanning for {strategy_name} with criteria: {criteria}")
         
         strategy_results = []
         batch_size = 50
         
-        with tqdm(total=len(self.tickers_to_scan), desc=f"Scanning {strategy}") as pbar:
-            for i in range(0, len(self.tickers_to_scan), batch_size):
-                batch = self.tickers_to_scan[i:i + batch_size]
-                tasks = [self._scan_single_ticker(ticker, criteria, strategy) 
+        with tqdm(total=len(prefiltered_tickers), desc=f"Scanning {strategy_name}") as pbar:
+            for i in range(0, len(prefiltered_tickers), batch_size):
+                batch = prefiltered_tickers[i:i + batch_size]
+                tasks = [self._scan_single_ticker(ticker, criteria, strategy_name) 
                         for ticker in batch]
                 batch_results = await asyncio.gather(*tasks)
                 
                 for result in batch_results:
                     if result is not None:
-                        result['strategy'] = strategy
-                        result['strategy_score'] = self._score_strategy(result, strategy)
+                        result['strategy'] = strategy_name
+                        result['score'] = self._calculate_strategy_score(
+                            result['data'], 
+                            result['indicators'], 
+                            result['patterns'], 
+                            result['details'],
+                            strategy_name
+                        )
                         strategy_results.append(result)
                 
                 pbar.update(len(batch))
@@ -921,18 +1208,19 @@ class StockScanner:
         
         if strategy == "hypergrowth":
             strategy_criteria["min_momentum"] = max(
-                strategy_criteria["min_momentum"],
-                self.strategy_config["hypergrowth"]["filters"]["min_momentum"]
+                strategy_criteria.get("min_momentum", 0),
+                self.strategy_config["hypergrowth"]["filters"].get("min_momentum", 0)
             )
         elif strategy == "momentum":
             strategy_criteria["min_trend_duration"] = max(
                 strategy_criteria.get("min_trend_duration", 0),
-                self.strategy_config["momentum"]["filters"]["min_trend_duration"]
+                self.strategy_config["momentum"]["filters"].get("min_trend_duration", 0)
             )
         elif strategy == "breakout":
+            # Safely get min_volume_ratio with a default value if it doesn't exist
             strategy_criteria["min_volume_ratio"] = max(
                 strategy_criteria.get("min_volume_ratio", 0),
-                self.strategy_config["breakout"]["filters"]["min_volume_ratio"]
+                self.strategy_config["breakout"]["filters"].get("min_volume_ratio", 1.5)
             )
         
         return strategy_criteria
@@ -1013,22 +1301,22 @@ class StockScanner:
             return False
             
         if strategy == "hypergrowth":
-            if indicators['momentum'] < criteria["min_momentum"]:
+            if indicators['momentum'] < criteria.get("min_momentum", 0):
                 return False
-            if indicators['volatility'] > criteria["max_volatility"]:
+            if indicators['volatility'] > criteria.get("max_volatility", float('inf')):
                 return False
                 
         elif strategy == "momentum":
-            if indicators['adx'] < criteria["min_adx"]:
+            if indicators['adx'] < criteria.get("min_adx", 0):
                 return False
-            if len(data) < criteria["min_trend_duration"]:
+            if len(data) < criteria.get("min_trend_duration", 0):
                 return False
                 
         elif strategy == "breakout":
             volume_ratio = volume / indicators['volume_ma']
-            if volume_ratio < criteria["min_volume_ratio"]:
+            if volume_ratio < criteria.get("min_volume_ratio", 0):
                 return False
-            if indicators['volatility'] < criteria["min_volatility"]:
+            if indicators['volatility'] < criteria.get("min_volatility", 0):
                 return False
                 
         return True
@@ -1074,7 +1362,7 @@ class StockScanner:
         vol_penalty = max(0, (indicators['volatility'] - max_vol/2) / (max_vol/2))
         score += weights['volatility'] * (1 - min(vol_penalty, 1))
         
-        return 100 * min(score, 1.0)
+        return min(score, 1.0)
 
     def _calculate_momentum_score(self, data: pd.DataFrame, indicators: Dict) -> float:
         weights = {
@@ -1104,7 +1392,7 @@ class StockScanner:
         vol_score = 1 - min(indicators['volatility'] / max_vol, 1)
         score += weights['volatility'] * vol_score
         
-        return 100 * min(score, 1.0)
+        return min(score, 1.0)
 
     def _calculate_breakout_score(self, data: pd.DataFrame, indicators: Dict, patterns: List[str]) -> float:
         weights = {
@@ -1138,25 +1426,16 @@ class StockScanner:
         consolidation_score = 1 - min(consolidation_range / max_consolidation, 1)
         score += weights['consolidation'] * consolidation_score
         
-        return 100 * min(score, 1.0)
-
-    def _score_strategy(self, stock: Dict, strategy: str) -> float:
-        if strategy == 'hypergrowth':
-            return self._calculate_hypergrowth_score(stock['data'], stock['indicators'], stock['details'])
-        elif strategy == 'momentum':
-            return self._calculate_momentum_score(stock['data'], stock['indicators'])
-        elif strategy == 'breakout':
-            return self._calculate_breakout_score(stock['data'], stock['indicators'], stock['patterns'])
-        return 0.0
+        return min(score, 1.0)
 
     def _balance_strategy_allocations(self):
         if not self.scan_results:
             return
             
         target_allocations = {
-            'hypergrowth': 0.4,
-            'momentum': 0.4,
-            'breakout': 0.2
+            'hypergrowth': 0.45,
+            'momentum': 0.45,
+            'breakout': 0.10
         }
         
         total_needed = min(len(self.scan_results), 50)
@@ -1166,7 +1445,7 @@ class StockScanner:
             grouped[stock['strategy']].append(stock)
             
         for strategy in grouped:
-            grouped[strategy].sort(key=lambda x: x['strategy_score'], reverse=True)
+            grouped[strategy].sort(key=lambda x: x['normalized_score'], reverse=True)
         
         targets = {s: int(total_needed * target_allocations[s]) for s in target_allocations}
         
@@ -1185,7 +1464,7 @@ class StockScanner:
             by_strategy[stock['strategy']].append(stock)
             
         for strategy, stocks in by_strategy.items():
-            top_stocks = sorted(stocks, key=lambda x: x['strategy_score'], reverse=True)[:n_per_strategy]
+            top_stocks = sorted(stocks, key=lambda x: x['normalized_score'], reverse=True)[:n_per_strategy]
             for stock in top_stocks:
                 self.debugger.info(f"\nBacktesting {stock['ticker']} ({strategy})...")
                 await run_backtest(stock, self.debugger)
@@ -1275,6 +1554,13 @@ class StockScanner:
             pct = (count / len(self.scan_results)) * 100
             self.debugger.info(f"{strategy.upper():<12}: {count:>3} stocks ({pct:.1f}%)")
         
+        if self.hybrid_candidates:
+            self.debugger.info("\nStrategy Overlap Resolution:")
+            self.debugger.info("---------------------------")
+            for assignment in self.strategy_assignments:
+                orig = ", ".join(assignment['original_strategies'])
+                self.debugger.info(f"{assignment['ticker']}: {orig} → {assignment['final_strategy']}")
+        
         for strategy in self.strategy_config.keys():
             strategy_stocks = [s for s in self.scan_results if s['strategy'] == strategy]
             if not strategy_stocks:
@@ -1285,11 +1571,11 @@ class StockScanner:
             headers = ["Ticker", "Price", "Score", "Momentum", "Volatility", "Patterns"]
             self.debugger.info("{:<6} {:<8} {:<6} {:<9} {:<10} {}".format(*headers))
             
-            for stock in sorted(strategy_stocks, key=lambda x: x['strategy_score'], reverse=True)[:10]:
+            for stock in sorted(strategy_stocks, key=lambda x: x['normalized_score'], reverse=True)[:10]:
                 self.debugger.info(
                     f"{stock['ticker']:<6} "
                     f"${stock['data']['c'].iloc[-1]:>7.2f} "
-                    f"{stock['strategy_score']:>5.1f} "
+                    f"{stock['normalized_score']:>5.1f} "
                     f"{stock['indicators']['momentum']:>8.1f}% "
                     f"{stock['indicators']['volatility']:>9.2f}% "
                     f"{', '.join(stock['patterns'])}"
@@ -1352,29 +1638,63 @@ class FixedMomentumStrategy(Strategy):
 
 class FixedBreakoutStrategy(Strategy):
     def init(self):
-        self.support = self.I(lambda x: x.Low.rolling(20).min(), self.data)
+        # Initialize variables for manual support calculation
+        self.low_window = []
+        self.window_size = 20
+        
+        # Standard indicators
         self.volume_ma = self.I(talib.SMA, self.data.Volume, 20)
         self.atr = self.I(talib.ATR, self.data.High, self.data.Low, self.data.Close, 14)
         self.rsi = self.I(talib.RSI, self.data.Close, 14)
+        
+        # Track entry price and stop loss manually
+        self.entry_price = None
+        self.current_sl = None
 
     def next(self):
+        # Manual rolling minimum calculation
+        self.low_window.append(self.data.Low[-1])
+        if len(self.low_window) > self.window_size:
+            self.low_window.pop(0)
+        
+        current_support = min(self.low_window) if len(self.low_window) == self.window_size else None
+        
+        # Wait until we have enough data
+        if current_support is None:
+            return
+            
         current_close = self.data.Close[-1]
+        current_low = self.data.Low[-1]
         
         if not self.position:
+            # Calculate initial stop loss
             stop_loss = min(
-                self.support[-1],
+                max(current_support, current_low * 0.95),
                 current_close - 2 * self.atr[-1]
             )
-            self.buy(sl=stop_loss)
-        
-        if self.position and (current_close < self.support[-1] or self.rsi[-1] > 70):
-            self.position.close()
             
-        if self.position and current_close > self.position.entry_price * 1.05:
-            self.position.sl = max(
-                self.position.sl or 0,
-                current_close - 1.5 * self.atr[-1]
-            )
+            # Entry condition
+            if current_close > current_support * 1.05:
+                self.entry_price = current_close
+                self.current_sl = stop_loss
+                self.buy(sl=stop_loss)
+        else:
+            # Exit conditions
+            if (current_close < current_support or 
+                self.rsi[-1] > 70 or
+                current_close < self.entry_price * 0.95 or
+                current_close <= self.current_sl):
+                
+                self.position.close()
+                self.entry_price = None
+                self.current_sl = None
+            
+            # Trailing stop logic
+            elif current_close > self.entry_price * 1.05:
+                new_sl = current_close - 1.5 * self.atr[-1]
+                if new_sl > self.current_sl:
+                    self.current_sl = new_sl
+                    self.position.sl = new_sl
 
 class YahooFinanceFallback:
     def __init__(self, debugger: Debugger):
@@ -1590,7 +1910,7 @@ async def main():
     # debugger = Debugger(enabled=True, level="WARNING")
     
     async with AsyncPolygonIOClient(POLYGON_API_KEY, debugger) as client:
-        scanner = StockScanner(client, debugger, max_tickers_to_scan=100)
+        scanner = StockScanner(client, debugger, max_tickers_to_scan=None)
         
         if not await scanner.initialize():
             debugger.error("Scanner initialization failed")
@@ -1606,7 +1926,7 @@ async def main():
                 json.dump([{
                     'ticker': r['ticker'],
                     'strategy': r['strategy'],
-                    'score': r['score']
+                    'score': r['normalized_score']
                 } for r in scanner.scan_results], f, indent=2)
 
 
