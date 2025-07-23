@@ -349,76 +349,434 @@ class AsyncPolygonIOClient:
             await asyncio.sleep(delay)
         self.last_request_time = now
 
-class MarketRegimeDetector:
-    """Advanced market regime detector with multi-timeframe analysis"""
+class EnhancedMarketRegimeDetector:
+    """Advanced market regime detector with additional indicators and performance metrics"""
     
     def __init__(self, polygon_client: AsyncPolygonIOClient, debugger: Debugger):
         self.polygon = polygon_client
         self.daily_data = None
         self.weekly_data = None
+        self.monthly_data = None
         self.volatility_regimes = ["low_vol", "medium_vol", "high_vol"]
         self.trend_regimes = ["strong_bull", "weak_bull", "neutral", "weak_bear", "strong_bear"]
         self.debugger = debugger
+        self.performance_metrics = {
+            'historical_accuracy': [],
+            'regime_duration': defaultdict(list),
+            'transition_stats': defaultdict(int)
+        }
+        self.current_regime = None
+        self.previous_regime = None
+        self.regime_start_date = None
         
     async def initialize(self) -> bool:
         try:
-            self.debugger.debug("Initializing market regime detector...")
+            self.debugger.debug("Initializing enhanced market regime detector...")
             
-            self.daily_data = await self.polygon.get_aggregates("QQQ", days=252, timespan="day")
-            self.weekly_data = await self.polygon.get_aggregates("QQQ", days=252, timespan="week")
+            # Load multiple timeframes
+            self.daily_data = await self._get_validated_data("QQQ", days=252, timespan="day")
+            self.weekly_data = await self._get_validated_data("QQQ", days=252*3, timespan="week")
+            self.monthly_data = await self._get_validated_data("QQQ", days=252*5, timespan="month")
             
-            if self.daily_data is None or self.weekly_data is None:
-                self.debugger.debug("Failed to fetch QQQ data - API returned None")
+            # Check if any of the dataframes are None or empty
+            if (self.daily_data is None or len(self.daily_data) == 0 or
+                self.weekly_data is None or len(self.weekly_data) == 0 or
+                self.monthly_data is None or len(self.monthly_data) == 0):
+                self.debugger.debug("One or more dataframes failed validation")
                 return False
                 
-            if len(self.daily_data) < 100 or len(self.weekly_data) < 20:
-                self.debugger.debug(f"Insufficient data points: Daily={len(self.daily_data)}, Weekly={len(self.weekly_data)}")
-                return False
-                
-            self.debugger.debug(f"Loaded {len(self.daily_data)} daily and {len(self.weekly_data)} weekly data points")
             self._calculate_technical_indicators()
+            self._initialize_performance_tracking()
             return True
             
         except Exception as e:
             self.debugger.error(f"Error initializing detector: {str(e)}")
             return False
-        
+    
+    async def _get_validated_data(self, ticker: str, days: int, timespan: str) -> Optional[pd.DataFrame]:
+        """Get and validate market data"""
+        try:
+            data = await self.polygon.get_aggregates(ticker, days=days, timespan=timespan)
+            if data is None or len(data) < 20:
+                self.debugger.debug(f"Insufficient {timespan} data for {ticker}")
+                return None
+            
+            # Validate data quality
+            if data['c'].isnull().sum() > 0.1 * len(data):
+                self.debugger.debug(f"Too many nulls in {ticker} {timespan} data")
+                return None
+                
+            return data
+        except Exception as e:
+            self.debugger.error(f"Error getting data for {ticker}: {str(e)}")
+            return None
+    
     def _calculate_technical_indicators(self):
-        daily_closes = self.daily_data['c'].values
-        daily_highs = self.daily_data['h'].values
-        daily_lows = self.daily_data['l'].values
-        daily_volumes = self.daily_data['v'].values
+        """Calculate all technical indicators with validation"""
+        try:
+            # Daily indicators
+            daily_closes = self.daily_data['c'].values
+            daily_highs = self.daily_data['h'].values
+            daily_lows = self.daily_data['l'].values
+            daily_volumes = self.daily_data['v'].values
+            
+            # Core trend indicators
+            self.daily_data['sma_50'] = talib.SMA(daily_closes, timeperiod=50)
+            self.daily_data['sma_200'] = talib.SMA(daily_closes, timeperiod=200)
+            self.daily_data['ema_20'] = talib.EMA(daily_closes, timeperiod=20)
+            
+            # Momentum indicators
+            self.daily_data['rsi_14'] = talib.RSI(daily_closes, timeperiod=14)
+            self.daily_data['macd'], self.daily_data['macd_signal'], _ = talib.MACD(daily_closes)
+            self.daily_data['adx'] = talib.ADX(daily_highs, daily_lows, daily_closes, timeperiod=14)
+            self.daily_data['cci'] = talib.CCI(daily_highs, daily_lows, daily_closes, timeperiod=20)
+            
+            # Volatility indicators
+            self.daily_data['atr_14'] = talib.ATR(daily_highs, daily_lows, daily_closes, timeperiod=14)
+            self.daily_data['natr_14'] = talib.NATR(daily_highs, daily_lows, daily_closes, timeperiod=14)
+            self.daily_data['bollinger_upper'], _, self.daily_data['bollinger_lower'] = talib.BBANDS(
+                daily_closes, timeperiod=20, nbdevup=2, nbdevdn=2)
+            
+            log_returns = np.log(daily_closes[1:]/daily_closes[:-1])
+            self.daily_data['hist_vol_30'] = pd.Series(log_returns).rolling(30).std() * np.sqrt(252)
+            
+            hl_ratio = np.log(self.daily_data['h']/self.daily_data['l'])
+            self.daily_data['parkinson_vol'] = hl_ratio.rolling(14).std() * np.sqrt(252)
+            
+            # Volume indicators
+            self.daily_data['volume_sma_20'] = talib.SMA(daily_volumes, timeperiod=20)
+            self.daily_data['volume_ratio'] = daily_volumes / self.daily_data['volume_sma_20']
+            self.daily_data['obv'] = talib.OBV(daily_closes, daily_volumes)
+            
+            # Weekly indicators
+            weekly_closes = self.weekly_data['c'].values
+            self.weekly_data['sma_10'] = talib.SMA(weekly_closes, timeperiod=10)
+            self.weekly_data['sma_40'] = talib.SMA(weekly_closes, timeperiod=40)
+            self.weekly_data['rsi_8'] = talib.RSI(weekly_closes, timeperiod=8)
+            
+            # Monthly indicators
+            monthly_closes = self.monthly_data['c'].values
+            self.monthly_data['sma_6'] = talib.SMA(monthly_closes, timeperiod=6)
+            self.monthly_data['sma_12'] = talib.SMA(monthly_closes, timeperiod=12)
+            
+            # Composite trend strength score (0-1 scale)
+            trend_components = []
+            trend_components.append(0.25 * (self.daily_data['sma_50'] > self.daily_data['sma_200']))
+            trend_components.append(0.20 * (self.weekly_data['sma_10'] > self.weekly_data['sma_40']).resample('D').ffill())
+            trend_components.append(0.15 * (self.monthly_data['sma_6'] > self.monthly_data['sma_12']).resample('D').ffill())
+            trend_components.append(0.15 * (self.daily_data['adx'] / 100))
+            trend_components.append(0.10 * (self.daily_data['macd'] > self.daily_data['macd_signal']))
+            trend_components.append(0.10 * (self.daily_data['c'] > self.daily_data['sma_50']))
+            trend_components.append(0.05 * (self.daily_data['rsi_14'] / 100))
+            
+            self.daily_data['trend_strength'] = sum(tc[:len(self.daily_data)] for tc in trend_components)
+            
+            # Market breadth indicator (simplified)
+            self.daily_data['adv_vol'] = np.where(self.daily_data['c'] > self.daily_data['c'].shift(1), 
+                                                self.daily_data['v'], 0)
+            self.daily_data['dec_vol'] = np.where(self.daily_data['c'] < self.daily_data['c'].shift(1), 
+                                                self.daily_data['v'], 0)
+            self.daily_data['adv_dec_ratio'] = (self.daily_data['adv_vol'].rolling(5).sum() / 
+                                              (self.daily_data['dec_vol'].rolling(5).sum() + 1e-6))
+            
+        except Exception as e:
+            self.debugger.error(f"Indicator calculation error: {str(e)}")
+            raise
+    
+    def _initialize_performance_tracking(self):
+        """Initialize performance tracking metrics"""
+        if len(self.daily_data) < 100:
+            return
+            
+        # Backfill historical regime classification
+        for i in range(100, len(self.daily_data)):
+            historic_data = self.daily_data.iloc[:i]
+            regimes = self._calculate_historic_regime(historic_data)
+            self._update_performance_metrics(regimes, historic_data.index[-1])
+    
+    def _calculate_historic_regime(self, data: pd.DataFrame) -> Dict[str, float]:
+        """Calculate regime probabilities for historical data"""
+        recent_daily = data.iloc[-1]
         
-        self.daily_data['sma_50'] = talib.SMA(daily_closes, timeperiod=50)
-        self.daily_data['sma_200'] = talib.SMA(daily_closes, timeperiod=200)
-        self.daily_data['rsi_14'] = talib.RSI(daily_closes, timeperiod=14)
-        self.daily_data['macd'], self.daily_data['macd_signal'], _ = talib.MACD(daily_closes)
-        self.daily_data['atr_14'] = talib.ATR(daily_highs, daily_lows, daily_closes, timeperiod=14)
-        self.daily_data['adx'] = talib.ADX(daily_highs, daily_lows, daily_closes, timeperiod=14)
+        # Calculate all components needed for regime detection
+        price_above_200sma = recent_daily['c'] > recent_daily['sma_200']
+        sma_50_above_200 = recent_daily['sma_50'] > recent_daily['sma_200']
+        trend_strength = recent_daily['trend_strength']
+        rsi_14 = recent_daily['rsi_14']
+        macd_above_signal = recent_daily['macd'] > recent_daily['macd_signal']
         
-        log_returns = np.log(daily_closes[1:]/daily_closes[:-1])
-        self.daily_data['hist_vol_30'] = pd.Series(log_returns).rolling(30).std() * np.sqrt(252)
+        atr_14 = recent_daily['atr_14']
+        atr_30 = data['atr_14'].iloc[-30:].mean()
+        vol_ratio = atr_14 / atr_30 if atr_30 > 0 else 1.0
+        hist_vol = recent_daily['hist_vol_30']
+        parkinson_vol = recent_daily['parkinson_vol']
         
-        hl_ratio = np.log(self.daily_data['h']/self.daily_data['l'])
-        self.daily_data['parkinson_vol'] = hl_ratio.rolling(14).std() * np.sqrt(252)
+        momentum_5d = (recent_daily['c'] / data['c'].iloc[-5] - 1) * 100
+        momentum_30d = (recent_daily['c'] / data['c'].iloc[-30] - 1) * 100
         
-        self.daily_data['volume_sma_20'] = talib.SMA(daily_volumes, timeperiod=20)
-        self.daily_data['volume_ratio'] = daily_volumes / self.daily_data['volume_sma_20']
+        volume_spike = recent_daily['volume_ratio'] > 1.5
         
-        weekly_closes = self.weekly_data['c'].values
-        self.weekly_data['sma_10'] = talib.SMA(weekly_closes, timeperiod=10)
-        self.weekly_data['sma_40'] = talib.SMA(weekly_closes, timeperiod=40)
+        return self._calculate_regime_probabilities(
+            price_above_200sma, sma_50_above_200, trend_strength,
+            rsi_14, macd_above_signal, momentum_5d, momentum_30d,
+            vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol, volume_spike
+        )
+    
+    async def detect_regime(self) -> Dict[str, float]:
+        """Detect current market regime with performance tracking"""
+        if self.daily_data is None:
+            return self._default_regime_probabilities()
         
-        trend_components = []
-        trend_components.append(0.3 * (self.daily_data['sma_50'] > self.daily_data['sma_200']))
-        trend_components.append(0.2 * (self.weekly_data['sma_10'] > self.weekly_data['sma_40']).resample('D').ffill())
-        trend_components.append(0.2 * (self.daily_data['adx'] / 100))
-        trend_components.append(0.1 * (self.daily_data['macd'] > self.daily_data['macd_signal']))
-        trend_components.append(0.1 * (self.daily_data['c'] > self.daily_data['sma_50']))
-        trend_components.append(0.1 * (self.daily_data['rsi_14'] / 100))
+        recent_daily = self.daily_data.iloc[-1]
         
-        self.daily_data['trend_strength'] = sum(tc[:len(self.daily_data)] for tc in trend_components)
-
+        # Calculate all components
+        price_above_200sma = recent_daily['c'] > recent_daily['sma_200']
+        sma_50_above_200 = recent_daily['sma_50'] > recent_daily['sma_200']
+        trend_strength = recent_daily['trend_strength']
+        rsi_14 = recent_daily['rsi_14']
+        macd_above_signal = recent_daily['macd'] > recent_daily['macd_signal']
+        
+        atr_14 = recent_daily['atr_14']
+        atr_30 = self.daily_data['atr_14'].iloc[-30:].mean()
+        vol_ratio = atr_14 / atr_30 if atr_30 > 0 else 1.0
+        hist_vol = recent_daily['hist_vol_30']
+        parkinson_vol = recent_daily['parkinson_vol']
+        
+        momentum_5d = (recent_daily['c'] / self.daily_data['c'].iloc[-5] - 1) * 100
+        momentum_30d = (recent_daily['c'] / self.daily_data['c'].iloc[-30] - 1) * 100
+        
+        volume_spike = recent_daily['volume_ratio'] > 1.5
+        
+        regimes = self._calculate_regime_probabilities(
+            price_above_200sma, sma_50_above_200, trend_strength,
+            rsi_14, macd_above_signal, momentum_5d, momentum_30d,
+            vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol, volume_spike
+        )
+        
+        # Update performance tracking
+        self._update_performance_metrics(regimes, self.daily_data.index[-1])
+        
+        return regimes
+    
+    def _calculate_regime_probabilities(self, price_above_200sma, sma_50_above_200, trend_strength,
+                                     rsi_14, macd_above_signal, momentum_5d, momentum_30d,
+                                     vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol, volume_spike):
+        """Core regime probability calculation"""
+        regimes = {
+            "strong_bull": self._strong_bull_confidence(
+                price_above_200sma, sma_50_above_200, trend_strength,
+                rsi_14, macd_above_signal, momentum_5d, momentum_30d
+            ),
+            "weak_bull": self._weak_bull_confidence(
+                price_above_200sma, sma_50_above_200, trend_strength,
+                rsi_14, macd_above_signal, momentum_5d, momentum_30d
+            ),
+            "neutral": self._neutral_confidence(
+                rsi_14, vol_ratio, atr_14, atr_30, trend_strength, hist_vol, parkinson_vol
+            ),
+            "weak_bear": self._weak_bear_confidence(
+                price_above_200sma, sma_50_above_200, trend_strength,
+                rsi_14, macd_above_signal, momentum_5d, momentum_30d
+            ),
+            "strong_bear": self._strong_bear_confidence(
+                price_above_200sma, sma_50_above_200, trend_strength,
+                rsi_14, macd_above_signal, momentum_5d, momentum_30d
+            ),
+            "low_vol": self._low_vol_confidence(
+                vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol
+            ),
+            "medium_vol": self._medium_vol_confidence(
+                vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol
+            ),
+            "high_vol": self._high_vol_confidence(
+                vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol, volume_spike
+            )
+        }
+        
+        return self._normalize_regime_probabilities(regimes)
+    
+    def _update_performance_metrics(self, regimes: Dict[str, float], date: datetime):
+        """Update performance tracking metrics"""
+        current_trend = max(
+            ((r, regimes[r]) for r in self.trend_regimes),
+            key=lambda x: x[1],
+            default=("neutral", 0)
+        )[0]
+        
+        current_vol = max(
+            ((r, regimes[r]) for r in self.volatility_regimes),
+            key=lambda x: x[1],
+            default=("medium_vol", 0)
+        )[0]
+        
+        current_regime = (current_trend, current_vol)
+        
+        # Track regime duration
+        if self.current_regime != current_regime:
+            if self.current_regime is not None:
+                duration = (date - self.regime_start_date).days
+                self.performance_metrics['regime_duration'][self.current_regime].append(duration)
+                self.performance_metrics['transition_stats'][(self.current_regime, current_regime)] += 1
+            
+            self.previous_regime = self.current_regime
+            self.current_regime = current_regime
+            self.regime_start_date = date
+        
+        # Track accuracy (simplified - would need actual future returns to measure real accuracy)
+        if len(self.daily_data) > 30:
+            # Use iloc for positional indexing
+            future_return = (self.daily_data['c'].shift(-30).iloc[-1] / self.daily_data['c'].iloc[-1] - 1) * 100
+            correct_prediction = self._validate_regime_prediction(current_trend, future_return)
+            self.performance_metrics['historical_accuracy'].append(correct_prediction)
+    
+    def _validate_regime_prediction(self, predicted_trend: str, future_return: float) -> bool:
+        """Validate if the regime prediction was correct"""
+        if predicted_trend in ["strong_bull", "weak_bull"] and future_return > 2:
+            return True
+        elif predicted_trend == "neutral" and -2 <= future_return <= 2:
+            return True
+        elif predicted_trend in ["weak_bear", "strong_bear"] and future_return < -2:
+            return True
+        return False
+    
+    def get_performance_metrics(self) -> Dict:
+        """Get calculated performance metrics"""
+        metrics = {
+            'accuracy_30d': np.mean(self.performance_metrics['historical_accuracy']) if self.performance_metrics['historical_accuracy'] else 0,
+            'avg_regime_duration': {str(k): np.mean(v) if v else 0 
+                                  for k, v in self.performance_metrics['regime_duration'].items()},
+            'common_transitions': sorted(self.performance_metrics['transition_stats'].items(), 
+                                       key=lambda x: -x[1]),
+            'current_regime_duration': (datetime.now() - self.regime_start_date).days if self.regime_start_date else 0,
+            'regime_stability': self._calculate_regime_stability()
+        }
+        return metrics
+    
+    def _calculate_regime_stability(self) -> float:
+        """Calculate a stability score (0-1) for the current regime"""
+        if not self.performance_metrics['regime_duration']:
+            return 0.5
+        
+        current_duration = (datetime.now() - self.regime_start_date).days if self.regime_start_date else 0
+        avg_duration = np.mean(self.performance_metrics['regime_duration'].get(self.current_regime, [current_duration]))
+        
+        if current_duration < avg_duration * 0.5:
+            return 0.2  # Early in regime
+        elif current_duration > avg_duration * 1.5:
+            return 0.8  # Extended regime
+        return 0.5  # Normal duration
+    
+    def _strong_bull_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
+                              trend_strength: float, rsi_14: float, macd_above_signal: bool,
+                              momentum_5d: float, momentum_30d: float) -> float:
+        score = 0
+        if price_above_200sma: score += 0.15
+        if sma_50_above_200: score += 0.15
+        if trend_strength > 0.75: score += 0.15
+        if 60 < rsi_14 <= 80: score += 0.1
+        if macd_above_signal: score += 0.1
+        if momentum_5d > 1.5: score += 0.1
+        if momentum_30d > 5.0: score += 0.1
+        return score
+    
+    def _weak_bull_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
+                            trend_strength: float, rsi_14: float, macd_above_signal: bool,
+                            momentum_5d: float, momentum_30d: float) -> float:
+        score = 0
+        if price_above_200sma: score += 0.15
+        if sma_50_above_200: score += 0.1
+        if trend_strength > 0.55: score += 0.15
+        if 50 < rsi_14 <= 60: score += 0.15
+        if macd_above_signal: score += 0.1
+        if momentum_5d > 0: score += 0.1
+        if momentum_30d > 2.0: score += 0.1
+        return score
+    
+    def _neutral_confidence(self, rsi_14: float, vol_ratio: float, atr_14: float,
+                          atr_30: float, trend_strength: float,
+                          hist_vol: float, parkinson_vol: float) -> float:
+        score = 0
+        if 40 <= rsi_14 <= 60: score += 0.25
+        if 0.9 <= vol_ratio <= 1.1: score += 0.2
+        if 0.3 <= trend_strength <= 0.7: score += 0.2
+        if 0.8 <= (atr_14 / atr_30) <= 1.2 if atr_30 > 0 else False: score += 0.15
+        if 0.9 <= (hist_vol / parkinson_vol) <= 1.1 if parkinson_vol > 0 else False: score += 0.2
+        return score
+    
+    def _weak_bear_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
+                             trend_strength: float, rsi_14: float, macd_above_signal: bool,
+                             momentum_5d: float, momentum_30d: float) -> float:
+        score = 0
+        if not price_above_200sma: score += 0.15
+        if not sma_50_above_200: score += 0.1
+        if trend_strength < 0.45: score += 0.15
+        if 30 <= rsi_14 < 50: score += 0.15
+        if not macd_above_signal: score += 0.1
+        if momentum_5d < 0: score += 0.1
+        if momentum_30d < -2.0: score += 0.1
+        return score
+    
+    def _strong_bear_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
+                               trend_strength: float, rsi_14: float, macd_above_signal: bool,
+                               momentum_5d: float, momentum_30d: float) -> float:
+        score = 0
+        if not price_above_200sma: score += 0.15
+        if not sma_50_above_200: score += 0.15
+        if trend_strength < 0.25: score += 0.15
+        if rsi_14 < 30: score += 0.1
+        if not macd_above_signal: score += 0.1
+        if momentum_5d < -1.5: score += 0.1
+        if momentum_30d < -5.0: score += 0.1
+        return score
+    
+    def _low_vol_confidence(self, vol_ratio: float, atr_14: float, atr_30: float,
+                           hist_vol: float, parkinson_vol: float) -> float:
+        if (vol_ratio < 0.7 and 
+            (atr_14 / atr_30) < 0.7 if atr_30 > 0 else False and
+            hist_vol < 0.15 and 
+            parkinson_vol < 0.15):
+            return 0.9
+        return 0
+    
+    def _medium_vol_confidence(self, vol_ratio: float, atr_14: float, atr_30: float,
+                              hist_vol: float, parkinson_vol: float) -> float:
+        if (0.7 <= vol_ratio <= 1.3 and 
+            0.7 <= (atr_14 / atr_30) <= 1.3 if atr_30 > 0 else False and
+            0.15 <= hist_vol <= 0.30 and 
+            0.15 <= parkinson_vol <= 0.30):
+            return 0.9
+        return 0
+    
+    def _high_vol_confidence(self, vol_ratio: float, atr_14: float, atr_30: float,
+                            hist_vol: float, parkinson_vol: float,
+                            volume_spike: bool) -> float:
+        if ((vol_ratio > 1.3 or 
+             (atr_14 / atr_30) > 1.3 if atr_30 > 0 else False or
+             hist_vol > 0.30 or 
+             parkinson_vol > 0.30) and
+            volume_spike):
+            return 0.9
+        return 0
+    
+    def _normalize_regime_probabilities(self, regimes: Dict[str, float]) -> Dict[str, float]:
+        trend_total = sum(regimes[r] for r in self.trend_regimes)
+        vol_total = sum(regimes[r] for r in self.volatility_regimes)
+        
+        normalized = {}
+        for r in regimes:
+            if r in self.trend_regimes:
+                normalized[r] = regimes[r] / trend_total if trend_total > 0 else 0
+            else:
+                normalized[r] = regimes[r] / vol_total if vol_total > 0 else 0
+        return normalized
+    
+    def _default_regime_probabilities(self) -> Dict[str, float]:
+        return {
+            "strong_bull": 0.2, "weak_bull": 0.2, "neutral": 0.2, 
+            "weak_bear": 0.2, "strong_bear": 0.2,
+            "low_vol": 0.33, "medium_vol": 0.34, "high_vol": 0.33
+        }
+    
     async def get_scan_criteria(self) -> Dict:
         base_criteria = {
             "min_volume": 500_000,
@@ -484,6 +842,27 @@ class MarketRegimeDetector:
         
         return base_criteria
 
+    def get_performance_metrics(self) -> Dict:
+        """Get calculated performance metrics with safe defaults"""
+        # Initialize with default values if metrics are empty
+        if not self.performance_metrics['regime_duration']:
+            self.performance_metrics['regime_duration'] = defaultdict(list)
+        if 'transition_stats' not in self.performance_metrics:
+            self.performance_metrics['transition_stats'] = defaultdict(int)
+        if 'historical_accuracy' not in self.performance_metrics:
+            self.performance_metrics['historical_accuracy'] = []
+
+        metrics = {
+            'accuracy_30d': np.mean(self.performance_metrics['historical_accuracy']) if self.performance_metrics['historical_accuracy'] else 0,
+            'avg_regime_duration': {str(k): np.mean(v) if v else 0 
+                                  for k, v in self.performance_metrics['regime_duration'].items()},
+            'common_transitions': sorted(self.performance_metrics['transition_stats'].items(), 
+                                     key=lambda x: -x[1]) if self.performance_metrics['transition_stats'] else [],
+            'current_regime_duration': (datetime.now() - self.regime_start_date).days if self.regime_start_date else 0,
+            'regime_stability': self._calculate_regime_stability()
+        }
+        return metrics
+
     async def get_current_regime(self) -> Tuple[str, str]:
         regimes = await self.detect_regime()
         
@@ -501,74 +880,17 @@ class MarketRegimeDetector:
         
         return trend_regime, vol_regime
     
-    async def detect_regime(self) -> Dict[str, float]:
-        if self.daily_data is None:
-            return self._default_regime_probabilities()
-        
-        recent_daily = self.daily_data.iloc[-1]
-        recent_weekly = self.weekly_data.iloc[-1]
-        
-        price_above_200sma = recent_daily['c'] > recent_daily['sma_200']
-        sma_50_above_200 = recent_daily['sma_50'] > recent_daily['sma_200']
-        weekly_sma_10_above_40 = recent_weekly['sma_10'] > recent_weekly['sma_40']
-        trend_strength = recent_daily['trend_strength']
-        rsi_14 = recent_daily['rsi_14']
-        macd_above_signal = recent_daily['macd'] > recent_daily['macd_signal']
-        
-        atr_14 = recent_daily['atr_14']
-        atr_30 = self.daily_data['atr_14'].iloc[-30:].mean()
-        vol_ratio = atr_14 / atr_30 if atr_30 > 0 else 1.0
-        hist_vol = recent_daily['hist_vol_30']
-        parkinson_vol = recent_daily['parkinson_vol']
-        
-        momentum_5d = (recent_daily['c'] / self.daily_data['c'].iloc[-5] - 1) * 100
-        momentum_30d = (recent_daily['c'] / self.daily_data['c'].iloc[-30] - 1) * 100
-        weekly_momentum = (recent_weekly['c'] / self.weekly_data['c'].iloc[-4] - 1) * 100
-        
-        volume_spike = recent_daily['volume_ratio'] > 1.5
-        
-        regimes = {
-            "strong_bull": self._strong_bull_confidence(
-                price_above_200sma, sma_50_above_200, weekly_sma_10_above_40,
-                trend_strength, rsi_14, macd_above_signal,
-                momentum_5d, momentum_30d, weekly_momentum
-            ),
-            "weak_bull": self._weak_bull_confidence(
-                price_above_200sma, sma_50_above_200, weekly_sma_10_above_40,
-                trend_strength, rsi_14, macd_above_signal,
-                momentum_5d, momentum_30d, weekly_momentum
-            ),
-            "neutral": self._neutral_confidence(
-                rsi_14, vol_ratio, atr_14, atr_30,
-                trend_strength, hist_vol, parkinson_vol
-            ),
-            "weak_bear": self._weak_bear_confidence(
-                price_above_200sma, sma_50_above_200, weekly_sma_10_above_40,
-                trend_strength, rsi_14, macd_above_signal,
-                momentum_5d, momentum_30d, weekly_momentum
-            ),
-            "strong_bear": self._strong_bear_confidence(
-                price_above_200sma, sma_50_above_200, weekly_sma_10_above_40,
-                trend_strength, rsi_14, macd_above_signal,
-                momentum_5d, momentum_30d, weekly_momentum
-            ),
-            "low_vol": self._low_vol_confidence(
-                vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol
-            ),
-            "medium_vol": self._medium_vol_confidence(
-                vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol
-            ),
-            "high_vol": self._high_vol_confidence(
-                vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol, volume_spike
-            )
-        }
-        
-        return self._normalize_regime_probabilities(regimes)
-
     async def get_regime_description(self) -> Dict:
+        """Enhanced regime description with performance metrics"""
         regimes = await self.detect_regime()
         trend_regime, vol_regime = await self.get_current_regime()
         transition_info = self._analyze_regime_transitions()
+        performance = self.get_performance_metrics()
+        
+        # Safely handle missing transition stats
+        top_transitions = []
+        if 'common_transitions' in performance and performance['common_transitions']:
+            top_transitions = performance['common_transitions'][:3]  # Get top 3 transitions
         
         return {
             "primary_trend": str(trend_regime),
@@ -576,12 +898,70 @@ class MarketRegimeDetector:
             "trend_probabilities": {str(r): float(regimes[r]) for r in self.trend_regimes},
             "volatility_probabilities": {str(r): float(regimes[r]) for r in self.volatility_regimes},
             "transition_analysis": {
-                'potential_transition': bool(transition_info['potential_transition']),
-                'trend_weakening': bool(transition_info['trend_weakening']),
-                'vol_increasing': bool(transition_info['vol_increasing'])
+                'potential_transition': bool(transition_info.get('potential_transition', False)),
+                'trend_weakening': bool(transition_info.get('trend_weakening', False)),
+                'vol_increasing': bool(transition_info.get('vol_increasing', False))
+            },
+            "performance_metrics": {
+                'accuracy_30d': performance.get('accuracy_30d', 0),
+                'top_transitions': top_transitions,
+                'avg_durations': performance.get('avg_regime_duration', {}),
+                'current_duration': performance.get('current_regime_duration', 0),
+                'stability': performance.get('regime_stability', 0.5)
             },
             "timestamp": datetime.now().isoformat()
         }
+    
+    def format_regime_report(self, regime_data: Dict) -> str:
+        """Format the regime data into a clean text report"""
+        # Safely extract all values with defaults
+        primary_trend = regime_data.get('primary_trend', 'neutral')
+        primary_vol = regime_data.get('primary_volatility', 'medium_vol')
+        trend_probs = regime_data.get('trend_probabilities', {})
+        vol_probs = regime_data.get('volatility_probabilities', {})
+        performance = regime_data.get('performance_metrics', {})
+        
+        report = [
+            f"Market Analysis Report - {regime_data.get('timestamp', '')}",
+            "\n=== MARKET REGIME ===",
+            f"Primary Trend: {primary_trend.upper()} "
+            f"({round(trend_probs.get(primary_trend, 0)*100, 1)}% probability)",
+            f"Volatility: {primary_vol.upper()} "
+            f"({round(vol_probs.get(primary_vol, 0)*100, 1)}% probability)",
+            "\nTrend Probabilities:",
+            *[f"- {k.replace('_', ' ').title()}: {round(v*100, 1)}%" 
+              for k, v in trend_probs.items()],
+            "\nVolatility Probabilities:",
+            *[f"- {k.replace('_', ' ').title()}: {round(v*100, 1)}%" 
+              for k, v in vol_probs.items()],
+            "\n=== REGIME TRANSITIONS ===",
+            f"Current Regime Duration: {performance.get('current_duration', 0)} days",
+            f"Stability: {self._get_stability_description(performance.get('stability', 0.5))}",
+        ]
+        
+        # Only add transitions if they exist
+        if performance.get('top_transitions'):
+            report.extend([
+                "\nMost Common Transitions:",
+                *[f"{i+1}. {k[0][0]} → {k[1][0]} ({v} occurrences)" 
+                  for i, (k, v) in enumerate(performance['top_transitions'])]
+            ])
+        
+        # Only add durations if they exist
+        if performance.get('avg_durations'):
+            report.extend([
+                "\nAverage Regime Durations:",
+                *[f"- {k}: {v:.1f} days" for k, v in performance['avg_durations'].items()][:3]
+            ])
+        
+        return "\n".join(report)
+
+    def _get_stability_description(self, score: float) -> str:
+        if score < 0.3:
+            return "Low"
+        elif score < 0.7:
+            return "Medium"
+        return "High"
 
     def _analyze_regime_transitions(self) -> Dict[str, bool]:
         if self.daily_data is None or len(self.daily_data) < 5:
@@ -609,133 +989,6 @@ class MarketRegimeDetector:
             'vol_increasing': vol_increasing
         }
 
-    def _default_regime_probabilities(self) -> Dict[str, float]:
-        return {
-            "strong_bull": 0.2, "weak_bull": 0.2, "neutral": 0.2, 
-            "weak_bear": 0.2, "strong_bear": 0.2,
-            "low_vol": 0.33, "medium_vol": 0.34, "high_vol": 0.33
-        }
-    
-    def _normalize_regime_probabilities(self, regimes: Dict[str, float]) -> Dict[str, float]:
-        trend_total = sum(regimes[r] for r in self.trend_regimes)
-        vol_total = sum(regimes[r] for r in self.volatility_regimes)
-        
-        normalized = {}
-        for r in regimes:
-            if r in self.trend_regimes:
-                normalized[r] = regimes[r] / trend_total if trend_total > 0 else 0
-            else:
-                normalized[r] = regimes[r] / vol_total if vol_total > 0 else 0
-        return normalized
-    
-    def _strong_bull_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
-                              weekly_sma_10_above_40: bool, trend_strength: float, 
-                              rsi_14: float, macd_above_signal: bool,
-                              momentum_5d: float, momentum_30d: float,
-                              weekly_momentum: float) -> float:
-        score = 0
-        if price_above_200sma: score += 0.15
-        if sma_50_above_200: score += 0.15
-        if weekly_sma_10_above_40: score += 0.1
-        if trend_strength > 0.75: score += 0.15
-        if 60 < rsi_14 <= 80: score += 0.1
-        if macd_above_signal: score += 0.1
-        if momentum_5d > 1.5: score += 0.1
-        if momentum_30d > 5.0: score += 0.1
-        if weekly_momentum > 3.0: score += 0.05
-        return score
-    
-    def _weak_bull_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
-                            weekly_sma_10_above_40: bool, trend_strength: float,
-                            rsi_14: float, macd_above_signal: bool,
-                            momentum_5d: float, momentum_30d: float,
-                            weekly_momentum: float) -> float:
-        score = 0
-        if price_above_200sma: score += 0.15
-        if sma_50_above_200: score += 0.1
-        if weekly_sma_10_above_40: score += 0.05
-        if trend_strength > 0.55: score += 0.15
-        if 50 < rsi_14 <= 60: score += 0.15
-        if macd_above_signal: score += 0.1
-        if momentum_5d > 0: score += 0.1
-        if momentum_30d > 2.0: score += 0.1
-        if weekly_momentum > 1.0: score += 0.1
-        return score
-    
-    def _neutral_confidence(self, rsi_14: float, vol_ratio: float, atr_14: float,
-                          atr_30: float, trend_strength: float,
-                          hist_vol: float, parkinson_vol: float) -> float:
-        score = 0
-        if 40 <= rsi_14 <= 60: score += 0.25
-        if 0.9 <= vol_ratio <= 1.1: score += 0.2
-        if 0.3 <= trend_strength <= 0.7: score += 0.2
-        if 0.8 <= (atr_14 / atr_30) <= 1.2 if atr_30 > 0 else False: score += 0.15
-        if 0.9 <= (hist_vol / parkinson_vol) <= 1.1 if parkinson_vol > 0 else False: score += 0.2
-        return score
-    
-    def _weak_bear_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
-                             weekly_sma_10_above_40: bool, trend_strength: float,
-                             rsi_14: float, macd_above_signal: bool,
-                             momentum_5d: float, momentum_30d: float,
-                             weekly_momentum: float) -> float:
-        score = 0
-        if not price_above_200sma: score += 0.15
-        if not sma_50_above_200: score += 0.1
-        if not weekly_sma_10_above_40: score += 0.05
-        if trend_strength < 0.45: score += 0.15
-        if 30 <= rsi_14 < 50: score += 0.15
-        if not macd_above_signal: score += 0.1
-        if momentum_5d < 0: score += 0.1
-        if momentum_30d < -2.0: score += 0.1
-        if weekly_momentum < -1.0: score += 0.1
-        return score
-    
-    def _strong_bear_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
-                               weekly_sma_10_above_40: bool, trend_strength: float,
-                               rsi_14: float, macd_above_signal: bool,
-                               momentum_5d: float, momentum_30d: float,
-                               weekly_momentum: float) -> float:
-        score = 0
-        if not price_above_200sma: score += 0.15
-        if not sma_50_above_200: score += 0.15
-        if not weekly_sma_10_above_40: score += 0.1
-        if trend_strength < 0.25: score += 0.15
-        if rsi_14 < 30: score += 0.1
-        if not macd_above_signal: score += 0.1
-        if momentum_5d < -1.5: score += 0.1
-        if momentum_30d < -5.0: score += 0.1
-        if weekly_momentum < -3.0: score += 0.05
-        return score
-    
-    def _low_vol_confidence(self, vol_ratio: float, atr_14: float, atr_30: float,
-                           hist_vol: float, parkinson_vol: float) -> float:
-        if (vol_ratio < 0.7 and 
-            (atr_14 / atr_30) < 0.7 if atr_30 > 0 else False and
-            hist_vol < 0.15 and 
-            parkinson_vol < 0.15):
-            return 0.9
-        return 0
-    
-    def _medium_vol_confidence(self, vol_ratio: float, atr_14: float, atr_30: float,
-                              hist_vol: float, parkinson_vol: float) -> float:
-        if (0.7 <= vol_ratio <= 1.3 and 
-            0.7 <= (atr_14 / atr_30) <= 1.3 if atr_30 > 0 else False and
-            0.15 <= hist_vol <= 0.30 and 
-            0.15 <= parkinson_vol <= 0.30):
-            return 0.9
-        return 0
-    
-    def _high_vol_confidence(self, vol_ratio: float, atr_14: float, atr_30: float,
-                            hist_vol: float, parkinson_vol: float,
-                            volume_spike: bool) -> float:
-        if ((vol_ratio > 1.3 or 
-             (atr_14 / atr_30) > 1.3 if atr_30 > 0 else False or
-             hist_vol > 0.30 or 
-             parkinson_vol > 0.30) and
-            volume_spike):
-            return 0.9
-        return 0
-
 class StockScanner:
     """Complete stock scanner with multi-strategy support and strategy-specific scanning"""
     
@@ -746,7 +999,7 @@ class StockScanner:
         max_tickers_to_scan: Optional[int] = 100
     ):
         self.polygon = polygon_client
-        self.regime_detector = MarketRegimeDetector(polygon_client, debugger)
+        self.regime_detector = EnhancedMarketRegimeDetector(polygon_client, debugger)
         self.ftp_client = NASDAQTraderFTP(debugger)
         self.ftp_client.scanner = self
         self.debugger = debugger
@@ -1129,27 +1382,58 @@ class StockScanner:
         
         return f"Selected {dominant_strategy} because: " + "; ".join(reasons.get(dominant_strategy, ["Superior score across all metrics"]))
 
+    def _print_progress(self, current: int, total: int, start_time: float):
+        """Print a clean progress line that updates in place"""
+        elapsed = time.time() - start_time
+        rate = current / elapsed if elapsed > 0 else 0
+        remaining = (total - current) / rate if rate > 0 else 0
+        
+        progress = current / total
+        bar_length = 40
+        filled = int(progress * bar_length)
+        bar = '█' * filled + ' ' * (bar_length - filled)
+        
+        progress_line = (
+            f"[{datetime.now().strftime('%H:%M:%S')}] "
+            f"Prefiltering: {bar} {progress:.0%} ({current}/{total}) | "
+            f"Speed: {rate:.1f} tickers/sec | "
+            f"ETA: {timedelta(seconds=int(remaining))}"
+        )
+        
+        # Use \r to return to start of line and overwrite
+        sys.stdout.write('\r' + progress_line)
+        sys.stdout.flush()
+        
     async def _run_prefilter_scan(self) -> List[str]:
-        """Ultra-light prefilter that only removes completely untradeable stocks"""
+        """Ultra-light prefilter with clean progress display"""
         prefilter_criteria = {
-            "min_days_data": 5,        # Need at least some history
-            "min_avg_volume": 50_000,  # Absolute minimum liquidity
-            "max_price": 10_000,       # Only filter out extremely high-priced stocks
-            "days_to_scan": 30         # Short lookback period
+            "min_days_data": 5,
+            "min_avg_volume": 50_000,
+            "max_price": 10_000,
+            "days_to_scan": 30
         }
         
         prefiltered = []
         batch_size = 50
+        start_time = time.time()
         
-        with tqdm(total=len(self.tickers_to_scan), desc="Prefiltering") as pbar:
-            for i in range(0, len(self.tickers_to_scan), batch_size):
-                batch = self.tickers_to_scan[i:i + batch_size]
-                tasks = [self._check_prefilter_criteria(ticker, prefilter_criteria) 
-                        for ticker in batch]
-                results = await asyncio.gather(*tasks)
-                prefiltered.extend([ticker for ticker, passes in zip(batch, results) if passes])
-                pbar.update(len(batch))
+        print(f"\n[Starting prefilter scan of {len(self.tickers_to_scan)} tickers]")
         
+        for i in range(0, len(self.tickers_to_scan), batch_size):
+            batch = self.tickers_to_scan[i:i + batch_size]
+            tasks = [self._check_prefilter_criteria(ticker, prefilter_criteria) 
+                    for ticker in batch]
+            results = await asyncio.gather(*tasks)
+            prefiltered.extend([ticker for ticker, passes in zip(batch, results) if passes])
+            
+            # Update progress display
+            self._print_progress(i + batch_size, len(self.tickers_to_scan), start_time)
+        
+        # Clear the progress line when done
+        sys.stdout.write('\r' + ' ' * 100 + '\r')
+        sys.stdout.flush()
+        
+        self.debugger.info(f"Prefilter complete. {len(prefiltered)} tickers passed initial screening")
         return prefiltered
 
     async def _check_prefilter_criteria(self, ticker: str, criteria: Dict) -> bool:
@@ -1905,7 +2189,7 @@ async def main():
     POLYGON_API_KEY = "OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z"
     
     # Initialize debugger with logging disabled
-    debugger = Debugger(enabled=True)
+    debugger = Debugger(enabled=False)
     # Or alternatively, only show warnings and errors:
     # debugger = Debugger(enabled=True, level="WARNING")
     
