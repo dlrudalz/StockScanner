@@ -2357,4 +2357,4 @@ if __name__ == "__main__":
     run_scanner(['hypergrowth', 'momentum'])
     
     # 3. Run single strategy
-    # run_scanner(['breakout'])
+    # run_scanner(['breakout'])[]
