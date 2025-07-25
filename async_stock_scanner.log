@@ -1,6 +1,0 @@
-2025-07-18 14:46:08,628 - INFO - Initializing market regime detector...
-2025-07-18 14:46:08,628 - ERROR - Request failed for /v2/aggs/ticker/SPY/range/1/day/2024-12-30/2025-07-18: 'NoneType' object has no attribute 'get'
-2025-07-18 14:46:08,628 - ERROR - Failed to get SPY data for regime detection
-2025-07-18 14:46:14,826 - INFO - Initializing market regime detector...
-2025-07-18 14:46:14,826 - ERROR - Request failed for /v2/aggs/ticker/SPY/range/1/day/2024-12-30/2025-07-18: 'NoneType' object has no attribute 'get'
-2025-07-18 14:46:14,826 - ERROR - Failed to get SPY data for regime detection

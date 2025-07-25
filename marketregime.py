@@ -1,487 +1,251 @@
-import asyncio
-import aiohttp
-import async_timeout
+import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta, date
-import logging
-import talib
-from typing import Literal, Tuple, Dict, Optional, List
-import random
-from scipy.stats import linregress
+from hmmlearn import hmm
+import time
+from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+from tqdm import tqdm  # For progress bars
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.preprocessing import StandardScaler
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger(__name__)
+# Configuration
+POLYGON_API_KEY = "OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z"
+EXCHANGES = ["XNYS", "XNAS", "XASE"]  # NYSE, NASDAQ, AMEX
+MAX_TICKERS_PER_EXCHANGE = 200  # Reduced per exchange to stay within limits
+RATE_LIMIT = .001  # seconds between requests
+MIN_DAYS_DATA = 200  # Minimum days of data required for analysis
+N_STATES = 3  # Bull/Neutral/Bear regimes
 
-# Define market regime types
-TrendRegime = Literal["strong_bull", "weak_bull", "neutral", "weak_bear", "strong_bear"]
-VolatilityRegime = Literal["low_vol", "medium_vol", "high_vol"]
-
-class AsyncPolygonIOClient:
-    """Enhanced Polygon.io API client with caching and multi-timeframe support"""
+def get_all_tickers():
+    """Fetch tickers from all exchanges with multiple fallback strategies"""
+    all_tickers = []
     
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.base_url = "https://api.polygon.io"
-        self.rate_limit_delay = 1.2
-        self.last_request_time = 0
-        self.session = None
-        self.semaphore = asyncio.Semaphore(5)
-        self.cache = {}
-
-    async def __aenter__(self):
-        """Initialize async session"""
-        self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30)
-        )
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        """Cleanup async session"""
-        await self.session.close()
-
-    async def get_aggregates(self, ticker: str, days: int = 300, 
-                           timespan: str = "day") -> Optional[pd.DataFrame]:
-        """Get historical price data with caching and multi-timeframe support"""
-        cache_key = f"{ticker}_{days}_{timespan}"
-        if cache_key in self.cache:
-            return self.cache[cache_key].copy()
-
+    for exchange in EXCHANGES:
+        # Primary method - exchange listing
+        url = "https://api.polygon.io/v3/reference/tickers"
+        params = {
+            "exchange": exchange,
+            "market": "stocks",
+            "active": "true",
+            "limit": MAX_TICKERS_PER_EXCHANGE,
+            "apiKey": POLYGON_API_KEY
+        }
+        
         try:
-            # Request more days to account for weekends/holidays
-            end_date = date.today() - timedelta(days=1)  # Yesterday
-            start_date = end_date - timedelta(days=int(days * 1.5))
-
-            logger.info(f"Fetching {ticker} {timespan} data from {start_date} to {end_date}")
-
-            endpoint = f"/v2/aggs/ticker/{ticker}/range/1/{timespan}/{start_date}/{end_date}"
-            params = {"adjusted": "true", "apiKey": self.api_key}
-
-            async with self.semaphore:
-                await self._throttle()
-                async with async_timeout.timeout(30):
-                    async with self.session.get(f"{self.base_url}{endpoint}", params=params) as response:
-                        if response.status == 429:
-                            await asyncio.sleep(10)
-                            return await self.get_aggregates(ticker, days, timespan)
-                        response.raise_for_status()
-                        data = await response.json()
-
-            if not data.get("results"):
-                logger.error(f"No results for {ticker}")
-                return None
-                
-            df = pd.DataFrame(data["results"])
-            df["date"] = pd.to_datetime(df["t"], unit="ms")
-            df = df.set_index("date")
-            self.cache[cache_key] = df.copy()
-            return df
-
+            print(f"Fetching {exchange} tickers...")
+            response = requests.get(url, params=params)
+            data = response.json()
+            
+            if 'results' in data and data['results']:
+                # Get most liquid stocks (sorted by descending market cap)
+                tickers = sorted(
+                    [(t['ticker'], t.get('market_cap', 0)) for t in data['results']],
+                    key=lambda x: x[1],
+                    reverse=True
+                )
+                exchange_tickers = [t[0] for t in tickers]
+                all_tickers.extend(exchange_tickers)
+                print(f"Found {len(exchange_tickers)} tickers for {exchange}")
         except Exception as e:
-            logger.error(f"Failed to fetch {ticker}: {str(e)}")
-            return None
-
-    async def _throttle(self):
-        """Enforce rate limiting with jitter"""
-        now = asyncio.get_event_loop().time()
-        elapsed = now - self.last_request_time
-        if elapsed < self.rate_limit_delay:
-            delay = self.rate_limit_delay - elapsed + random.uniform(0.1, 0.3)
-            await asyncio.sleep(delay)
-        self.last_request_time = now
-
-class MarketRegimeDetector:
-    """Advanced market regime detector with multi-timeframe analysis"""
+            print(f"API error for {exchange}: {str(e)}")
+            # Fallback to index components if primary method fails
+            print(f"Using index components as proxy for {exchange}")
+            all_tickers.extend(get_index_components(exchange))
     
-    def __init__(self, polygon_client: AsyncPolygonIOClient):
-        self.polygon = polygon_client
-        self.daily_data = None
-        self.weekly_data = None
-        self.volatility_regimes = ["low_vol", "medium_vol", "high_vol"]
-        self.trend_regimes = ["strong_bull", "weak_bull", "neutral", "weak_bear", "strong_bear"]
-        
-    async def initialize(self) -> bool:
-        """Initialize with daily and weekly data"""
-        try:
-            logger.info("Initializing market regime detector...")
-            
-            # Get daily and weekly data
-            self.daily_data = await self.polygon.get_aggregates("QQQ", days=252, timespan="day")
-            self.weekly_data = await self.polygon.get_aggregates("QQQ", days=252, timespan="week")
-            
-            if self.daily_data is None or self.weekly_data is None:
-                logger.error("Failed to fetch QQQ data - API returned None")
-                return False
-                
-            if len(self.daily_data) < 100 or len(self.weekly_data) < 20:
-                logger.error(f"Insufficient data points: Daily={len(self.daily_data)}, Weekly={len(self.weekly_data)}")
-                return False
-                
-            logger.info(f"Loaded {len(self.daily_data)} daily and {len(self.weekly_data)} weekly data points")
-            self._calculate_technical_indicators()
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error initializing detector: {str(e)}", exc_info=True)
-            return False
-        
-    def _calculate_technical_indicators(self):
-        """Calculate advanced technical indicators"""
-        # Daily indicators
-        daily_closes = self.daily_data['c'].values
-        daily_highs = self.daily_data['h'].values
-        daily_lows = self.daily_data['l'].values
-        daily_volumes = self.daily_data['v'].values
-        
-        # Basic indicators
-        self.daily_data['sma_50'] = talib.SMA(daily_closes, timeperiod=50)
-        self.daily_data['sma_200'] = talib.SMA(daily_closes, timeperiod=200)
-        self.daily_data['rsi_14'] = talib.RSI(daily_closes, timeperiod=14)
-        self.daily_data['macd'], self.daily_data['macd_signal'], _ = talib.MACD(daily_closes)
-        self.daily_data['atr_14'] = talib.ATR(daily_highs, daily_lows, daily_closes, timeperiod=14)
-        self.daily_data['adx'] = talib.ADX(daily_highs, daily_lows, daily_closes, timeperiod=14)
-        
-        # Advanced volatility metrics
-        log_returns = np.log(daily_closes[1:]/daily_closes[:-1])
-        self.daily_data['hist_vol_30'] = pd.Series(log_returns).rolling(30).std() * np.sqrt(252)
-        
-        hl_ratio = np.log(self.daily_data['h']/self.daily_data['l'])
-        self.daily_data['parkinson_vol'] = hl_ratio.rolling(14).std() * np.sqrt(252)
-        
-        # Volume analysis
-        self.daily_data['volume_sma_20'] = talib.SMA(daily_volumes, timeperiod=20)
-        self.daily_data['volume_ratio'] = daily_volumes / self.daily_data['volume_sma_20']
-        
-        # Weekly indicators
-        weekly_closes = self.weekly_data['c'].values
-        self.weekly_data['sma_10'] = talib.SMA(weekly_closes, timeperiod=10)  # 10 weeks ~ 50 days
-        self.weekly_data['sma_40'] = talib.SMA(weekly_closes, timeperiod=40)  # 40 weeks ~ 200 days
-        
-        # Composite trend strength (daily + weekly)
-        trend_components = []
-        trend_components.append(0.3 * (self.daily_data['sma_50'] > self.daily_data['sma_200']))
-        trend_components.append(0.2 * (self.weekly_data['sma_10'] > self.weekly_data['sma_40']).resample('D').ffill())
-        trend_components.append(0.2 * (self.daily_data['adx'] / 100))
-        trend_components.append(0.1 * (self.daily_data['macd'] > self.daily_data['macd_signal']))
-        trend_components.append(0.1 * (self.daily_data['c'] > self.daily_data['sma_50']))
-        trend_components.append(0.1 * (self.daily_data['rsi_14'] / 100))
-        
-        self.daily_data['trend_strength'] = sum(tc[:len(self.daily_data)] for tc in trend_components)
+    # Remove duplicates and limit total tickers
+    unique_tickers = list(set(all_tickers))
+    return unique_tickers[:MAX_TICKERS_PER_EXCHANGE * len(EXCHANGES)]
 
-    def _analyze_regime_transitions(self) -> Dict[str, bool]:
-        """Detect potential regime transitions"""
-        recent_daily = self.daily_data.iloc[-5:]  # Last 5 days
-        
-        # Trend transition signals
-        trend_weakening = (
-            (recent_daily['trend_strength'].pct_change(fill_method=None).mean() < -0.05) or
-            (recent_daily['rsi_14'].iloc[-1] < 30 and recent_daily['rsi_14'].iloc[-1] < recent_daily['rsi_14'].iloc[-5])
+def get_index_components(exchange):
+    """Fallback: Get index components based on exchange"""
+    try:
+        if exchange == "XNYS":
+            tables = pd.read_html("https://en.wikipedia.org/wiki/NYSE_Composite")
+            return tables[2]['Symbol'].tolist()[:MAX_TICKERS_PER_EXCHANGE]
+        elif exchange == "XNAS":
+            tables = pd.read_html("https://en.wikipedia.org/wiki/NASDAQ-100")
+            return tables[4]['Ticker'].tolist()[:MAX_TICKERS_PER_EXCHANGE]
+        elif exchange == "XASE":
+            tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_American_Stock_Exchange_companies")
+            return tables[0]['Symbol'].tolist()[:MAX_TICKERS_PER_EXCHANGE]
+    except:
+        return ["DIA", "SPY", "QQQ"]  # Broad market ETFs as last resort
+
+def fetch_stock_data(symbol, days=365):
+    """Get historical data with caching and retry logic"""
+    if RATE_LIMIT:
+        time.sleep(RATE_LIMIT)
+    
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    
+    url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{start_date}/{end_date}"
+    params = {
+        "adjusted": "true",
+        "sort": "asc",
+        "limit": 50000,
+        "apiKey": POLYGON_API_KEY
+    }
+    
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            results = response.json().get('results', [])
+            if results:
+                df = pd.DataFrame(results)
+                df['date'] = pd.to_datetime(df['t'], unit='ms')
+                return df.set_index('date')['c']
+    except Exception as e:
+        print(f"Error fetching {symbol}: {str(e)}")
+    return None
+
+class MarketRegimeAnalyzer:
+    def __init__(self, n_states=3):
+        """Initialize HMM model for regime detection"""
+        self.model = hmm.GaussianHMM(
+            n_components=n_states,
+            covariance_type="diag",
+            n_iter=2000,
+            tol=1e-4,
+            init_params='stmc',
+            params='stmc',
+            random_state=42
         )
+        self.state_labels = {}
+        self.feature_scaler = StandardScaler()
         
-        # Volatility transition signals
-        vol_increasing = (
-            (recent_daily['atr_14'].pct_change().mean() > 0.1) or
-            (recent_daily['parkinson_vol'].iloc[-1] > recent_daily['parkinson_vol'].iloc[-5] * 1.2)
-        )
+    def prepare_market_data(self, tickers, sample_size=100):
+        """Create composite market index from sample of stocks"""
+        prices_data = []
+        valid_tickers = []
+        
+        print("\nBuilding market composite from multiple exchanges...")
+        for symbol in tqdm(tickers[:sample_size]):
+            prices = fetch_stock_data(symbol)
+            if prices is not None and len(prices) >= MIN_DAYS_DATA:
+                prices_data.append(prices)
+                valid_tickers.append(symbol)
+        
+        if not prices_data:
+            raise ValueError("Insufficient data to create market composite")
+        
+        composite = pd.concat(prices_data, axis=1)
+        composite.columns = valid_tickers
+        return composite.mean(axis=1).dropna()
+
+    def analyze_regime(self, market_index):
+        """Analyze market regime using HMM"""
+        # Calculate features
+        log_returns = np.log(market_index).diff().dropna()
+        features = pd.DataFrame({
+            'returns': log_returns,
+            'volatility': log_returns.rolling(21).std(),
+            'momentum': log_returns.rolling(14).mean()
+        }).dropna()
+        
+        if len(features) < 60:
+            raise ValueError(f"Only {len(features)} days of feature data")
+        
+        # Scale features and fit model
+        scaled_features = self.feature_scaler.fit_transform(features)
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            self.model.fit(scaled_features)
+        
+        # Label states
+        state_means = sorted([
+            (i, np.mean(self.model.means_[i])) 
+            for i in range(self.model.n_components)
+        ], key=lambda x: x[1])
+        
+        self.state_labels = {
+            state_means[0][0]: 'Bear',
+            state_means[1][0]: 'Neutral',
+            state_means[2][0]: 'Bull'
+        }
+        
+        # Predict regimes
+        states = self.model.predict(scaled_features)
+        state_probs = self.model.predict_proba(scaled_features)
         
         return {
-            'potential_transition': trend_weakening or vol_increasing,
-            'trend_weakening': trend_weakening,
-            'vol_increasing': vol_increasing
+            'regimes': [self.state_labels[s] for s in states],
+            'probabilities': state_probs,
+            'features': features,
+            'market_index': market_index[features.index[0]:]
         }
 
-    async def detect_regime(self) -> Dict[str, float]:
-        """Enhanced regime detection with multi-timeframe analysis"""
-        if self.daily_data is None:
-            return self._default_regime_probabilities()
+def analyze_market_regime():
+    """Main function to analyze market regime"""
+    # Get tickers
+    tickers = get_all_tickers()
+    print(f"Found {len(tickers)} total tickers for analysis")
+    
+    # Create analyzer instance
+    analyzer = MarketRegimeAnalyzer(n_states=3)
+    
+    try:
+        # Prepare market data
+        market_index = analyzer.prepare_market_data(tickers)
+        if len(market_index) < MIN_DAYS_DATA:
+            raise ValueError(f"Need at least {MIN_DAYS_DATA} days of data")
+            
+        # Analyze regime
+        results = analyzer.analyze_regime(market_index)
         
-        recent_daily = self.daily_data.iloc[-1]
-        recent_weekly = self.weekly_data.iloc[-1]
-        transition_info = self._analyze_regime_transitions()
+        # Display results
+        current_regime = results['regimes'][-1]
+        current_probs = results['probabilities'][-1]
         
-        # Calculate key metrics
-        price_above_200sma = recent_daily['c'] > recent_daily['sma_200']
-        sma_50_above_200 = recent_daily['sma_50'] > recent_daily['sma_200']
-        weekly_sma_10_above_40 = recent_weekly['sma_10'] > recent_weekly['sma_40']
-        trend_strength = recent_daily['trend_strength']
-        rsi_14 = recent_daily['rsi_14']
-        macd_above_signal = recent_daily['macd'] > recent_daily['macd_signal']
+        print(f"\nCurrent Market Regime: {current_regime}")
+        print("Current Probabilities:")
+        for i, prob in enumerate(current_probs):
+            print(f"{analyzer.state_labels[i]}: {prob:.1%}")
         
-        # Volatility metrics
-        atr_14 = recent_daily['atr_14']
-        atr_30 = self.daily_data['atr_14'].iloc[-30:].mean()
-        vol_ratio = atr_14 / atr_30 if atr_30 > 0 else 1.0
-        hist_vol = recent_daily['hist_vol_30']
-        parkinson_vol = recent_daily['parkinson_vol']
+        print("\nRegime History (last 20 periods):")
+        print(pd.Series(results['regimes'][-20:]).value_counts())
         
-        # Momentum calculations
-        momentum_5d = (recent_daily['c'] / self.daily_data['c'].iloc[-5] - 1) * 100
-        momentum_30d = (recent_daily['c'] / self.daily_data['c'].iloc[-30] - 1) * 100
-        weekly_momentum = (recent_weekly['c'] / self.weekly_data['c'].iloc[-4] - 1) * 100  # 4 weeks ~ 1 month
+        # Plot results
+        plt.figure(figsize=(14, 8))
         
-        # Volume analysis
-        volume_spike = recent_daily['volume_ratio'] > 1.5
+        # Price plot
+        ax1 = plt.subplot(2, 1, 1)
+        results['market_index'][-250:].plot(ax=ax1, color='black')
+        ax1.set_title('Market Index with Regime Shading')
         
-        # Calculate regime probabilities with transition adjustments
-        regimes = {
-            "strong_bull": self._strong_bull_confidence(
-                price_above_200sma, sma_50_above_200, weekly_sma_10_above_40,
-                trend_strength, rsi_14, macd_above_signal,
-                momentum_5d, momentum_30d, weekly_momentum,
-                transition_info
-            ),
-            "weak_bull": self._weak_bull_confidence(
-                price_above_200sma, sma_50_above_200, weekly_sma_10_above_40,
-                trend_strength, rsi_14, macd_above_signal,
-                momentum_5d, momentum_30d, weekly_momentum,
-                transition_info
-            ),
-            "neutral": self._neutral_confidence(
-                rsi_14, vol_ratio, atr_14, atr_30,
-                trend_strength, hist_vol, parkinson_vol,
-                transition_info
-            ),
-            "weak_bear": self._weak_bear_confidence(
-                price_above_200sma, sma_50_above_200, weekly_sma_10_above_40,
-                trend_strength, rsi_14, macd_above_signal,
-                momentum_5d, momentum_30d, weekly_momentum,
-                transition_info
-            ),
-            "strong_bear": self._strong_bear_confidence(
-                price_above_200sma, sma_50_above_200, weekly_sma_10_above_40,
-                trend_strength, rsi_14, macd_above_signal,
-                momentum_5d, momentum_30d, weekly_momentum,
-                transition_info
-            ),
-            "low_vol": self._low_vol_confidence(
-                vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol
-            ),
-            "medium_vol": self._medium_vol_confidence(
-                vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol
-            ),
-            "high_vol": self._high_vol_confidence(
-                vol_ratio, atr_14, atr_30, hist_vol, parkinson_vol, volume_spike
+        # Regime shading
+        regime_colors = {'Bull': 'green', 'Neutral': 'yellow', 'Bear': 'red'}
+        for i in range(-250, 0):
+            if i < -len(results['regimes']):
+                continue
+            ax1.axvspan(
+                results['market_index'].index[i],
+                results['market_index'].index[i+1] if i < -1 else results['market_index'].index[-1],
+                color=regime_colors.get(results['regimes'][i], 'gray'),
+                alpha=0.1
             )
-        }
         
-        return self._normalize_regime_probabilities(regimes)
-
-    def _default_regime_probabilities(self) -> Dict[str, float]:
-        return {
-            "strong_bull": 0.2, "weak_bull": 0.2, "neutral": 0.2, 
-            "weak_bear": 0.2, "strong_bear": 0.2,
-            "low_vol": 0.33, "medium_vol": 0.34, "high_vol": 0.33
-        }
-    
-    def _normalize_regime_probabilities(self, regimes: Dict[str, float]) -> Dict[str, float]:
-        trend_total = sum(regimes[r] for r in self.trend_regimes)
-        vol_total = sum(regimes[r] for r in self.volatility_regimes)
+        # Probabilities plot
+        ax2 = plt.subplot(2, 1, 2)
+        prob_df = pd.DataFrame(
+            results['probabilities'][-250:],
+            index=results['market_index'].index[-250:],
+            columns=[analyzer.state_labels[i] for i in range(3)]
+        )
+        prob_df.plot(ax=ax2, color=['red', 'yellow', 'green'])
+        ax2.set_title('Regime Probabilities')
         
-        normalized = {}
-        for r in regimes:
-            if r in self.trend_regimes:
-                normalized[r] = regimes[r] / trend_total if trend_total > 0 else 0
-            else:
-                normalized[r] = regimes[r] / vol_total if vol_total > 0 else 0
-        return normalized
-    
-    def _strong_bull_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
-                              weekly_sma_10_above_40: bool, trend_strength: float, 
-                              rsi_14: float, macd_above_signal: bool,
-                              momentum_5d: float, momentum_30d: float,
-                              weekly_momentum: float, transition_info: Dict) -> float:
-        score = 0
-        if price_above_200sma: score += 0.15
-        if sma_50_above_200: score += 0.15
-        if weekly_sma_10_above_40: score += 0.1
-        if trend_strength > 0.75: score += 0.15
-        if 60 < rsi_14 <= 80: score += 0.1
-        if macd_above_signal: score += 0.1
-        if momentum_5d > 1.5: score += 0.1
-        if momentum_30d > 5.0: score += 0.1
-        if weekly_momentum > 3.0: score += 0.05
+        plt.tight_layout()
+        plt.show()
         
-        # Reduce confidence if potential transition
-        if transition_info['potential_transition']:
-            score *= 0.7
-            
-        return score
-    
-    def _weak_bull_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
-                            weekly_sma_10_above_40: bool, trend_strength: float,
-                            rsi_14: float, macd_above_signal: bool,
-                            momentum_5d: float, momentum_30d: float,
-                            weekly_momentum: float, transition_info: Dict) -> float:
-        score = 0
-        if price_above_200sma: score += 0.15
-        if sma_50_above_200: score += 0.1
-        if weekly_sma_10_above_40: score += 0.05
-        if trend_strength > 0.55: score += 0.15
-        if 50 < rsi_14 <= 60: score += 0.15
-        if macd_above_signal: score += 0.1
-        if momentum_5d > 0: score += 0.1
-        if momentum_30d > 2.0: score += 0.1
-        if weekly_momentum > 1.0: score += 0.1
+        return results
         
-        if transition_info['potential_transition']:
-            score *= 0.8
-            
-        return score
-    
-    def _neutral_confidence(self, rsi_14: float, vol_ratio: float, atr_14: float,
-                          atr_30: float, trend_strength: float,
-                          hist_vol: float, parkinson_vol: float,
-                          transition_info: Dict) -> float:
-        score = 0
-        if 40 <= rsi_14 <= 60: score += 0.25
-        if 0.9 <= vol_ratio <= 1.1: score += 0.2
-        if 0.3 <= trend_strength <= 0.7: score += 0.2
-        if 0.8 <= (atr_14 / atr_30) <= 1.2 if atr_30 > 0 else False: score += 0.15
-        if 0.9 <= (hist_vol / parkinson_vol) <= 1.1 if parkinson_vol > 0 else False: score += 0.2
-        
-        if transition_info['potential_transition']:
-            score *= 0.9
-            
-        return score
-    
-    def _weak_bear_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
-                             weekly_sma_10_above_40: bool, trend_strength: float,
-                             rsi_14: float, macd_above_signal: bool,
-                             momentum_5d: float, momentum_30d: float,
-                             weekly_momentum: float, transition_info: Dict) -> float:
-        score = 0
-        if not price_above_200sma: score += 0.15
-        if not sma_50_above_200: score += 0.1
-        if not weekly_sma_10_above_40: score += 0.05
-        if trend_strength < 0.45: score += 0.15
-        if 30 <= rsi_14 < 50: score += 0.15
-        if not macd_above_signal: score += 0.1
-        if momentum_5d < 0: score += 0.1
-        if momentum_30d < -2.0: score += 0.1
-        if weekly_momentum < -1.0: score += 0.1
-        
-        if transition_info['potential_transition']:
-            score *= 0.8
-            
-        return score
-    
-    def _strong_bear_confidence(self, price_above_200sma: bool, sma_50_above_200: bool,
-                               weekly_sma_10_above_40: bool, trend_strength: float,
-                               rsi_14: float, macd_above_signal: bool,
-                               momentum_5d: float, momentum_30d: float,
-                               weekly_momentum: float, transition_info: Dict) -> float:
-        score = 0
-        if not price_above_200sma: score += 0.15
-        if not sma_50_above_200: score += 0.15
-        if not weekly_sma_10_above_40: score += 0.1
-        if trend_strength < 0.25: score += 0.15
-        if rsi_14 < 30: score += 0.1
-        if not macd_above_signal: score += 0.1
-        if momentum_5d < -1.5: score += 0.1
-        if momentum_30d < -5.0: score += 0.1
-        if weekly_momentum < -3.0: score += 0.05
-        
-        if transition_info['potential_transition']:
-            score *= 0.7
-            
-        return score
-    
-    def _low_vol_confidence(self, vol_ratio: float, atr_14: float, atr_30: float,
-                           hist_vol: float, parkinson_vol: float) -> float:
-        if (vol_ratio < 0.7 and 
-            (atr_14 / atr_30) < 0.7 if atr_30 > 0 else False and
-            hist_vol < 0.15 and 
-            parkinson_vol < 0.15):
-            return 0.9
-        return 0
-    
-    def _medium_vol_confidence(self, vol_ratio: float, atr_14: float, atr_30: float,
-                              hist_vol: float, parkinson_vol: float) -> float:
-        if (0.7 <= vol_ratio <= 1.3 and 
-            0.7 <= (atr_14 / atr_30) <= 1.3 if atr_30 > 0 else False and
-            0.15 <= hist_vol <= 0.30 and 
-            0.15 <= parkinson_vol <= 0.30):
-            return 0.9
-        return 0
-    
-    def _high_vol_confidence(self, vol_ratio: float, atr_14: float, atr_30: float,
-                            hist_vol: float, parkinson_vol: float,
-                            volume_spike: bool) -> float:
-        if ((vol_ratio > 1.3 or 
-             (atr_14 / atr_30) > 1.3 if atr_30 > 0 else False or
-             hist_vol > 0.30 or 
-             parkinson_vol > 0.30) and
-            volume_spike):
-            return 0.9
-        return 0
-    
-    async def get_current_regime(self) -> Tuple[str, str]:
-        regimes = await self.detect_regime()
-        
-        trend_regime = max(
-            ((r, regimes[r]) for r in self.trend_regimes),
-            key=lambda x: x[1],
-            default=("neutral", 0)
-        )[0]
-        
-        vol_regime = max(
-            ((r, regimes[r]) for r in self.volatility_regimes),
-            key=lambda x: x[1],
-            default=("medium_vol", 0)
-        )[0]
-        
-        return trend_regime, vol_regime
-    
-    async def get_regime_description(self) -> Dict:
-        """Enhanced regime description with transition info"""
-        regimes = await self.detect_regime()
-        trend_regime, vol_regime = await self.get_current_regime()
-        transition_info = self._analyze_regime_transitions()
-        
-        return {
-            "primary_trend": trend_regime,
-            "primary_volatility": vol_regime,
-            "trend_probabilities": {r: regimes[r] for r in self.trend_regimes},
-            "volatility_probabilities": {r: regimes[r] for r in self.volatility_regimes},
-            "transition_analysis": transition_info,
-            "timestamp": datetime.now().isoformat()
-        }
-
-async def main():
-    POLYGON_API_KEY = "OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z"
-    
-    async with AsyncPolygonIOClient(POLYGON_API_KEY) as client:
-        # Initialize detector
-        detector = MarketRegimeDetector(client)
-        if not await detector.initialize():
-            print("\nWarning: Limited data available. Results may be less accurate.")
-            
-        # Get current regime
-        trend, vol = await detector.get_current_regime()
-        print(f"\nCurrent Market Regime: {trend} trend, {vol} volatility")
-        
-        # Get detailed regime analysis
-        regime_info = await detector.get_regime_description()
-        print("\nDetailed Analysis:")
-        print(f"Primary Trend: {regime_info['primary_trend']}")
-        print(f"Primary Volatility: {regime_info['primary_volatility']}")
-        
-        print("\nTrend Probabilities:")
-        for regime, prob in regime_info['trend_probabilities'].items():
-            print(f"  {regime:12}: {prob:.1%}")
-            
-        print("\nVolatility Probabilities:")
-        for regime, prob in regime_info['volatility_probabilities'].items():
-            print(f"  {regime:12}: {prob:.1%}")
-            
-        print("\nTransition Analysis:")
-        for k, v in regime_info['transition_analysis'].items():
-            print(f"  {k:20}: {v}")
+    except Exception as e:
+        print(f"Analysis failed: {str(e)}")
+        return None
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    analyze_market_regime()
