@@ -9,9 +9,9 @@ from tqdm import tqdm  # For progress bars
 import warnings
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.preprocessing import StandardScaler
+from config import POLYGON_API_KEY  # Import from config.py
 
 # Configuration
-POLYGON_API_KEY = "OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z"
 EXCHANGES = ["XNYS", "XNAS", "XASE"]  # NYSE, NASDAQ, AMEX
 MAX_TICKERS_PER_EXCHANGE = 200  # Reduced per exchange to stay within limits
 RATE_LIMIT = .001  # seconds between requests
