@@ -1,0 +1,158 @@
+2025-07-27 12:45:28,004 - INFO - Starting market regime analysis
+2025-07-27 12:45:28,004 - INFO - 
+=== Analysis Cycle 2025-07-27 12:45:28.004857 ===
+2025-07-27 12:45:28,004 - INFO - Refreshing ticker data...
+2025-07-27 12:45:28,862 - ERROR - API request failed (attempt 1): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 12:45:29,931 - ERROR - API request failed (attempt 2): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 12:45:32,001 - ERROR - API request failed (attempt 3): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 12:45:32,001 - ERROR - Error fetching XNYS tickers: 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 12:45:32,521 - ERROR - Error fetching index components: 'Symbol'
+2025-07-27 12:45:32,590 - ERROR - API request failed (attempt 1): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 12:45:33,564 - INFO - 
+Stopping analysis...
+2025-07-27 13:11:07,686 - INFO - Starting market regime analysis
+2025-07-27 13:11:07,686 - INFO - 
+=== Analysis Cycle 2025-07-27 13:11:07.686570 ===
+2025-07-27 13:11:07,686 - INFO - Refreshing ticker data...
+2025-07-27 13:11:08,227 - ERROR - API request failed (attempt 1): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:09,278 - ERROR - API request failed (attempt 2): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:11,330 - ERROR - API request failed (attempt 3): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:11,330 - ERROR - Error fetching XNYS tickers: 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:11,792 - ERROR - Error fetching index components: 'Symbol'
+2025-07-27 13:11:14,843 - ERROR - API request failed (attempt 1): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:15,894 - ERROR - API request failed (attempt 2): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:17,944 - ERROR - API request failed (attempt 3): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:17,944 - ERROR - Error fetching XNAS tickers: 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:18,406 - ERROR - API request failed (attempt 1): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:19,458 - ERROR - API request failed (attempt 2): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:21,509 - ERROR - API request failed (attempt 3): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:21,509 - ERROR - Error fetching XASE tickers: 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:11:21,509 - INFO - Mapping tickers to sectors...
+2025-07-27 13:11:38,620 - INFO - Mapped 103 tickers to 3 sectors
+2025-07-27 13:11:44,614 - INFO - Calculated sector weights
+2025-07-27 13:11:44,614 - INFO - Building market composite...
+2025-07-27 13:11:44,614 - INFO - Building sector composites...
+2025-07-27 13:11:49,107 - INFO - Built SERVICES-PREPACKAGED SOFTWARE composite with 11 tickers
+2025-07-27 13:11:52,765 - INFO - Built Technology composite with 9 tickers
+2025-07-27 13:11:56,822 - INFO - Built SEMICONDUCTORS & RELATED DEVICES composite with 10 tickers
+2025-07-27 13:12:26,286 - INFO - Created market composite with 100 tickers
+2025-07-27 13:12:26,286 - INFO - Analyzing market regime...
+2025-07-27 13:12:28,350 - INFO - Regime changed from None to Bear
+2025-07-27 13:12:28,350 - INFO - Analyzing sector regimes...
+2025-07-27 13:12:28,350 - INFO - Analyzing sector regimes...
+2025-07-27 13:12:28,391 - INFO - Analyzed SERVICES-PREPACKAGED SOFTWARE regime
+2025-07-27 13:12:28,430 - INFO - Analyzed Technology regime
+2025-07-27 13:12:28,469 - INFO - Analyzed SEMICONDUCTORS & RELATED DEVICES regime
+2025-07-27 13:12:28,471 - INFO - Sector SERVICES-PREPACKAGED SOFTWARE signal: STRONG SHORT
+2025-07-27 13:12:28,471 - INFO - Sector Technology signal: NEUTRAL
+2025-07-27 13:12:28,471 - INFO - Sector SEMICONDUCTORS & RELATED DEVICES signal: STRONG SHORT
+2025-07-27 13:12:28,471 - INFO - 
+Market Regime: Bear
+2025-07-27 13:12:28,471 - INFO - 
+Top Sectors:
+2025-07-27 13:12:28,472 - INFO - Technology                          3.703399
+SERVICES-PREPACKAGED SOFTWARE      -0.978428
+SEMICONDUCTORS & RELATED DEVICES   -1.582313
+dtype: float64
+2025-07-27 13:12:28,472 - INFO - 
+Active Signals:
+2025-07-27 13:12:28,472 - INFO - SERVICES-PREPACKAGED SOFTWARE: STRONG SHORT
+2025-07-27 13:12:28,472 - INFO - SEMICONDUCTORS & RELATED DEVICES: STRONG SHORT
+2025-07-27 13:12:28,473 - INFO - Sector SERVICES-PREPACKAGED SOFTWARE signal: STRONG SHORT
+2025-07-27 13:12:28,473 - INFO - Sector Technology signal: NEUTRAL
+2025-07-27 13:12:28,473 - INFO - Sector SEMICONDUCTORS & RELATED DEVICES signal: STRONG SHORT
+2025-07-27 13:12:28,659 - INFO - Saved sector performance plot: sector_performance_20250727_131228.png
+2025-07-27 13:12:28,659 - INFO - Reverted to 3 states due to low volatility
+2025-07-27 13:12:28,659 - INFO - Cycle completed. Sleeping for 15.0 minutes...
+2025-07-27 13:17:11,758 - INFO - 
+Stopping analysis...
+2025-07-27 13:17:19,821 - INFO - Starting market regime analysis
+2025-07-27 13:17:19,821 - INFO - 
+=== Analysis Cycle 2025-07-27 13:17:19.821322 ===
+2025-07-27 13:17:19,821 - INFO - Refreshing ticker data...
+2025-07-27 13:17:29,922 - WARNING - Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x00000202D5D030E0>, 'Connection to api.polygon.io timed out. (connect timeout=10)')': /v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:17:40,092 - WARNING - Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x00000202D5C6BED0>, 'Connection to api.polygon.io timed out. (connect timeout=10)')': /v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:17:50,195 - WARNING - Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x00000202D5D78050>, 'Connection to api.polygon.io timed out. (connect timeout=10)')': /v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:18:00,467 - ERROR - API request failed (attempt 1): HTTPSConnectionPool(host='api.polygon.io', port=443): Max retries exceeded with url: /v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z (Caused by ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x00000202D5D78190>, 'Connection to api.polygon.io timed out. (connect timeout=10)'))
+2025-07-27 13:18:11,517 - WARNING - Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x00000202D5D78690>, 'Connection to api.polygon.io timed out. (connect timeout=10)')': /v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:18:21,593 - WARNING - Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x00000202D5D787D0>, 'Connection to api.polygon.io timed out. (connect timeout=10)')': /v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:18:31,685 - WARNING - Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x00000202D5D78910>, 'Connection to api.polygon.io timed out. (connect timeout=10)')': /v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:18:41,735 - ERROR - API request failed (attempt 2): HTTPSConnectionPool(host='api.polygon.io', port=443): Max retries exceeded with url: /v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z (Caused by ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x00000202D5D78A50>, 'Connection to api.polygon.io timed out. (connect timeout=10)'))
+2025-07-27 13:18:56,478 - INFO - Starting market regime analysis
+2025-07-27 13:18:56,478 - INFO - 
+=== Analysis Cycle 2025-07-27 13:18:56.478712 ===
+2025-07-27 13:18:56,478 - INFO - Refreshing ticker data...
+2025-07-27 13:19:06,560 - WARNING - Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x00000216EDBC30E0>, 'Connection to api.polygon.io timed out. (connect timeout=10)')': /v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:16,632 - WARNING - Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x00000216EDB2BED0>, 'Connection to api.polygon.io timed out. (connect timeout=10)')': /v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:26,711 - WARNING - Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x00000216EDC3C050>, 'Connection to api.polygon.io timed out. (connect timeout=10)')': /v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:34,298 - ERROR - API request failed (attempt 1): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:35,352 - ERROR - API request failed (attempt 2): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:37,404 - ERROR - API request failed (attempt 3): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:37,404 - ERROR - Error fetching XNYS tickers: 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:37,883 - ERROR - Error fetching index components: 'Symbol'
+2025-07-27 13:19:37,935 - ERROR - API request failed (attempt 1): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:38,991 - ERROR - API request failed (attempt 2): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:41,045 - ERROR - API request failed (attempt 3): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:41,045 - ERROR - Error fetching XNAS tickers: 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:41,513 - ERROR - API request failed (attempt 1): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:42,564 - ERROR - API request failed (attempt 2): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:44,616 - ERROR - API request failed (attempt 3): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:44,616 - ERROR - Error fetching XASE tickers: 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:19:44,616 - INFO - Mapping tickers to sectors...
+2025-07-27 13:20:02,109 - INFO - Mapped 103 tickers to 3 sectors
+2025-07-27 13:31:37,158 - INFO - Starting market regime analysis
+2025-07-27 13:31:37,158 - INFO - 
+=== Analysis Cycle 2025-07-27 13:31:37.158320 ===
+2025-07-27 13:31:37,158 - INFO - Refreshing ticker data...
+2025-07-27 13:31:37,951 - ERROR - API request failed (attempt 1): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:39,069 - ERROR - API request failed (attempt 2): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:41,186 - ERROR - API request failed (attempt 3): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:41,186 - ERROR - Error fetching XNYS tickers: 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNYS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:41,665 - ERROR - Error fetching index components: 'Symbol'
+2025-07-27 13:31:41,789 - ERROR - API request failed (attempt 1): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:42,910 - ERROR - API request failed (attempt 2): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:45,033 - ERROR - API request failed (attempt 3): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:45,033 - ERROR - Error fetching XNAS tickers: 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XNAS&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:45,869 - ERROR - API request failed (attempt 1): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:46,991 - ERROR - API request failed (attempt 2): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:49,107 - ERROR - API request failed (attempt 3): 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:49,108 - ERROR - Error fetching XASE tickers: 400 Client Error: Bad Request for url: https://api.polygon.io/v3/reference/tickers?exchange=XASE&market=stocks&active=true&limit=200&sort=market_cap&order=desc&apiKey=OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z
+2025-07-27 13:31:49,108 - INFO - Mapping tickers to sectors...
+2025-07-27 13:32:06,574 - INFO - Mapped 103 tickers to 3 sectors
+2025-07-27 13:32:14,605 - INFO - Calculated sector weights
+2025-07-27 13:32:14,605 - INFO - Building market composite...
+2025-07-27 13:32:14,605 - INFO - Building sector composites...
+2025-07-27 13:32:21,821 - INFO - Built SERVICES-PREPACKAGED SOFTWARE composite with 11 tickers
+2025-07-27 13:32:32,508 - INFO - Built SEMICONDUCTORS & RELATED DEVICES composite with 10 tickers
+2025-07-27 13:32:38,365 - INFO - Built Technology composite with 9 tickers
+2025-07-27 13:33:35,635 - INFO - Created market composite with 100 tickers
+2025-07-27 13:33:35,635 - INFO - Analyzing market regime...
+2025-07-27 13:33:36,996 - INFO - Regime changed from None to Bear
+2025-07-27 13:33:36,996 - INFO - Analyzing sector regimes...
+2025-07-27 13:33:36,996 - INFO - Analyzing sector regimes...
+2025-07-27 13:33:37,033 - INFO - Analyzed SERVICES-PREPACKAGED SOFTWARE regime
+2025-07-27 13:33:37,071 - INFO - Analyzed SEMICONDUCTORS & RELATED DEVICES regime
+2025-07-27 13:33:37,106 - INFO - Analyzed Technology regime
+2025-07-27 13:33:37,108 - INFO - Sector SERVICES-PREPACKAGED SOFTWARE signal: STRONG SHORT
+2025-07-27 13:33:37,108 - INFO - Sector SEMICONDUCTORS & RELATED DEVICES signal: STRONG SHORT
+2025-07-27 13:33:37,108 - INFO - Sector Technology signal: NEUTRAL
+2025-07-27 13:33:37,108 - INFO - 
+Market Regime: Bear
+2025-07-27 13:33:37,108 - INFO - 
+Top Sectors:
+2025-07-27 13:33:37,108 - INFO - Technology                          3.703399
+SERVICES-PREPACKAGED SOFTWARE      -0.978428
+SEMICONDUCTORS & RELATED DEVICES   -1.582313
+dtype: float64
+2025-07-27 13:33:37,109 - INFO - 
+Active Signals:
+2025-07-27 13:33:37,109 - INFO - SERVICES-PREPACKAGED SOFTWARE: STRONG SHORT
+2025-07-27 13:33:37,109 - INFO - SEMICONDUCTORS & RELATED DEVICES: STRONG SHORT
+2025-07-27 13:33:37,109 - INFO - Sector SERVICES-PREPACKAGED SOFTWARE signal: STRONG SHORT
+2025-07-27 13:33:37,109 - INFO - Sector SEMICONDUCTORS & RELATED DEVICES signal: STRONG SHORT
+2025-07-27 13:33:37,109 - INFO - Sector Technology signal: NEUTRAL
+2025-07-27 13:33:37,238 - INFO - Saved sector performance plot: sector_performance_20250727_133337.png
+2025-07-27 13:33:37,238 - INFO - Reverted to 3 states due to low volatility
+2025-07-27 13:33:37,238 - INFO - Cycle completed. Sleeping for 15.0 minutes...
+2025-07-27 13:34:43,480 - INFO - 
+Stopping analysis...
