@@ -6,31 +6,41 @@ import math
 import os
 import json
 import warnings
+import pickle
+import discord
+from discord import Webhook
+import aiohttp
+import asyncio
 from datetime import datetime, timedelta
 from threading import Thread
 from queue import Queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from hmmlearn import hmm
 from websocket import create_connection, WebSocketConnectionClosedException
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
-from config import POLYGON_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY
+from pathlib import Path
+from config import POLYGON_API_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY, DISCORD_WEBHOOK_URL
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, StopOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest, StopOrderRequest, LimitOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
 # ======================
 # Combined Configuration
 # ======================
 EXCHANGES = ["XNYS", "XNAS", "XASE"]  # NYSE, NASDAQ, AMEX
 MAX_TICKERS_PER_EXCHANGE = 200
-RATE_LIMIT = 0.001  # seconds between requests
+RATE_LIMIT = 0.0001  # seconds between requests
 MIN_DAYS_DATA = 200  # Minimum days of data required for analysis
 N_STATES = 3  # Bull/Neutral/Bear regimes
 SECTOR_SAMPLE_SIZE = 50  # Stocks per sector for composite
 TRANSITION_WINDOW = 30  # Days to analyze around regime transitions
-ALLOCATION_PER_TICKER = 10000  # $10,000 per position
+ALLOCATION_PER_TICKER = 100  # $10,000 per position
 MAX_TICKERS_TO_SCAN = 300  # Limit for weekly scanner
+STATE_FILE = 'trading_system_state.pkl'  # File to save system state
+TRANSACTION_LOG_FILE = 'trading_transactions.log'
+AUTO_SAVE_INTERVAL = 300  # 5 minutes in seconds
 
 # Global Cache
 DATA_CACHE = {
@@ -49,6 +59,199 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # Alpaca Setup
 # =================
 trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+
+# =====================
+# Discord Notifier
+# =====================
+class DiscordNotifier:
+    def __init__(self):
+        self.webhook_url = DISCORD_WEBHOOK_URL
+        
+    async def send_embed(self, title, description, color=0x00ff00, fields=None):
+        """Send an embed message to Discord"""
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=datetime.now()
+        )
+        
+        if fields:
+            for name, value, inline in fields:
+                embed.add_field(name=name, value=value, inline=inline)
+        
+        async with aiohttp.ClientSession() as session:
+            webhook = Webhook.from_url(self.webhook_url, session=session)
+            try:
+                await webhook.send(embed=embed, username="Trading System Bot")
+            except Exception as e:
+                print(f"Error sending Discord notification: {str(e)}")
+    
+    async def send_order_notification(self, order_type, ticker, qty, price, stop_loss=None, take_profit=None, hard_stop=None):
+        """Send notification about an order"""
+        color = 0x00ff00 if order_type.lower() == "buy" else 0xff0000
+        fields = [
+            ("Ticker", ticker, True),
+            ("Quantity", str(qty), True),
+            ("Price", f"${price:.2f}", True)
+        ]
+        
+        if stop_loss:
+            fields.append(("Stop Loss", f"${stop_loss:.2f}", True))
+        if take_profit:
+            fields.append(("Take Profit", f"${take_profit:.2f}", True))
+        if hard_stop:
+            fields.append(("Hard Stop", f"${hard_stop:.2f}", True))
+            
+        await self.send_embed(
+            title=f"{order_type.upper()} Order Executed",
+            description=f"New {order_type} order placed",
+            color=color,
+            fields=fields
+        )
+    
+    async def send_position_update(self, ticker, entry_price, current_price, stop_loss, pnl=None):
+        """Send position update notification"""
+        fields = [
+            ("Ticker", ticker, True),
+            ("Entry Price", f"${entry_price:.2f}", True),
+            ("Current Price", f"${current_price:.2f}", True),
+            ("Stop Loss", f"${stop_loss:.2f}", True)
+        ]
+        
+        if pnl is not None:
+            pnl_percent = ((current_price - entry_price) / entry_price) * 100
+            fields.append(("P&L", f"${pnl:.2f} ({pnl_percent:.2f}%)", True))
+            
+        await self.send_embed(
+            title=f"Position Update: {ticker}",
+            description="Position details update",
+            color=0xffff00,
+            fields=fields
+        )
+    
+    async def send_stop_loss_update(self, ticker, old_stop, new_stop, reason=None):
+        """Send stop loss adjustment notification"""
+        description = f"Stop loss adjusted for {ticker}"
+        if reason:
+            description += f"\n**Reason:** {reason}"
+            
+        await self.send_embed(
+            title="Stop Loss Updated",
+            description=description,
+            color=0xffa500,
+            fields=[
+                ("Ticker", ticker, True),
+                ("Old Stop", f"${old_stop:.2f}", True),
+                ("New Stop", f"${new_stop:.2f}", True)
+            ]
+        )
+    
+    async def send_hard_stop_triggered(self, ticker, entry_price, exit_price):
+        """Notification when hard stop is triggered"""
+        loss = entry_price - exit_price
+        loss_percent = (loss / entry_price) * 100
+        
+        await self.send_embed(
+            title="HARD STOP TRIGGERED",
+            description=f"Position exited due to hard stop breach",
+            color=0xff0000,
+            fields=[
+                ("Ticker", ticker, True),
+                ("Entry Price", f"${entry_price:.2f}", True),
+                ("Exit Price", f"${exit_price:.2f}", True),
+                ("Loss", f"${loss:.2f} ({loss_percent:.2f}%)", True)
+            ]
+        )
+    
+    async def send_system_alert(self, message, is_error=False):
+        """Send system alert/error notification"""
+        await self.send_embed(
+            title="SYSTEM ALERT" if is_error else "System Notification",
+            description=message,
+            color=0xff0000 if is_error else 0x0000ff
+        )
+    
+    async def send_scan_results(self, results_df):
+        """Send formatted scan results to Discord"""
+        if results_df.empty:
+            await self.send_system_alert("Scan completed with no results")
+            return
+            
+        message = "**Weekly Scan Results:**\n"
+        for _, row in results_df.iterrows():
+            message += (
+                f"\n**{row['Rank']}. {row['Ticker']}** "
+                f"(Score: {row['Score']}, Price: ${row['Price']:.2f})\n"
+                f"ADX: {row['ADX']:.1f}, ATR: {row['ATR']:.2f}, "
+                f"Stop: ${row['Initial_Stop']:.2f}\n"
+            )
+        
+        await self.send_system_alert(message)
+
+# =====================
+# Transaction Logger
+# =====================
+class TransactionLogger:
+    def __init__(self, log_file=TRANSACTION_LOG_FILE):
+        self.log_file = log_file
+        Path(log_file).touch(exist_ok=True)
+        
+    def log(self, action, data):
+        """Logs a transaction with timestamp"""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "data": data
+        }
+        with open(self.log_file, "a") as f:
+            json.dump(entry, f)
+            f.write("\n")
+            
+    def replay_log(self, trading_system):
+        """Replays transactions to rebuild state"""
+        if not os.path.exists(self.log_file):
+            return
+            
+        with open(self.log_file, "r") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    self._process_entry(entry, trading_system)
+                except json.JSONDecodeError:
+                    continue
+                    
+    def _process_entry(self, entry, trading_system):
+        """Process a single log entry"""
+        action = entry["action"]
+        data = entry["data"]
+        
+        if action == "place_order":
+            ticker = data["ticker"]
+            trading_system.active_positions[ticker] = {
+                'qty': data['qty'],
+                'entry_price': data['price'],
+                'entry_time': entry["timestamp"],
+                'stop_loss': SmartStopLoss(
+                    entry_price=data['price'],
+                    atr=data['atr'],
+                    adx=data['adx']
+                )
+            }
+            
+        elif action == "update_stop":
+            ticker = data["ticker"]
+            if ticker in trading_system.active_positions:
+                stop_loss = trading_system.active_positions[ticker]['stop_loss']
+                stop_loss.current_stop = data['new_stop']
+                stop_loss.highest_high = data['highest_high']
+                stop_loss.activated = data['activated']
+                if 'hard_stop' in data:
+                    stop_loss.hard_stop = data['hard_stop']
+                
+        elif action == "close_position":
+            ticker = data["ticker"]
+            trading_system.active_positions.pop(ticker, None)
 
 # =====================
 # Core Classes
@@ -72,11 +275,28 @@ class MarketRegimeAnalyzer:
         valid_tickers = []
         
         print("\nBuilding market composite from multiple exchanges...")
-        for symbol in tqdm(tickers[:sample_size]):
+        
+        # Parallel processing for data fetching
+        def fetch_and_validate(symbol):
             prices = fetch_stock_data(symbol)
             if prices is not None and len(prices) >= MIN_DAYS_DATA:
-                prices_data.append(prices)
-                valid_tickers.append(symbol)
+                return symbol, prices
+            return None
+        
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(fetch_and_validate, symbol): symbol 
+                      for symbol in tickers[:sample_size]}
+            
+            for future in tqdm(as_completed(futures), total=min(sample_size, len(tickers)), 
+                            desc="Fetching Market Data"):
+                symbol = futures[future]
+                try:
+                    result = future.result()
+                    if result:
+                        valid_tickers.append(result[0])
+                        prices_data.append(result[1])
+                except Exception as e:
+                    print(f"Error processing {symbol}: {str(e)}")
         
         if not prices_data:
             raise ValueError("Insufficient data to create market composite")
@@ -167,21 +387,34 @@ class SectorRegimeSystem:
     def map_tickers_to_sectors(self, tickers):
         self.sector_mappings = {}
         
-        for symbol in tqdm(tickers):
+        # Parallel sector mapping
+        def map_single_ticker(symbol):
             url = f"https://api.polygon.io/v3/reference/tickers/{symbol}"
             params = {"apiKey": POLYGON_API_KEY}
-            time.sleep(RATE_LIMIT)
-            
             try:
-                response = requests.get(url, params=params)
+                response = requests.get(url, params=params, timeout=10)
                 if response.status_code == 200:
                     data = response.json().get('results', {})
                     sector = data.get('sic_description', 'Unknown')
                     if sector == 'Unknown':
                         sector = data.get('primary_exchange', 'Unknown')
-                    self.sector_mappings.setdefault(sector, []).append(symbol)
+                    return symbol, sector
             except Exception as e:
                 print(f"Sector mapping failed for {symbol}: {str(e)}")
+            return symbol, 'Unknown'
+        
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(map_single_ticker, symbol): symbol 
+                      for symbol in tickers}
+            
+            for future in tqdm(as_completed(futures), total=len(tickers), 
+                            desc="Mapping Sectors"):
+                try:
+                    symbol, sector = future.result()
+                    if sector != 'Unknown':
+                        self.sector_mappings.setdefault(sector, []).append(symbol)
+                except Exception as e:
+                    print(f"Error processing sector mapping: {str(e)}")
         
         # Remove unknown sectors and small sectors
         self.sector_mappings = {k: v for k, v in self.sector_mappings.items() 
@@ -212,7 +445,9 @@ class SectorRegimeSystem:
         print("\nBuilding sector composites...")
         self.sector_composites = {}
         
-        for sector, tickers in tqdm(self.sector_mappings.items()):
+        # Process each sector in parallel
+        def build_sector_composite(sector_data):
+            sector, tickers = sector_data
             prices_data = []
             valid_tickers = []
             
@@ -228,25 +463,57 @@ class SectorRegimeSystem:
             if prices_data:
                 composite = pd.concat(prices_data, axis=1)
                 composite.columns = valid_tickers
-                self.sector_composites[sector] = composite.mean(axis=1).dropna()
+                return sector, composite.mean(axis=1).dropna()
+            return sector, None
+        
+        sector_data = list(self.sector_mappings.items())
+        
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(build_sector_composite, data): data 
+                      for data in sector_data}
+            
+            for future in tqdm(as_completed(futures), total=len(sector_data), 
+                            desc="Building Composites"):
+                try:
+                    sector, composite = future.result()
+                    if composite is not None:
+                        self.sector_composites[sector] = composite
+                except Exception as e:
+                    print(f"Error building composite: {str(e)}")
     
     def analyze_sector_regimes(self, n_states=3):
         print("\nAnalyzing sector regimes...")
         self.sector_analyzers = {}
         
-        for sector, composite in tqdm(self.sector_composites.items()):
+        # Process each sector in parallel
+        def analyze_single_sector(sector_data):
+            sector, composite = sector_data
             try:
                 analyzer = MarketRegimeAnalyzer()
                 results = analyzer.analyze_regime(composite, n_states=n_states)
-                
-                self.sector_analyzers[sector] = {
+                return sector, {
                     'results': results,
                     'composite': composite,
                     'volatility': composite.pct_change().std()
                 }
             except Exception as e:
                 print(f"Error analyzing {sector}: {str(e)}")
-                continue
+                return sector, None
+        
+        sector_data = list(self.sector_composites.items())
+        
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(analyze_single_sector, data): data 
+                      for data in sector_data}
+            
+            for future in tqdm(as_completed(futures), total=len(sector_data), 
+                            desc="Analyzing Sectors"):
+                try:
+                    sector, data = future.result()
+                    if data is not None:
+                        self.sector_analyzers[sector] = data
+                except Exception as e:
+                    print(f"Error processing sector analysis: {str(e)}")
     
     def calculate_sector_scores(self, market_regime):
         self.sector_scores = {}
@@ -291,6 +558,62 @@ class SectorRegimeSystem:
         
         return pd.Series(self.sector_scores).sort_values(ascending=False)
 
+class SmartProfitTarget:
+    def __init__(self, entry_price, initial_target, atr, adx):
+        self.entry = entry_price
+        self.base_target = initial_target
+        self.atr = atr
+        self.adx = adx
+        self.current_target = initial_target
+        self.strength_factor = 1.0
+        self.breached_levels = 0
+        self.last_high = entry_price
+        
+    def update(self, current_bar):
+        current_high = current_bar['high']
+        current_close = current_bar['close']
+        
+        # Calculate trend strength
+        adx_strength = min(2.0, self.adx / 30)  # 1.0 = ADX 30, 2.0 = ADX 60
+        volume_ratio = current_bar.get('volume', 1e6) / current_bar.get('avg_volume', 1e6)
+        volatility_factor = max(0.8, min(1.5, self.atr / (current_close * 0.01)))
+        
+        # Dynamic strength adjustment
+        self.strength_factor = 1.0 + (adx_strength * min(2.0, volume_ratio) * volatility_factor)
+        
+        # Check if we've breached a target level
+        if current_high > self.current_target:
+            self.breached_levels += 1
+            self.last_high = current_high
+            
+        # Calculate new target
+        if self.breached_levels > 0:
+            # Extend target in strong trends
+            extension_factor = 1 + (0.25 * self.breached_levels)
+            new_base = self.entry + (extension_factor * (self.base_target - self.entry))
+            self.current_target = new_base * self.strength_factor
+        else:
+            # Maintain base target
+            self.current_target = self.base_target * self.strength_factor
+            
+        return self.current_target
+
+    def should_take_profit(self, current_bar):
+        current_close = current_bar['close']
+        rsi = current_bar.get('rsi', 50)
+        
+        # Basic profit taking condition
+        if current_close >= self.current_target:
+            return True
+            
+        # Hold conditions for strong trends
+        if self.strength_factor > 1.5:
+            # Only take profit if RSI > 70 and closing near highs
+            if rsi < 70 or current_close < (current_bar['high'] * 0.99):
+                return False
+                
+        return current_close >= self.current_target
+
 class SmartStopLoss:
     def __init__(self, entry_price, atr, adx, activation_percent=0.05, base_multiplier=1.5):
         self.entry = entry_price
@@ -306,14 +629,30 @@ class SmartStopLoss:
         self.last_direction = "up"
         self.previous_close = entry_price
         
+        # New hard stop loss parameters
+        self.hard_stop = entry_price - (base_multiplier * 1.8 * atr)  # Wider buffer
+        self.hard_stop_triggered = False
+        self.trend_strength = 1.0  # Measures confidence in trend continuation
+        
+        # Profit target system
+        initial_target = entry_price + 2 * (entry_price - self.current_stop)
+        self.profit_target = SmartProfitTarget(
+            entry_price=entry_price,
+            initial_target=initial_target,
+            atr=atr,
+            adx=adx
+        )
+
     def update(self, current_bar):
         current_high = current_bar['high']
         current_low = current_bar['low']
         current_close = current_bar['close']
         current_adx = current_bar.get('adx', self.base_adx)
         
-        # Calculate volume ratio
-        volume_ratio = current_bar['volume'] / current_bar.get('avg_volume', 1e6)
+        # Update trend strength (combines ADX and volume)
+        adx_strength = min(1.0, current_adx / 50)
+        volume_ratio = current_bar.get('volume', 1e6) / current_bar.get('avg_volume', 1e6)
+        self.trend_strength = max(0.5, min(2.0, adx_strength * min(1.5, volume_ratio)))
         
         # Update highest high
         if current_high > self.highest_high:
@@ -321,9 +660,7 @@ class SmartStopLoss:
             self.consecutive_confirmations = 0
 
         # Calculate growth potential
-        adx_strength = min(1.0, current_adx / 50)
-        volume_boost = min(1.5, max(0.5, volume_ratio / 1.2))
-        self.growth_potential = max(0.5, min(2.0, adx_strength * volume_boost))
+        self.growth_potential = max(0.5, min(2.0, adx_strength * min(1.5, volume_ratio)))
         
         # Calculate momentum direction
         current_direction = "up" if current_close > self.previous_close else "down"
@@ -353,8 +690,28 @@ class SmartStopLoss:
             # Only move stop up, never down
             if new_stop > self.current_stop:
                 self.current_stop = new_stop
+        
+        # Check if we need to trigger hard stop
+        if current_low <= self.hard_stop:
+            self.hard_stop_triggered = True
+            
+        # Update profit target
+        self.profit_target.update(current_bar)
                 
         return self.current_stop
+
+    def sync_with_market(self, ticker):
+        """Sync stop with latest market data after restart"""
+        latest = get_latest_bar(ticker)
+        if not latest:
+            return
+            
+        # Update highest high if market moved
+        if latest['high'] > self.highest_high:
+            self.highest_high = latest['high']
+            
+        # Recalculate stop based on current market
+        self.update(latest)
 
     def should_hold(self, current_bar):
         current_low = current_bar['low']
@@ -362,6 +719,10 @@ class SmartStopLoss:
         rsi = current_bar.get('rsi', 50)
         volatility_ratio = current_bar.get('volatility_ratio', 1.0)
         
+        # 0. Never hold if hard stop triggered
+        if self.hard_stop_triggered:
+            return False
+            
         # 1. Strong momentum override
         price_change = (current_close / self.previous_close - 1) * 100
         if price_change > 3:
@@ -387,6 +748,10 @@ class SmartStopLoss:
         return False
 
     def should_exit(self, current_bar):
+        # Always exit if hard stop triggered
+        if self.hard_stop_triggered:
+            return True
+            
         current_low = current_bar['low']
         current_close = current_bar['close']
         rsi = current_bar.get('rsi', 50)
@@ -424,8 +789,122 @@ class SmartStopLoss:
             'current_stop': self.current_stop,
             'growth_potential': self.growth_potential,
             'activated': self.activated,
-            'consecutive_confirmations': self.consecutive_confirmations
+            'consecutive_confirmations': self.consecutive_confirmations,
+            'hard_stop': self.hard_stop,
+            'hard_stop_triggered': self.hard_stop_triggered,
+            'profit_target': self.profit_target.current_target
         }
+
+    def get_bracket_orders(self, entry_price, qty):
+        """Generate bracket order details with properly rounded prices"""
+        stop_price = self.current_stop
+        
+        # Normalize prices according to exchange rules
+        def normalize_price(price):
+            """Round price to proper increment based on price level"""
+            if price < 1.00:
+                return round(price, 4)  # $0.0001 increments for stocks < $1
+            elif price < 10.00:
+                return round(price, 3)  # $0.001 increments for stocks $1-$10
+            else:
+                return round(price, 2)  # $0.01 increments for stocks > $10
+        
+        normalized_entry = normalize_price(entry_price)
+        normalized_stop = normalize_price(stop_price)
+        normalized_hard_stop = normalize_price(self.hard_stop)
+        normalized_profit_target = normalize_price(self.profit_target.current_target)
+        
+        # Ensure take profit is above current price
+        if normalized_profit_target <= normalized_entry:
+            normalized_profit_target = normalize_price(normalized_entry * 1.01)  # Minimum 1% profit
+        
+        # Ensure stop is below current price
+        if normalized_stop >= normalized_entry:
+            normalized_stop = normalize_price(normalized_entry * 0.99)  # Minimum 1% stop
+            
+        if normalized_hard_stop >= normalized_entry:
+            normalized_hard_stop = normalize_price(normalized_entry * 0.98)  # Minimum 2% stop
+        
+        return {
+            "stop_loss": {
+                "stop_price": normalized_stop,
+                "limit_price": normalize_price(normalized_stop * 0.98)  # Add limit price for stop-limit
+            },
+            "take_profit": {
+                "limit_price": normalized_profit_target
+            },
+            "hard_stop": {
+                "stop_price": normalized_hard_stop
+            }
+        }
+
+    def get_serializable_state(self):
+        """Return a dictionary of the current state that can be serialized"""
+        return {
+            'entry': self.entry,
+            'initial_atr': self.initial_atr,
+            'base_adx': self.base_adx,
+            'activation_percent': self.activation_percent,
+            'base_multiplier': self.base_multiplier,
+            'activated': self.activated,
+            'highest_high': self.highest_high,
+            'current_stop': self.current_stop,
+            'growth_potential': self.growth_potential,
+            'consecutive_confirmations': self.consecutive_confirmations,
+            'last_direction': self.last_direction,
+            'previous_close': self.previous_close,
+            'hard_stop': self.hard_stop,
+            'hard_stop_triggered': self.hard_stop_triggered,
+            'trend_strength': self.trend_strength,
+            'profit_target_state': {
+                'entry_price': self.profit_target.entry,
+                'initial_target': self.profit_target.base_target,
+                'atr': self.profit_target.atr,
+                'adx': self.profit_target.adx,
+                'current_target': self.profit_target.current_target,
+                'strength_factor': self.profit_target.strength_factor,
+                'breached_levels': self.profit_target.breached_levels,
+                'last_high': self.profit_target.last_high
+            }
+        }
+    
+    @classmethod
+    def from_serialized_state(cls, state):
+        """Recreate a SmartStopLoss instance from serialized state"""
+        instance = cls(
+            entry_price=state['entry'],
+            atr=state['initial_atr'],
+            adx=state['base_adx'],
+            activation_percent=state['activation_percent'],
+            base_multiplier=state['base_multiplier']
+        )
+        
+        # Restore all state variables
+        instance.activated = state['activated']
+        instance.highest_high = state['highest_high']
+        instance.current_stop = state['current_stop']
+        instance.growth_potential = state['growth_potential']
+        instance.consecutive_confirmations = state['consecutive_confirmations']
+        instance.last_direction = state['last_direction']
+        instance.previous_close = state['previous_close']
+        instance.hard_stop = state['hard_stop']
+        instance.hard_stop_triggered = state['hard_stop_triggered']
+        instance.trend_strength = state['trend_strength']
+        
+        # Restore profit target
+        profit_state = state['profit_target_state']
+        instance.profit_target = SmartProfitTarget(
+            entry_price=profit_state['entry_price'],
+            initial_target=profit_state['initial_target'],
+            atr=profit_state['atr'],
+            adx=profit_state['adx']
+        )
+        instance.profit_target.current_target = profit_state['current_target']
+        instance.profit_target.strength_factor = profit_state['strength_factor']
+        instance.profit_target.breached_levels = profit_state['breached_levels']
+        instance.profit_target.last_high = profit_state['last_high']
+        
+        return instance
 
 class PolygonTrendScanner:
     def __init__(self, max_tickers=None):
@@ -452,7 +931,7 @@ class PolygonTrendScanner:
         params = {'adjusted': 'true', 'apiKey': self.api_key}
         
         try:
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -538,70 +1017,25 @@ class PolygonTrendScanner:
                     df.drop(col, axis=1, inplace=True)
 
     def scan_tickers(self):
+        """Scan tickers in parallel using thread pooling"""
         results = []
         
-        for i, ticker in enumerate(self.tickers):
-            if i > 0 and i % 5 == 0:
-                time.sleep(1)
-                
-            data = self.get_polygon_data(ticker)
-            if data is None:
-                continue
-                
-            indicators = self.calculate_indicators(data)
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_ticker = {
+                executor.submit(self.process_ticker, ticker): ticker 
+                for ticker in self.tickers
+            }
             
-            if indicators is None:
-                continue
-                
-            try:
-                # Trend conditions
-                above_sma50 = indicators['Close'] > indicators['SMA_50']
-                above_sma200 = indicators['Close'] > indicators['SMA_200']
-                strong_adx = indicators['ADX'] > 25
-                
-                if above_sma50 and above_sma200 and strong_adx:
-                    # Calculate composite score (0-100)
-                    adx_component = min(40, (indicators['ADX'] / 50) * 40)
-                    sma50_component = min(30, max(0, indicators['Distance_from_SMA50']) * 0.3)
-                    volume_component = min(20, math.log10(max(1, indicators['Volume']/10000)))
-                    momentum_component = min(10, max(0, indicators['10D_Change']))
-                    
-                    score = min(100, adx_component + sma50_component + volume_component + momentum_component)
-                    
-                    # Initialize stop loss system
-                    stop_system = SmartStopLoss(
-                        entry_price=indicators['Close'],
-                        atr=indicators['ATR'],
-                        adx=indicators['ADX'],
-                        activation_percent=0.05,
-                        base_multiplier=self.base_multiplier
-                    )
-                    
-                    # Calculate risk metrics
-                    risk_per_share = indicators['Close'] - stop_system.current_stop
-                    risk_percent = (risk_per_share / indicators['Close']) * 100
-                    
-                    results.append({
-                        'Ticker': ticker,
-                        'Score': round(score, 1),
-                        'Price': round(indicators['Close'], 2),
-                        'ADX': round(indicators['ADX'], 1),
-                        'SMA50_Distance%': round(indicators['Distance_from_SMA50'], 1),
-                        'SMA200_Distance%': round(indicators['Distance_from_SMA200'], 1),
-                        'Volume': int(indicators['Volume']),
-                        'ATR': round(indicators['ATR'], 2),
-                        'ATR_Ratio': round(
-                            (indicators['Close'] - indicators['SMA_50'])/indicators['ATR'], 1),
-                        '10D_Change%': round(indicators['10D_Change'], 1),
-                        'Initial_Stop': round(stop_system.current_stop, 2),
-                        'Risk_per_Share': round(risk_per_share, 2),
-                        'Risk_Percent': round(risk_percent, 2),
-                        'ATR_Multiplier': self.base_multiplier,
-                        'Activation_Percent': 5.0
-                    })
-                    
-            except Exception as e:
-                continue
+            # Process results as they complete
+            for future in as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                try:
+                    result = future.result()
+                    if result:
+                        results.append(result)
+                except Exception as e:
+                    print(f"Error processing {ticker}: {str(e)}")
         
         # Create DataFrame and sort
         if results:
@@ -612,9 +1046,153 @@ class PolygonTrendScanner:
                             [['Rank', 'Ticker', 'Score', 'Price', 
                               'ADX', 'SMA50_Distance%', 'SMA200_Distance%',
                               '10D_Change%', 'Volume', 'ATR', 'ATR_Ratio',
-                              'Initial_Stop', 'Risk_per_Share', 'Risk_Percent',
+                              'Initial_Stop', 'Hard_Stop', 'Take_Profit',
+                              'Risk_per_Share', 'Risk_Percent',
                               'ATR_Multiplier', 'Activation_Percent']]
         return pd.DataFrame()
+
+    def process_ticker(self, ticker):
+        """Process a single ticker (to be run in parallel)"""
+        data = self.get_polygon_data(ticker)
+        if data is None:
+            return None
+            
+        indicators = self.calculate_indicators(data)
+        
+        if indicators is None:
+            return None
+            
+        try:
+            # Trend conditions
+            above_sma50 = indicators['Close'] > indicators['SMA_50']
+            above_sma200 = indicators['Close'] > indicators['SMA_200']
+            strong_adx = indicators['ADX'] > 25
+            
+            if above_sma50 and above_sma200 and strong_adx:
+                # Calculate composite score (0-100)
+                adx_component = min(40, (indicators['ADX'] / 50) * 40)
+                sma50_component = min(30, max(0, indicators['Distance_from_SMA50']) * 0.3)
+                volume_component = min(20, math.log10(max(1, indicators['Volume']/10000)))
+                momentum_component = min(10, max(0, indicators['10D_Change']))
+                
+                score = min(100, adx_component + sma50_component + volume_component + momentum_component)
+                
+                # Initialize stop loss system
+                stop_system = SmartStopLoss(
+                    entry_price=indicators['Close'],
+                    atr=indicators['ATR'],
+                    adx=indicators['ADX'],
+                    activation_percent=0.05,
+                    base_multiplier=self.base_multiplier
+                )
+                
+                # Calculate risk metrics
+                risk_per_share = indicators['Close'] - stop_system.current_stop
+                risk_percent = (risk_per_share / indicators['Close']) * 100
+                
+                return {
+                    'Ticker': ticker,
+                    'Score': round(score, 1),
+                    'Price': round(indicators['Close'], 2),
+                    'ADX': round(indicators['ADX'], 1),
+                    'SMA50_Distance%': round(indicators['Distance_from_SMA50'], 1),
+                    'SMA200_Distance%': round(indicators['Distance_from_SMA200'], 1),
+                    'Volume': int(indicators['Volume']),
+                    'ATR': round(indicators['ATR'], 2),
+                    'ATR_Ratio': round(
+                        (indicators['Close'] - indicators['SMA_50'])/indicators['ATR'], 1),
+                    '10D_Change%': round(indicators['10D_Change'], 1),
+                    'Initial_Stop': round(stop_system.current_stop, 2),
+                    'Hard_Stop': round(stop_system.hard_stop, 2),
+                    'Take_Profit': round(stop_system.profit_target.current_target, 2),
+                    'Risk_per_Share': round(risk_per_share, 2),
+                    'Risk_Percent': round(risk_percent, 2),
+                    'ATR_Multiplier': self.base_multiplier,
+                    'Activation_Percent': 5.0
+                }
+        except Exception as e:
+            return None
+        return None
+
+class StateManager:
+    def __init__(self, state_file=STATE_FILE):
+        self.state_file = state_file
+        self.last_save = None
+        self.transaction_log = TransactionLogger()
+        
+    def save_state(self, trading_system):
+        """Save the current state of the trading system"""
+        serializable_positions = {}
+        for ticker, data in trading_system.active_positions.items():
+            serializable_positions[ticker] = {
+                'qty': data['qty'],
+                'entry_price': data['entry_price'],
+                'stop_loss_state': data['stop_loss'].get_serializable_state(),
+                'entry_time': data.get('entry_time', datetime.now().isoformat())
+            }
+        
+        state = {
+            'active_positions': serializable_positions,
+            'last_scan_date': trading_system.last_scan_date,
+            'last_regime': trading_system.sector_system.overall_analyzer.state_labels,
+            'saved_at': datetime.now(),
+            'current_top_ticker': trading_system.current_top_ticker,
+            'top_ticker_score': trading_system.top_ticker_score,
+            'runner_ups': trading_system.runner_ups,
+            'monthly_trade_count': trading_system.monthly_trade_count,
+            'last_month_checked': trading_system.last_month_checked,
+            'executed_tickers': list(trading_system.executed_tickers)
+        }
+        
+        try:
+            with open(self.state_file, 'wb') as f:
+                pickle.dump(state, f)
+            self.last_save = datetime.now()
+            print(f"State saved at {self.last_save}")
+            
+            # Rotate logs on successful save
+            self._rotate_logs()
+            return True
+        except Exception as e:
+            print(f"Error saving state: {str(e)}")
+            return False
+    
+    def _rotate_logs(self):
+        """Rotate logs to prevent them from growing too large"""
+        if os.path.exists(TRANSACTION_LOG_FILE):
+            log_size = os.path.getsize(TRANSACTION_LOG_FILE)
+            if log_size > 1_000_000:  # 1MB
+                backup_name = f"{TRANSACTION_LOG_FILE}.bak"
+                os.replace(TRANSACTION_LOG_FILE, backup_name)
+    
+    def load_state(self, trading_system_instance):
+        """Load the saved state and replay transactions"""
+        state = None
+        if os.path.exists(self.state_file):
+            try:
+                with open(self.state_file, 'rb') as f:
+                    state = pickle.load(f)
+                print(f"Loaded state from {state['saved_at']}")
+            except Exception as e:
+                print(f"Error loading state: {str(e)}")
+        
+        # Always replay transaction log to catch recent changes
+        self.transaction_log.replay_log(trading_system_instance)
+        return state
+    
+    def get_order_details(self, order_id):
+        """Get order details from Alpaca by order ID"""
+        try:
+            order = trading_client.get_order_by_id(order_id)
+            return {
+                'symbol': order.symbol,
+                'qty': float(order.qty),
+                'filled_qty': float(order.filled_qty),
+                'status': order.status
+            }
+        except Exception as e:
+            print(f"Error fetching order {order_id}: {str(e)}")
+            return None
 
 # ========================
 # Utility Functions
@@ -633,7 +1211,7 @@ def get_all_tickers():
         }
         
         try:
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, timeout=10)
             data = response.json()
             
             if 'results' in data and data['results']:
@@ -678,7 +1256,7 @@ def fetch_stock_data(symbol, days=365):
     }
     
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=15)
         if response.status_code == 200:
             results = response.json().get('results', [])
             if results:
@@ -691,6 +1269,9 @@ def fetch_stock_data(symbol, days=365):
                     'timestamp': datetime.now()
                 }
                 return result
+    except requests.exceptions.Timeout:
+        print(f"Timeout fetching {symbol}, skipping")
+        return None
     except Exception as e:
         print(f"Error fetching {symbol}: {str(e)}")
     return None
@@ -700,12 +1281,38 @@ def get_market_cap(symbol):
     params = {"apiKey": POLYGON_API_KEY}
     time.sleep(RATE_LIMIT)
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=10)
         if response.status_code == 200:
             return response.json().get('results', {}).get('market_cap', 0)
     except:
         return 0
     return 0
+
+def get_latest_bar(ticker, retries=3):
+    for i in range(retries):
+        try:
+            url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/prev"
+            params = {'adjusted': 'true', 'apiKey': POLYGON_API_KEY}
+            response = requests.get(url, params=params, timeout=5)
+            
+            if response.status_code == 200:
+                result = response.json().get('results', [])
+                if result:
+                    return {
+                        'open': result[0]['o'],
+                        'high': result[0]['h'],
+                        'low': result[0]['l'],
+                        'close': result[0]['c'],
+                        'volume': result[0].get('v', 1e6)
+                    }
+            elif response.status_code == 429:
+                wait = int(response.headers.get('Retry-After', 30))
+                print(f"Rate limited. Waiting {wait} seconds")
+                time.sleep(wait)
+            time.sleep(1)
+        except Exception as e:
+            time.sleep(2 ** i)  # Exponential backoff
+    return None
 
 # ========================
 # Integrated Trading System
@@ -716,132 +1323,785 @@ class TradingSystem:
         self.trend_scanner = PolygonTrendScanner(max_tickers=MAX_TICKERS_TO_SCAN)
         self.active_positions = {}
         self.last_scan_date = None
+        self.state_manager = StateManager()
+        self.notifier = DiscordNotifier()
+        self.transaction_log = TransactionLogger()
+        
+        # New strategy attributes
+        self.current_top_ticker = None
+        self.top_ticker_score = 0
+        self.runner_ups = []  # List of dictionaries for runner-up tickers
+        self.monthly_trade_count = 0
+        self.last_month_checked = None
+        self.executed_tickers = set()  # Track all executed tickers
+        
+        # Load previous state if available
+        self.load_previous_state()
     
-    def run_weekly_scan(self):
+    def normalize_price(self, price):
+        """Round price to proper increment based on price level"""
+        if price < 1.00:
+            return round(price, 4)  # $0.0001 increments for stocks < $1
+        elif price < 10.00:
+            return round(price, 3)  # $0.001 increments for stocks $1-$10
+        else:
+            return round(price, 2)  # $0.01 increments for stocks > $10
+    
+    def reset_monthly_count(self):
+        """Reset trade count at start of each month"""
+        now = datetime.now()
+        if not self.last_month_checked or now.month != self.last_month_checked.month:
+            self.monthly_trade_count = 0
+            self.last_month_checked = now
+            self.executed_tickers = set()
+            print("Monthly trade count reset")
+            
+    def load_previous_state(self):
+        """Load previous state from file and sync with market"""
+        state = self.state_manager.load_state(self)
+        
+        # Get current positions from Alpaca
+        try:
+            actual_positions = trading_client.get_all_positions()
+            actual_symbols = {p.symbol for p in actual_positions}
+        except Exception as e:
+            print(f"Error fetching positions from Alpaca: {str(e)}")
+            actual_symbols = set()
+
+        if state:
+            # Recreate positions and sync with market
+            for ticker, data in state.get('active_positions', {}).items():
+                try:
+                    # Only recreate position if it exists with Alpaca
+                    if ticker in actual_symbols:
+                        stop_loss = SmartStopLoss.from_serialized_state(data['stop_loss_state'])
+                        stop_loss.sync_with_market(ticker)  # Sync with current market
+                        
+                        self.active_positions[ticker] = {
+                            'qty': data['qty'],
+                            'entry_price': data['entry_price'],
+                            'entry_time': data.get('entry_time', datetime.now().isoformat()),
+                            'stop_loss': stop_loss
+                        }
+                    else:
+                        print(f"Position {ticker} not found in Alpaca - skipping")
+                except Exception as e:
+                    print(f"Error recreating position for {ticker}: {str(e)}")
+            
+            self.last_scan_date = state.get('last_scan_date')
+            if 'last_regime' in state:
+                self.sector_system.overall_analyzer.state_labels = state['last_regime']
+            
+            # Load new strategy state
+            self.current_top_ticker = state.get('current_top_ticker')
+            self.top_ticker_score = state.get('top_ticker_score', 0)
+            self.runner_ups = state.get('runner_ups', [])
+            self.monthly_trade_count = state.get('monthly_trade_count', 0)
+            self.last_month_checked = state.get('last_month_checked')
+            self.executed_tickers = set(state.get('executed_tickers', []))
+            
+            print("Previous state loaded successfully")
+            
+            # Verify positions with broker and check for new orders
+            self.reconcile_positions()
+
+    def reconcile_positions(self):
+        """Verify our active positions match what's actually with the broker"""
+        try:
+            # Get actual positions from Alpaca
+            actual_positions = trading_client.get_all_positions()
+            
+            # CORRECTED: Get open orders without using 'status' parameter
+            all_orders = trading_client.get_orders()
+            open_orders = [o for o in all_orders if o.status == 'open']
+            active_order_ids = {o.id for o in open_orders if o.order_type == 'stop'}  # Focus on stop orders
+            
+            actual_symbols = {p.symbol for p in actual_positions}
+            
+            # Check our recorded positions
+            for symbol in list(self.active_positions.keys()):
+                if symbol not in actual_symbols:
+                    print(f"Position {symbol} not found with broker - removing from state")
+                    self.transaction_log.log(
+                        action="close_position",
+                        data={"ticker": symbol}
+                    )
+                    del self.active_positions[symbol]
+                    
+            # Check for active orders not in our state
+            for order_id in active_order_ids:
+                if not any(order_id in pos.get('order_ids', []) for pos in self.active_positions.values()):
+                    order_details = self.state_manager.get_order_details(order_id)
+                    if order_details and order_details['status'] == 'filled':
+                        print(f"Found filled order {order_id} not in state")
+                        self.process_new_position_from_order(order_id, order_details)
+                    
+            # Save cleaned state
+            self.save_current_state()
+            
+        except Exception as e:
+            print(f"Position reconciliation failed: {str(e)}")
+    
+    def process_new_position_from_order(self, order_id, order_details):
+        """Process a position discovered from an active order"""
+        try:
+            symbol = order_details['symbol']
+            qty = order_details['filled_qty']
+            
+            # Skip if we already have this position
+            if symbol in self.active_positions:
+                return
+                
+            print(f"Processing new position from order: {symbol} {qty} shares")
+            
+            # Get latest market data
+            latest = self.get_latest_bar(symbol)
+            if not latest:
+                print(f"Couldn't get data for {symbol}")
+                return
+                
+            # Create new position entry
+            self.active_positions[symbol] = {
+                'qty': qty,
+                'entry_price': latest['close'],
+                'entry_time': datetime.now().isoformat(),
+                'order_ids': [order_id],  # Track associated orders
+                'stop_loss': SmartStopLoss(
+                    entry_price=latest['close'],
+                    atr=self.calculate_atr(symbol),
+                    adx=self.get_adx(symbol)
+                )
+            }
+            
+            # Log the new position
+            self.transaction_log.log(
+                action="place_order",
+                data={
+                    "ticker": symbol,
+                    "qty": qty,
+                    "price": latest['close'],
+                    "atr": self.active_positions[symbol]['stop_loss'].initial_atr,
+                    "adx": self.active_positions[symbol]['stop_loss'].base_adx
+                }
+            )
+            
+            print(f"Added new position for {symbol} to state")
+            
+        except Exception as e:
+            print(f"Error processing new position: {str(e)}")
+    
+    def calculate_atr(self, symbol, period=14):
+        """Calculate ATR for a symbol"""
+        try:
+            data = self.trend_scanner.get_polygon_data(symbol)
+            if data is None or len(data) < period:
+                return 0.0
+                
+            df = data.copy()
+            df['prev_close'] = df['Close'].shift(1)
+            df['H-L'] = df['High'] - df['Low']
+            df['H-PC'] = abs(df['High'] - df['prev_close'])
+            df['L-PC'] = abs(df['Low'] - df['prev_close'])
+            df['TR'] = df[['H-L', 'H-PC', 'L-PC']].max(axis=1)
+            return df['TR'].rolling(period).mean().iloc[-1]
+        except:
+            return 0.0
+            
+    def save_current_state(self):
+        """Save the current state"""
+        return self.state_manager.save_state(self)
+    
+    async def run_weekly_scan(self):
         print("\nRunning weekly ticker scan...")
         results = self.trend_scanner.scan_tickers()
         
-        if not results.empty:
-            top_3 = results.head(3)
-            print(f"Top 3 Tickers:\n{top_3[['Ticker', 'Score', 'Initial_Stop']]}")
-            return top_3
-        return pd.DataFrame()
-
-    def calculate_position_size(self, price, portfolio_value):
-        return max(1, int(ALLOCATION_PER_TICKER / price))
-
-    def place_alpaca_order(self, ticker, side, qty, stop_price=None):
-        try:
-            if side == 'buy':
-                order = MarketOrderRequest(
-                    symbol=ticker,
-                    qty=qty,
-                    side=OrderSide.BUY,
-                    time_in_force=TimeInForce.DAY
-                )
-                trading_client.submit_order(order)
-                print(f"Placed BUY order for {qty} shares of {ticker}")
-                
-                # Place associated stop loss
-                if stop_price:
-                    stop_order = StopOrderRequest(
-                        symbol=ticker,
-                        qty=qty,
-                        side=OrderSide.SELL,
-                        stop_price=stop_price,
-                        time_in_force=TimeInForce.GTC
-                    )
-                    trading_client.submit_order(stop_order)
-                    print(f"Placed STOP LOSS at ${stop_price:.2f} for {ticker}")
-                    
-        except Exception as e:
-            print(f"Order failed for {ticker}: {str(e)}")
-
-    def update_stop_losses(self):
-        for ticker, data in self.active_positions.items():
-            try:
-                # Get latest price data
-                latest = self.get_latest_bar(ticker)
-                if not latest:
-                    continue
-                
-                # Add ADX for stop loss calculation
-                latest['adx'] = self.get_adx(ticker)
-                
-                # Update stop loss
-                new_stop = data['stop_loss'].update(latest)
-                
-                # Cancel old stop and place new one
-                self.place_alpaca_order(ticker, 'sell', data['qty'], new_stop)
-                
-            except Exception as e:
-                print(f"Stop update failed for {ticker}: {str(e)}")
-    
-    def get_latest_bar(self, ticker):
-        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/prev"
-        params = {'adjusted': 'true', 'apiKey': POLYGON_API_KEY}
-        response = requests.get(url, params=params)
-        if response.status_code == 200:
-            result = response.json().get('results', [])
-            if result:
-                return {
-                    'open': result[0]['o'],
-                    'high': result[0]['h'],
-                    'low': result[0]['l'],
-                    'close': result[0]['c'],
-                    'volume': result[0]['v']
-                }
-        return None
-    
-    def get_adx(self, ticker):
-        url = f"https://api.polygon.io/v1/indicators/adx/{ticker}"
-        params = {
-            'timespan': 'day',
-            'window': 14,
-            'apiKey': POLYGON_API_KEY
-        }
-        response = requests.get(url, params=params)
-        if response.status_code == 200:
-            data = response.json()
-            if 'results' in data and 'values' in data['results']:
-                return data['results']['values'][0]['value']
-        return None
-
-    def execute_weekly_trades(self):
-        # 1. Get top 3 tickers
-        top_tickers = self.run_weekly_scan()
-        if top_tickers.empty:
+        if results.empty:
             print("No suitable tickers found this week")
+            await self.notifier.send_system_alert("Weekly scan completed with no results")
+            return pd.DataFrame()
+            
+        # Add rank column
+        results['Rank'] = results['Score'].rank(ascending=False, method='min').astype(int)
+        return results.sort_values('Score', ascending=False)
+    
+    async def execute_weekly_trades(self):
+        self.reset_monthly_count()
+        results = await self.run_weekly_scan()
+        
+        if results.empty:
             return
-        
-        # 2. Get portfolio value
-        try:
-            portfolio_value = float(trading_client.get_account().equity)
-        except:
-            portfolio_value = 100000  # Default if API fails
-        
-        # 3. Place trades with stop losses
-        for _, row in top_tickers.iterrows():
-            ticker = row['Ticker']
-            price = row['Price']
-            stop_price = row['Initial_Stop']
-            qty = self.calculate_position_size(price, portfolio_value)
             
-            # Place order
-            self.place_alpaca_order(ticker, 'buy', qty, stop_price)
+        # Get top 3 candidates
+        top_3 = results.head(3)
+        
+        # Only execute the top ticker if we have trades remaining
+        if self.monthly_trade_count < 3:
+            top_row = top_3.iloc[0]
+            ticker = top_row['Ticker']
             
-            # Initialize stop loss tracker
+            if ticker not in self.executed_tickers:
+                if await self.place_trade(ticker, top_row):
+                    self.current_top_ticker = ticker
+                    self.top_ticker_score = top_row['Score']
+                    self.monthly_trade_count += 1
+                    self.executed_tickers.add(ticker)
+                    print(f"Executed top ticker: {ticker} (Score: {self.top_ticker_score})")
+        
+        # Store runner-ups with their full data
+        self.runner_ups = top_3.iloc[1:].to_dict('records')
+        print(f"Storing {len(self.runner_ups)} runner-up tickers")
+        
+        # Send notification of scan results
+        await self.notifier.send_scan_results(top_3)
+        self.save_current_state()
+        return top_3
+    
+    async def place_trade(self, ticker, row):
+        """Place a trade for a single ticker"""
+        qty = self.calculate_position_size(row['Price'])
+        
+        if await self.place_bracket_order(ticker, qty, row):
             self.active_positions[ticker] = {
                 'qty': qty,
-                'entry_price': price,
+                'entry_price': row['Price'],
+                'entry_time': datetime.now().isoformat(),
                 'stop_loss': SmartStopLoss(
-                    entry_price=price,
+                    entry_price=row['Price'],
                     atr=row['ATR'],
                     adx=row['ADX']
                 )
             }
+            return True
+        return False
+        
+    async def place_bracket_order(self, ticker, qty, row):
+        """Place bracket order with hard stop loss"""
+        try:
+            # Skip restricted securities
+            if self.is_restricted_security(ticker):
+                print(f"Skipping restricted security: {ticker}")
+                return False
+                
+            # Log before placing order
+            self.transaction_log.log(
+                action="place_order",
+                data={
+                    "ticker": ticker,
+                    "qty": qty,
+                    "price": row['Price'],
+                    "atr": row['ATR'],
+                    "adx": row['ADX'],
+                    "initial_stop": row['Initial_Stop'],
+                    "hard_stop": row['Hard_Stop'],
+                    "take_profit": row['Take_Profit']
+                }
+            )
+            
+            # Initialize stop loss system
+            stop_system = SmartStopLoss(
+                entry_price=row['Price'],
+                atr=row['ATR'],
+                adx=row['ADX']
+            )
+            
+            # Get bracket details with properly formatted prices
+            bracket_details = stop_system.get_bracket_orders(row['Price'], qty)
+            
+            # Submit triple barrier order
+            triple_barrier_order = {
+                "symbol": ticker,
+                "qty": str(qty),
+                "side": "buy",
+                "type": "market",
+                "time_in_force": "gtc",
+                "order_class": "bracket",
+                "stop_loss": {
+                    "stop_price": bracket_details["stop_loss"]["stop_price"],
+                    "limit_price": bracket_details["stop_loss"]["limit_price"]
+                },
+                "take_profit": {
+                    "limit_price": bracket_details["take_profit"]["limit_price"]
+                }
+            }
+            
+            # Submit via REST API
+            headers = {
+                "APCA-API-KEY-ID": ALPACA_API_KEY,
+                "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY
+            }
+            
+            response = requests.post(
+                "https://paper-api.alpaca.markets/v2/orders",
+                headers=headers,
+                json=triple_barrier_order,
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                print(f"Submitted bracket order for {ticker}")
+                # Place hard stop as a separate order
+                hard_stop_order = StopOrderRequest(
+                    symbol=ticker,
+                    qty=qty,
+                    side=OrderSide.SELL,
+                    stop_price=bracket_details["hard_stop"]["stop_price"],
+                    time_in_force=TimeInForce.GTC
+                )
+                trading_client.submit_order(hard_stop_order)
+                print(f"Placed hard stop at ${bracket_details['hard_stop']['stop_price']:.2f}")
+                
+                # Send Discord notification
+                await self.notifier.send_order_notification(
+                    order_type="buy",
+                    ticker=ticker,
+                    qty=qty,
+                    price=row['Price'],
+                    stop_loss=bracket_details["stop_loss"]["stop_price"],
+                    take_profit=bracket_details["take_profit"]["limit_price"],
+                    hard_stop=bracket_details["hard_stop"]["stop_price"]
+                )
+                return True
+            else:
+                error_msg = f"Order failed for {ticker}: {response.text}"
+                
+                # Handle specific "cannot be sold short" error
+                if "cannot be sold short" in error_msg:
+                    # Add to restricted list and skip
+                    DATA_CACHE.setdefault('restricted_tickers', set()).add(ticker)
+                    print(f"Added {ticker} to restricted list. Skipping...")
+                    return False
+                    
+                print(error_msg)
+                await self.notifier.send_system_alert(error_msg, is_error=True)
+                return False
+                
+        except Exception as e:
+            error_msg = f"Bracket order failed for {ticker}: {str(e)}"
+            print(error_msg)
+            await self.notifier.send_system_alert(error_msg, is_error=True)
+            return False
 
-    def run_market_regime_analysis(self):
+    def is_restricted_security(self, ticker):
+        """Check if security has trading restrictions"""
+        # Skip warrants and special securities
+        if any(ticker.endswith(ext) for ext in ['.WS', '.WT', '.U', '.RT', '.WI']):
+            return True
+            
+        # Skip units and special symbols
+        if '.' in ticker or '-' in ticker or ' ' in ticker:
+            return True
+            
+        # Check cached restricted tickers
+        if ticker in DATA_CACHE.get('restricted_tickers', set()):
+            return True
+            
+        return False
+
+    async def close_position(self, ticker, reason="Hard stop triggered"):
+        """Close a position immediately"""
+        if ticker not in self.active_positions:
+            return False
+            
+        position = self.active_positions[ticker]
+        qty = position['qty']
+        
+        try:
+            # Submit market sell order
+            market_order = MarketOrderRequest(
+                symbol=ticker,
+                qty=qty,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY
+            )
+            trading_client.submit_order(market_order)
+            
+            # Get exit price
+            latest = get_latest_bar(ticker)
+            exit_price = latest['close'] if latest else position['entry_price']
+            
+            # Log the closure
+            self.transaction_log.log(
+                action="close_position",
+                data={"ticker": ticker}
+            )
+            
+            # Send notification
+            if reason == "Hard stop triggered":
+                await self.notifier.send_hard_stop_triggered(
+                    ticker=ticker,
+                    entry_price=position['entry_price'],
+                    exit_price=exit_price
+                )
+            
+            # Remove from active positions
+            del self.active_positions[ticker]
+            print(f"Closed position for {ticker}: {reason}")
+            return True
+        except Exception as e:
+            print(f"Error closing position for {ticker}: {str(e)}")
+            return False
+
+    async def update_stop_losses(self):
+        # Create a queue for position updates
+        update_queue = Queue()
+        results = {}
+        
+        # Worker function for parallel updates
+        def update_worker():
+            while True:
+                ticker, data = update_queue.get()
+                if ticker is None:  # Poison pill
+                    break
+                    
+                try:
+                    # Get latest price data with retries
+                    latest = self.get_latest_bar(ticker)
+                    if not latest:
+                        print(f"No data for {ticker}, skipping update")
+                        update_queue.task_done()
+                        continue
+                    
+                    # Handle missing ADX
+                    if 'adx' not in latest:
+                        latest['adx'] = self.get_adx(ticker) or data['stop_loss'].base_adx
+                    
+                    # Handle missing volume
+                    if 'volume' not in latest:
+                        latest['volume'] = 1e6
+                    
+                    # Add average volume
+                    latest['avg_volume'] = self.get_avg_volume(ticker) or 1e6
+                    
+                    # Get current stop before update
+                    old_stop = data['stop_loss'].current_stop
+                    old_hard_stop = data['stop_loss'].hard_stop
+                    
+                    # Update stop loss
+                    new_stop = data['stop_loss'].update(latest)
+                    
+                    # Check if hard stop was triggered
+                    if data['stop_loss'].hard_stop_triggered:
+                        results[ticker] = ('close', "Hard stop triggered")
+                        update_queue.task_done()
+                        continue
+                    
+                    # Log the stop update
+                    log_data = {
+                        "ticker": ticker,
+                        "old_stop": old_stop,
+                        "new_stop": new_stop,
+                        "highest_high": data['stop_loss'].highest_high,
+                        "activated": data['stop_loss'].activated
+                    }
+                    
+                    # Only include hard stop if it changed
+                    if data['stop_loss'].hard_stop != old_hard_stop:
+                        log_data["hard_stop"] = data['stop_loss'].hard_stop
+                        
+                    self.transaction_log.log(
+                        action="update_stop",
+                        data=log_data
+                    )
+                    
+                    # Store result for later processing
+                    results[ticker] = ('update', data, latest, old_stop, new_stop)
+                    
+                except Exception as e:
+                    print(f"Stop update failed for {ticker}: {str(e)}")
+                    results[ticker] = ('error', e)
+                finally:
+                    update_queue.task_done()
+        
+        # Create worker threads
+        num_workers = min(10, max(1, len(self.active_positions)))
+        workers = []
+        for i in range(num_workers):
+            t = Thread(target=update_worker)
+            t.daemon = True
+            t.start()
+            workers.append(t)
+        
+        # Add positions to queue
+        for ticker, data in list(self.active_positions.items()).copy():
+            update_queue.put((ticker, data))
+        
+        # Wait for completion
+        update_queue.join()
+        
+        # Signal workers to exit
+        for i in range(num_workers):
+            update_queue.put((None, None))
+        
+        # Process results
+        for ticker, result in results.items():
+            action = result[0]
+            
+            if action == 'close':
+                await self.close_position(ticker, reason=result[1])
+            elif action == 'update':
+                data, latest, old_stop, new_stop = result[1:]
+                
+                # Only send notification if stop actually changed
+                if new_stop != old_stop:
+                    print(f"Updated stop for {ticker}: {new_stop:.2f}")
+                    
+                    # Determine reason for stop adjustment
+                    reason = "Price moved in favorable direction"
+                    if data['stop_loss'].activated:
+                        reason = "Trailing stop activated"
+                    
+                    # Send Discord notification
+                    await self.notifier.send_stop_loss_update(
+                        ticker=ticker,
+                        old_stop=old_stop,
+                        new_stop=new_stop,
+                        reason=reason
+                    )
+                
+                # Cancel old stop and place new one
+                self.cancel_existing_orders(ticker)
+                self.place_stop_order(ticker, data['qty'], new_stop)
+                
+                # Place new hard stop if it changed
+                if data['stop_loss'].hard_stop != old_stop:
+                    self.place_hard_stop_order(ticker, data['qty'], data['stop_loss'].hard_stop)
+                
+                # Send position update
+                await self.notifier.send_position_update(
+                    ticker=ticker,
+                    entry_price=data['entry_price'],
+                    current_price=latest['close'],
+                    stop_loss=new_stop,
+                    pnl=(latest['close'] - data['entry_price']) * data['qty']
+                )
+            elif action == 'error':
+                error = result[1]
+                await self.notifier.send_system_alert(
+                    f"Stop update failed for {ticker}: {str(error)}",
+                    is_error=True
+                )
+                # Remove problematic position
+                if ticker in self.active_positions:
+                    del self.active_positions[ticker]
+        
+        # Save state after updating all stops
+        self.save_current_state()
+    
+    def cancel_existing_orders(self, ticker):
+        try:
+            # FIX: Use 'symbols' parameter instead of 'symbol'
+            orders = trading_client.get_orders(status='open', symbols=[ticker])
+            for order in orders:
+                trading_client.cancel_order_by_id(order.id)
+            print(f"Cancelled existing orders for {ticker}")
+        except Exception as e:
+            print(f"Failed to cancel orders for {ticker}: {str(e)}")
+    
+    def place_stop_order(self, ticker, qty, stop_price):
+        try:
+            # FIX: Add price normalization
+            normalized_stop = self.normalize_price(stop_price)
+            stop_order = StopOrderRequest(
+                symbol=ticker,
+                qty=qty,
+                side=OrderSide.SELL,
+                stop_price=normalized_stop,
+                time_in_force=TimeInForce.GTC
+            )
+            trading_client.submit_order(stop_order)
+            print(f"Placed new STOP at ${normalized_stop:.4f} for {ticker}")
+        except Exception as e:
+            print(f"Failed to place stop for {ticker}: {str(e)}")
+    
+    def place_hard_stop_order(self, ticker, qty, stop_price):
+        try:
+            # FIX: Add price normalization
+            normalized_stop = self.normalize_price(stop_price)
+            stop_order = StopOrderRequest(
+                symbol=ticker,
+                qty=qty,
+                side=OrderSide.SELL,
+                stop_price=normalized_stop,
+                time_in_force=TimeInForce.GTC
+            )
+            trading_client.submit_order(stop_order)
+            print(f"Placed new HARD STOP at ${normalized_stop:.4f} for {ticker}")
+        except Exception as e:
+            print(f"Failed to place hard stop for {ticker}: {str(e)}")
+    
+    def get_latest_bar(self, ticker, retries=3):
+        return get_latest_bar(ticker, retries)
+    
+    def get_adx(self, ticker, retries=2):
+        for i in range(retries):
+            try:
+                url = f"https://api.polygon.io/v1/indicators/adx/{ticker}"
+                params = {'timespan': 'day', 'window': 14, 'apiKey': POLYGON_API_KEY}
+                response = requests.get(url, params=params, timeout=5)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'results' in data and 'values' in data['results']:
+                        return data['results']['values'][0]['value']
+            except Exception as e:
+                time.sleep(0.5 * (i+1))
+        return None
+    
+    def get_avg_volume(self, ticker, days=30):
+        try:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+            url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start_date}/{end_date}"
+            params = {'adjusted': 'true', 'apiKey': POLYGON_API_KEY}
+            response = requests.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'results' in data and data['results']:
+                    volumes = [r['v'] for r in data['results']]
+                    return sum(volumes) / len(volumes)
+        except:
+            return None
+        return None
+
+    def calculate_position_size(self, price):
+        return max(1, int(ALLOCATION_PER_TICKER / price))
+
+    async def check_runner_ups(self):
+        """Check if we need to fill positions or monitor runner-ups"""
+        # First check if we need to fill empty positions
+        if not self.active_positions and self.monthly_trade_count < 3:
+            print("No active positions - scanning for new candidates")
+            await self.scan_and_fill_empty_positions()
+            return
+            
+        # Then proceed with runner-up monitoring
+        if not self.runner_ups or self.monthly_trade_count >= 3:
+            return
+            
+        print("Checking runner-up tickers for improvement...")
+        new_runner_ups = []
+        executed_count = 0
+        
+        for candidate in self.runner_ups:
+            try:
+                ticker = candidate['Ticker']
+                
+                # Skip if already executed
+                if ticker in self.executed_tickers:
+                    continue
+                    
+                # Get updated data
+                updated_data = self.get_updated_ticker_data(ticker)
+                if not updated_data:
+                    new_runner_ups.append(candidate)  # Keep original data
+                    continue
+                    
+                # Recalculate score
+                new_score = self.calculate_ticker_score(updated_data)
+                
+                # Check if score matches/exceeds original top score
+                if new_score >= self.top_ticker_score:
+                    # Place trade if not already executed and within limits
+                    if (self.monthly_trade_count < 3 and 
+                        ticker not in self.executed_tickers):
+                        if await self.place_trade(ticker, updated_data):
+                            print(f"Executed runner-up: {ticker} (New: {new_score} vs Original: {self.top_ticker_score})")
+                            self.monthly_trade_count += 1
+                            self.executed_tickers.add(ticker)
+                            executed_count += 1
+                            continue  # Skip adding to new runner-ups
+                
+                # Update candidate with new score and keep for next check
+                candidate['Score'] = new_score
+                candidate.update(updated_data)
+                new_runner_ups.append(candidate)
+                
+            except Exception as e:
+                print(f"Error checking runner-up {ticker}: {str(e)}")
+                new_runner_ups.append(candidate)  # Keep original on error
+        
+        # Update runner-up list
+        self.runner_ups = new_runner_ups
+        
+        if executed_count > 0:
+            print(f"Executed {executed_count} runner-up tickers")
+            await self.notifier.send_system_alert(
+                f"Executed {executed_count} runner-up tickers with improved scores"
+            )
+            self.save_current_state()
+
+    async def scan_and_fill_empty_positions(self):
+        """Scan for new candidates when there are no active positions"""
+        print("Running fill scan for empty positions...")
+        # Create a new scanner with reduced ticker count for efficiency
+        fill_scanner = PolygonTrendScanner(MAX_TICKERS_TO_SCAN)
+        
+        # Add progress bar for scanning
+        print("Scanning for new position candidates...")
+        results = fill_scanner.scan_tickers()
+        
+        if results.empty:
+            print("No suitable tickers found in fill scan")
+            return
+            
+        # Get top candidate
+        top_row = results.iloc[0]
+        ticker = top_row['Ticker']
+        
+        if await self.place_trade(ticker, top_row):
+            print(f"Filled empty position with: {ticker}")
+            self.current_top_ticker = ticker
+            self.top_ticker_score = top_row['Score']
+            self.monthly_trade_count += 1
+            self.executed_tickers.add(ticker)
+            
+            # Store runner-ups from this scan
+            self.runner_ups = results.iloc[1:3].to_dict('records')
+            print(f"Stored {len(self.runner_ups)} new runner-ups")
+            
+            await self.notifier.send_system_alert(
+                f"Filled empty position with {ticker} (Score: {top_row['Score']})"
+            )
+            self.save_current_state()
+            
+    def get_updated_ticker_data(self, ticker):
+        """Get updated data for a ticker"""
+        data = self.trend_scanner.get_polygon_data(ticker)
+        if data is None:
+            return None
+            
+        indicators = self.trend_scanner.calculate_indicators(data)
+        if indicators is None:
+            return None
+            
+        return {
+            'Ticker': ticker,
+            'Score': 0,  # Will be calculated separately
+            'Price': indicators['Close'],
+            'ATR': indicators['ATR'],
+            'ADX': indicators['ADX'],
+            'SMA_50': indicators['SMA_50'],
+            'SMA_200': indicators['SMA_200'],
+            'Volume': indicators['Volume'],
+            '10D_Change': indicators['10D_Change'],
+            'Initial_Stop': indicators['Close'] - (self.trend_scanner.base_multiplier * indicators['ATR'])
+        }
+        
+    def calculate_ticker_score(self, data):
+        """Calculate score using same method as scanner"""
+        try:
+            # Same calculation as in PolygonTrendScanner.scan_tickers()
+            adx_component = min(40, (data['ADX'] / 50) * 40)
+            sma50_component = min(30, max(0, ((data['Price'] - data['SMA_50']) / data['SMA_50']) * 100) * 0.3)
+            volume_component = min(20, math.log10(max(1, data['Volume']/10000)))
+            momentum_component = min(10, max(0, data['10D_Change']))
+            
+            return min(100, adx_component + sma50_component + volume_component + momentum_component)
+        except:
+            return 0
+            
+    async def run_market_regime_analysis(self):
         try:
             print("\nRunning market regime analysis...")
             tickers = get_all_tickers()
@@ -869,49 +2129,133 @@ class TradingSystem:
             print(f"Regime analysis failed: {str(e)}")
             return "Neutral"
 
-    def monitor_and_update(self):
+    async def initialize(self):
+        """Initialize async components"""
+        await self.notifier.send_system_alert("Trading system starting up...")
+        
+    async def shutdown(self):
+        """Clean up resources"""
+        await self.notifier.send_system_alert("Trading system shutting down...")
+        
+    async def monitor_and_update(self):
         print("Starting Trading System...")
         print("Press Ctrl+C to stop")
         
         # Initial market regime analysis
-        self.run_market_regime_analysis()
+        current_regime = await self.run_market_regime_analysis()
+        regime_message = f"Initialization complete. Current regime: {current_regime}"
+        print(f"\n{regime_message}")
+        await self.notifier.send_system_alert(regime_message)
+        
+        print("System now monitoring for scheduled tasks...")
+        last_state_save = datetime.now()
+        last_runner_up_check = None
         
         while True:
             try:
                 current_time = datetime.now()
                 weekday = current_time.weekday()
                 hour = current_time.hour
+                minute = current_time.minute
+                
+                # Save state every 5 minutes
+                if (current_time - last_state_save).total_seconds() > AUTO_SAVE_INTERVAL:
+                    self.save_current_state()
+                    last_state_save = current_time
+                    print("System state saved")
+                
+                # Print status message
+                print(f"\n[{current_time.strftime('%Y-%m-%d %H:%M')}] Checking tasks... ", end="")
+                task_performed = False
                 
                 # Run weekly trades on Sundays at 4 PM
-                if weekday == 6 and hour == 16:
+                if weekday == 6 and hour == 16 and minute < 10:  # Run once at 4:00 PM
                     if not self.last_scan_date or (current_time - self.last_scan_date).days >= 7:
-                        print("\n=== EXECUTING WEEKLY TRADES ===")
-                        self.execute_weekly_trades()
+                        print("Executing weekly trades")
+                        await self.notifier.send_system_alert("Executing weekly trades")
+                        await self.execute_weekly_trades()
                         self.last_scan_date = current_time
+                        task_performed = True
                 
-                # Update stops hourly during market hours
-                if 9 <= hour <= 16:
+                # Update stops hourly during market hours (9AM-4PM)
+                if 9 <= hour <= 16 and not task_performed:
                     if self.active_positions:
-                        print("\nUpdating stop losses...")
-                        self.update_stop_losses()
+                        print("Updating stop losses")
+                        await self.update_stop_losses()
+                        task_performed = True
+                
+                # Check positions and runner-ups every 2 hours during market hours
+                if (9 <= hour <= 16 and 
+                    not task_performed and 
+                    (last_runner_up_check is None or 
+                    (current_time - last_runner_up_check).total_seconds() > 7200)):  # 2 hours
+                    print("Checking positions and runner-ups")
+                    await self.check_runner_ups()  # This handles both empty positions and runner-ups
+                    last_runner_up_check = current_time
+                    task_performed = True
                 
                 # Run market regime analysis at 5 AM daily
-                if hour == 5:
-                    self.run_market_regime_analysis()
+                if hour == 5 and minute < 10 and not task_performed:
+                    print("Running market regime analysis")
+                    current_regime = await self.run_market_regime_analysis()
+                    await self.notifier.send_system_alert(
+                        f"Market regime analysis complete. Current regime: {current_regime}"
+                    )
+                    task_performed = True
                 
-                # Sleep for 1 hour
-                time.sleep(3600)
+                # Emergency fill check if we somehow have no positions during market hours
+                if (9 <= hour <= 16 and 
+                    not self.active_positions and 
+                    self.monthly_trade_count < 3 and 
+                    not task_performed):
+                    print("Emergency fill check - no active positions")
+                    await self.scan_and_fill_empty_positions()
+                    task_performed = True
+                
+                if not task_performed:
+                    print("No scheduled tasks")
+                
+                # Calculate sleep time until next check
+                now = datetime.now()
+                if 9 <= now.hour <= 16:  # Market hours - check hourly
+                    sleep_time = 3600  # 1 hour
+                else:  # Outside market hours - check every 4 hours
+                    sleep_time = 14400  # 4 hours
+                
+                next_check = now + timedelta(seconds=sleep_time)
+                print(f"Next check at {next_check.strftime('%H:%M')}")
+                await asyncio.sleep(sleep_time)
                 
             except KeyboardInterrupt:
                 print("\nExiting trading system...")
+                # Save state before exiting
+                self.save_current_state()
                 break
             except Exception as e:
                 print(f"System error: {str(e)}")
-                time.sleep(300)
-
+                await self.notifier.send_system_alert(
+                    f"System error: {str(e)}",
+                    is_error=True
+                )
+                # Save state on error
+                self.save_current_state()
+                await asyncio.sleep(300)  # Wait 5 minutes before retrying
 # ===============
 # Main Execution
 # ===============
-if __name__ == "__main__":
+async def main():
     trading_system = TradingSystem()
-    trading_system.monitor_and_update()
+    await trading_system.initialize()
+    
+    try:
+        await trading_system.monitor_and_update()
+    except Exception as e:
+        await trading_system.notifier.send_system_alert(
+            f"System crashed: {str(e)}",
+            is_error=True
+        )
+    finally:
+        await trading_system.shutdown()
+
+if __name__ == "__main__":
+    asyncio.run(main())
