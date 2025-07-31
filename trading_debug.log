@@ -1,0 +1,119 @@
+[2025-07-28 21:17:00] [INFO] Starting monitoring cycle at 21:17:00
+[2025-07-28 21:18:24] [INFO] Current market regime: Neutral
+[2025-07-28 21:18:24] [INFO] Completed monitoring cycle. Sleeping for 60 seconds
+[2025-07-28 21:19:24] [INFO] Starting monitoring cycle at 21:19:24
+[2025-07-28 21:19:24] [INFO] Current market regime: Neutral
+[2025-07-28 21:19:24] [INFO] Completed monitoring cycle. Sleeping for 60 seconds
+[2025-07-28 21:19:57] [INFO] Starting monitoring cycle at 21:19:57
+[2025-07-28 21:21:12] [INFO] Current market regime: Neutral
+[2025-07-28 21:21:12] [INFO] Completed monitoring cycle. Sleeping for 60 seconds
+[2025-07-28 21:22:12] [INFO] Starting monitoring cycle at 21:22:12
+[2025-07-28 21:22:12] [INFO] Current market regime: Neutral
+[2025-07-28 21:22:12] [INFO] Completed monitoring cycle. Sleeping for 60 seconds
+[2025-07-28 21:23:12] [INFO] Starting monitoring cycle at 21:23:12
+[2025-07-28 21:23:12] [INFO] Current market regime: Neutral
+[2025-07-28 21:23:12] [INFO] Completed monitoring cycle. Sleeping for 60 seconds
+[2025-07-28 21:24:12] [INFO] Starting monitoring cycle at 21:24:12
+[2025-07-28 21:24:12] [INFO] Current market regime: Neutral
+[2025-07-28 21:24:12] [INFO] Completed monitoring cycle. Sleeping for 60 seconds
+[2025-07-28 21:25:12] [INFO] Starting monitoring cycle at 21:25:12
+[2025-07-28 21:25:12] [INFO] Current market regime: Neutral
+[2025-07-28 21:25:12] [INFO] Saving system state (5 minute interval)
+[2025-07-28 21:25:12] [INFO] Completed monitoring cycle. Sleeping for 60 seconds
+[2025-07-28 21:26:12] [INFO] Starting monitoring cycle at 21:26:12
+[2025-07-28 21:26:12] [INFO] Current market regime: Neutral
+[2025-07-28 21:26:12] [INFO] Completed monitoring cycle. Sleeping for 60 seconds
+[2025-07-28 21:27:12] [INFO] Starting monitoring cycle at 21:27:12
+[2025-07-28 21:27:12] [INFO] Current market regime: Neutral
+[2025-07-28 21:27:12] [INFO] Completed monitoring cycle. Sleeping for 60 seconds
+[2025-07-28 21:27:27] [INFO] Initializing trading system...
+[2025-07-28 21:27:27] [INFO] API credentials validated
+[2025-07-28 21:27:27] [INFO] Loading ticker list...
+[2025-07-28 21:27:27] [INFO] Initializing trading system...
+[2025-07-28 21:27:27] [INFO] API credentials validated
+[2025-07-28 21:27:27] [INFO] Loading ticker list...
+[2025-07-28 21:27:28] [INFO] Loaded 600 tickers (sample: ['ACGL', 'DIT', 'AGNG']...)
+[2025-07-28 21:27:28] [INFO] Attempting to load previous state...
+[2025-07-28 21:27:28] [INFO] Loaded state from 2025-07-28 21:27:21.325785
+[2025-07-28 21:27:28] [INFO] Active positions: 0
+[2025-07-28 21:27:28] [INFO] Sector system initialized
+[2025-07-28 21:27:28] [INFO] Running initial market analysis...
+[2025-07-28 21:27:28] [INFO] Loaded 600 tickers (sample: ['ACGL', 'DIT', 'AGNG']...)
+[2025-07-28 21:27:28] [INFO] Attempting to load previous state...
+[2025-07-28 21:27:28] [INFO] Loaded state from 2025-07-28 21:27:21.325785
+[2025-07-28 21:27:28] [INFO] Active positions: 0
+[2025-07-28 21:27:28] [INFO] Sector system initialized
+[2025-07-28 21:27:28] [INFO] Running initial market analysis...
+[2025-07-28 21:29:12] [INFO] Initial market regime: Neutral
+[2025-07-28 21:29:12] [INFO] No existing candidates found - running initial scan
+[2025-07-28 21:29:12] [INFO] Starting weekly scan at 2025-07-28 21:29:12.651937
+[2025-07-28 21:29:12] [INFO] Scanning 600 tickers...
+[2025-07-28 21:29:12] [CRITICAL] Unexpected scan error: 'PolygonTrendScanner' object has no attribute 'log_debug'
+[2025-07-28 21:29:13] [INFO] Initial market regime: Neutral
+[2025-07-28 21:29:13] [INFO] No existing candidates found - running initial scan
+[2025-07-28 21:29:13] [INFO] Starting weekly scan at 2025-07-28 21:29:13.724732
+[2025-07-28 21:29:13] [INFO] Scanning 600 tickers...
+[2025-07-28 21:29:13] [CRITICAL] Unexpected scan error: 'PolygonTrendScanner' object has no attribute 'log_debug'
+[2025-07-28 21:29:13] [INFO] Initialization complete
+[2025-07-28 21:29:14] [INFO] Initialization complete
+[2025-07-28 21:29:14] [INFO] Starting monitoring cycle at 21:29:14
+[2025-07-28 21:29:14] [INFO] No candidates available - forcing scan
+[2025-07-28 21:29:14] [INFO] Starting weekly scan at 2025-07-28 21:29:14.411548
+[2025-07-28 21:29:14] [INFO] Scanning 600 tickers...
+[2025-07-28 21:29:14] [CRITICAL] Unexpected scan error: 'PolygonTrendScanner' object has no attribute 'log_debug'
+[2025-07-28 21:29:14] [INFO] Current market regime: Neutral
+[2025-07-28 21:29:14] [INFO] Starting weekly scan (Sunday 4PM or no candidates)
+[2025-07-28 21:29:14] [INFO] Starting weekly scan at 2025-07-28 21:29:14.816538
+[2025-07-28 21:29:14] [INFO] Scanning 600 tickers...
+[2025-07-28 21:29:14] [CRITICAL] Unexpected scan error: 'PolygonTrendScanner' object has no attribute 'log_debug'
+[2025-07-28 21:30:15] [INFO] Starting monitoring cycle at 21:30:15
+[2025-07-28 21:30:15] [INFO] No candidates available - forcing scan
+[2025-07-28 21:30:15] [INFO] Starting weekly scan at 2025-07-28 21:30:15.115826
+[2025-07-28 21:30:15] [INFO] Scanning 600 tickers...
+[2025-07-28 21:30:15] [CRITICAL] Unexpected scan error: 'PolygonTrendScanner' object has no attribute 'log_debug'
+[2025-07-28 21:30:15] [INFO] Current market regime: Neutral
+[2025-07-28 21:30:15] [INFO] Starting weekly scan (Sunday 4PM or no candidates)
+[2025-07-28 21:30:15] [INFO] Starting weekly scan at 2025-07-28 21:30:15.351072
+[2025-07-28 21:30:15] [INFO] Scanning 600 tickers...
+[2025-07-28 21:30:15] [CRITICAL] Unexpected scan error: 'PolygonTrendScanner' object has no attribute 'log_debug'
+[2025-07-28 21:31:15] [INFO] Starting monitoring cycle at 21:31:15
+[2025-07-28 21:31:15] [INFO] No candidates available - forcing scan
+[2025-07-28 21:31:15] [INFO] Starting weekly scan at 2025-07-28 21:31:15.731835
+[2025-07-28 21:31:15] [INFO] Scanning 600 tickers...
+[2025-07-28 21:31:15] [CRITICAL] Unexpected scan error: 'PolygonTrendScanner' object has no attribute 'log_debug'
+[2025-07-28 21:31:15] [INFO] Current market regime: Neutral
+[2025-07-28 21:31:15] [INFO] Starting weekly scan (Sunday 4PM or no candidates)
+[2025-07-28 21:31:15] [INFO] Starting weekly scan at 2025-07-28 21:31:15.983370
+[2025-07-28 21:31:15] [INFO] Scanning 600 tickers...
+[2025-07-28 21:31:15] [CRITICAL] Unexpected scan error: 'PolygonTrendScanner' object has no attribute 'log_debug'
+[2025-07-28 21:32:16] [INFO] Starting monitoring cycle at 21:32:16
+[2025-07-28 21:32:16] [INFO] No candidates available - forcing scan
+[2025-07-28 21:32:16] [INFO] Starting weekly scan at 2025-07-28 21:32:16.271190
+[2025-07-28 21:32:16] [INFO] Scanning 600 tickers...
+[2025-07-28 21:32:16] [CRITICAL] Unexpected scan error: 'PolygonTrendScanner' object has no attribute 'log_debug'
+[2025-07-28 21:32:16] [INFO] Current market regime: Neutral
+[2025-07-28 21:32:16] [INFO] Starting weekly scan (Sunday 4PM or no candidates)
+[2025-07-28 21:32:16] [INFO] Starting weekly scan at 2025-07-28 21:32:16.524599
+[2025-07-28 21:32:16] [INFO] Scanning 600 tickers...
+[2025-07-28 21:32:16] [CRITICAL] Unexpected scan error: 'PolygonTrendScanner' object has no attribute 'log_debug'
+[2025-07-29 14:28:16] [INFO] Starting monitoring cycle at 14:28:16
+[2025-07-29 14:29:38] [INFO] Current market regime: Neutral
+[2025-07-29 14:29:38] [INFO] Completed monitoring cycle. Sleeping for 60 seconds
+[2025-07-29 19:48:33] [INFO] Initializing trading system...
+[2025-07-29 19:48:33] [INFO] API credentials validated
+[2025-07-29 19:48:33] [INFO] Loading ticker list...
+[2025-07-29 19:48:33] [INFO] Initializing trading system...
+[2025-07-29 19:48:33] [INFO] API credentials validated
+[2025-07-29 19:48:33] [INFO] Loading ticker list...
+[2025-07-29 19:48:34] [INFO] Loaded 600 tickers (sample: ['CTM', 'AIFE', 'MTNB']...)
+[2025-07-29 19:48:34] [INFO] Attempting to load previous state...
+[2025-07-29 19:48:34] [INFO] Loaded state from 2025-07-29 18:01:24.663316
+[2025-07-29 19:48:34] [INFO] Active positions: 0
+[2025-07-29 19:48:34] [INFO] Sector system initialized
+[2025-07-29 19:48:34] [INFO] Running initial market analysis...
+[2025-07-29 19:48:34] [INFO] Loaded 600 tickers (sample: ['CTM', 'AIFE', 'MTNB']...)
+[2025-07-29 19:48:34] [INFO] Attempting to load previous state...
+[2025-07-29 19:48:34] [INFO] Loaded state from 2025-07-29 18:01:24.663316
+[2025-07-29 19:48:34] [INFO] Active positions: 0
+[2025-07-29 19:48:34] [INFO] Sector system initialized
+[2025-07-29 19:48:34] [INFO] Running initial market analysis...
