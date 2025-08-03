@@ -46,26 +46,3 @@ class RiskManager:
             print(f"Reduced position size to {position_size} due to buying power constraints")
             
         return position_size
-
-    def is_restricted_security(self, ticker):
-        """Check if security has trading restrictions"""
-        # Skip warrants and special securities
-        if any(ticker.endswith(ext) for ext in [".WS", ".WT", ".U", ".RT", ".WI"]):
-            return True
-
-        # Skip units and special symbols
-        if "." in ticker or "-" in ticker or " " in ticker:
-            return True
-
-        return False
-
-    def cancel_existing_orders(self, ticker):
-        """Cancel any existing orders for a ticker"""
-        try:
-            orders = self.trading_client.get_orders(status="open")
-            for order in orders:
-                if order.symbol == ticker:
-                    self.trading_client.cancel_order_by_id(order.id)
-                    print(f"Cancelled existing order for {ticker}")
-        except Exception as e:
-            print(f"Error cancelling existing orders: {str(e)}")

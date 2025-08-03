@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import time
 from datetime import datetime, timedelta
-from position_manager import SmartStopLoss, SmartProfitTarget
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
