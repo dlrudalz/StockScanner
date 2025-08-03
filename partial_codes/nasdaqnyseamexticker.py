@@ -36,10 +36,10 @@ class PolygonTickerScanner:
             level=log_level
         )
         self.logger = logging.getLogger("PolygonTickerScanner")
+        self.logger.info("Initializing scanner...")
         
         # Initialize cache
         self._init_cache()
-
 
     def _init_cache(self):
         """Initialize ticker cache with thread-safe locking"""
@@ -50,14 +50,13 @@ class PolygonTickerScanner:
                     # Handle legacy cache without 'type' column
                     if 'type' not in self.ticker_cache.columns:
                         self.ticker_cache['type'] = 'CS'  # Assume existing are stocks
-                        self.logger.warning("Legacy cache detected. Added 'type' column with default 'CS'")
-                    self.logger.info(f"Loaded cache with {len(self.ticker_cache)} tickers")
+                    self.logger.info(f"Loaded cache: {len(self.ticker_cache)} stocks")
                     
                     # Start background refresh if needed
                     if time.time() - self.last_refresh_time > self.refresh_interval:
                         Thread(target=self._refresh_all_tickers, daemon=True).start()
                 except Exception as e:
-                    self.logger.error(f"Error loading cache: {e}")
+                    self.logger.error(f"Cache error: {e}")
                     self.ticker_cache = pd.DataFrame(columns=["ticker", "name", "primary_exchange", "last_updated_utc", "type"])
                     self._refresh_all_tickers()
             else:
@@ -74,13 +73,12 @@ class PolygonTickerScanner:
             self.logger.error(f"API request failed: {e}")
             return None
         except json.JSONDecodeError:
-            self.logger.error(f"Invalid JSON response from: {url}")
+            self.logger.error(f"Invalid JSON response")
             return None
 
     def _fetch_exchange_page(self, exchange, url):
         """Fetch a single page for an exchange"""
         try:
-            self.logger.debug(f"Fetching page: {url}")
             data = self._call_polygon_api(url)
             if not data:
                 return []
@@ -97,7 +95,6 @@ class PolygonTickerScanner:
 
     def _fetch_exchange_tickers(self, exchange):
         """Fetch all tickers for a specific exchange using parallel page fetching"""
-        self.logger.info(f"Starting ticker fetch for exchange: {exchange}")
         base_url = f"{self.base_url}/tickers?market=stocks&exchange={exchange}&active=true&limit=1000&apiKey={self.api_key}"
         
         all_results = []
@@ -125,47 +122,27 @@ class PolygonTickerScanner:
                         
                     if next_url:
                         next_urls.append(next_url)
-                        
-                self.logger.debug(f"Processed {len(current_urls)} pages for {exchange}. Total pages: {page_count}")
         
-        self.logger.info(f"Completed fetch for {exchange}: {len(all_results)} STOCKS across {page_count} pages")
         return all_results
 
     def _refresh_all_tickers(self):
         """Fetch all tickers from Polygon using parallel execution"""
         start_time = time.time()
-        self.logger.info("Starting full ticker refresh (STOCKS ONLY)")
-        
-        # Get current ticker count
-        with self.cache_lock:
-            current_count = len(self.ticker_cache)
-        self.logger.info(f"Current STOCKS in cache: {current_count}")
+        self.logger.info("Refreshing stock data...")
         
         # Fetch all exchanges in parallel
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.exchanges)) as exchange_executor:
             exchange_futures = {exchange_executor.submit(self._fetch_exchange_tickers, exchange): exchange 
                                 for exchange in self.exchanges}
             
-            exchange_counts = {}
             all_results = []
             for future in concurrent.futures.as_completed(exchange_futures):
                 exchange = exchange_futures[future]
                 try:
                     exchange_results = future.result()
                     all_results.extend(exchange_results)
-                    exchange_counts[exchange] = len(exchange_results)
-                    self.logger.debug(f"Finished {exchange}: {len(exchange_results)} stocks")
                 except Exception as e:
                     self.logger.error(f"Error processing {exchange}: {e}")
-                    exchange_counts[exchange] = 0
-        
-        # Log summary of tickers per exchange
-        self.logger.info("Stock refresh summary:")
-        total_stocks = 0
-        for exchange in self.exchanges:
-            count = exchange_counts.get(exchange, 0)
-            self.logger.info(f"  {exchange}: {count} stocks")
-            total_stocks += count
         
         # Process and cache results
         if all_results:
@@ -181,17 +158,13 @@ class PolygonTickerScanner:
                 # Replace cache completely for this refresh
                 self.ticker_cache = new_cache
                 self.ticker_cache.to_parquet(self.cache_file)
-                new_count = len(self.ticker_cache)
-            
+                
             elapsed = time.time() - start_time
-            self.logger.info(f"Total STOCKS: {total_stocks}")
-            self.logger.info(f"Refresh completed in {elapsed:.2f} seconds")
+            self.logger.info(f"Total stocks: {len(self.ticker_cache)} | Refresh time: {elapsed:.1f}s")
             self.last_refresh_time = time.time()
         else:
-            self.logger.warning("No stocks fetched during refresh")
             with self.cache_lock:
-                current_count = len(self.ticker_cache)
-            self.logger.info(f"Total stocks remains: {current_count}")
+                self.logger.info(f"Total stocks: {len(self.ticker_cache)}")
 
     def _update_single_ticker(self, ticker):
         """Fetch and update a single ticker in cache (stocks only)"""
@@ -206,7 +179,6 @@ class PolygonTickerScanner:
                 
                 # FILTER: Only process common stocks (type "CS")
                 if ticker_data.get("type") != "CS":
-                    self.logger.warning(f"Ignoring non-stock security: {ticker} (type={ticker_data.get('type')})")
                     self.known_missing_tickers.add(ticker)
                     
                     # Remove from cache if exists
@@ -214,7 +186,7 @@ class PolygonTickerScanner:
                         if ticker in self.ticker_cache["ticker"].values:
                             self.ticker_cache = self.ticker_cache[self.ticker_cache["ticker"] != ticker]
                             self.ticker_cache.to_parquet(self.cache_file)
-                            self.logger.info(f"Removed non-stock: {ticker}")
+                            self.logger.info(f"Total stocks: {len(self.ticker_cache)}")
                     return
                 
                 # Update stock in cache
@@ -239,13 +211,10 @@ class PolygonTickerScanner:
                         ], ignore_index=True)
                     
                     self.ticker_cache.to_parquet(self.cache_file)
-                    new_count = len(self.ticker_cache)
                 
-                self.logger.info(f"Updated stock: {ticker}")
-                self.logger.info(f"Total stocks after update: {new_count}")
+                self.logger.info(f"Total stocks: {len(self.ticker_cache)}")
             else:
                 self.known_missing_tickers.add(ticker)
-                self.logger.warning(f"Ticker not found: {ticker}")
         except Exception as e:
             self.logger.error(f"Failed to update ticker {ticker}: {e}")
 
@@ -254,7 +223,7 @@ class PolygonTickerScanner:
         while self.active:
             try:
                 delay = min(self.ws_reconnect_delay * (2 ** self.current_reconnect_attempts), 300)
-                self.logger.info(f"Connecting to WebSocket in {delay:.1f}s (attempt {self.current_reconnect_attempts + 1}/{self.max_reconnect_attempts})")
+                self.logger.info(f"Connecting to WebSocket (attempt {self.current_reconnect_attempts + 1})...")
                 time.sleep(delay)
                 
                 ws = create_connection(
@@ -262,7 +231,7 @@ class PolygonTickerScanner:
                     timeout=15,
                     enable_multithread=True
                 )
-                self.logger.info("WebSocket connected")
+                self.logger.info("✅ WebSocket CONNECTED")
                 self.current_reconnect_attempts = 0  # Reset on success
                 
                 # Authentication
@@ -290,18 +259,18 @@ class PolygonTickerScanner:
                             ws.ping()
                             last_ping = time.time()
                             
-                    except (WebSocketConnectionClosedException, ConnectionResetError) as e:
-                        self.logger.warning(f"WebSocket error: {e}")
+                    except (WebSocketConnectionClosedException, ConnectionResetError):
+                        self.logger.warning("WebSocket connection lost")
                         break
                     except Exception as e:
-                        self.logger.error(f"Unexpected WebSocket error: {e}", exc_info=True)
+                        self.logger.error(f"WebSocket error: {e}")
                         break
                         
             except Exception as e:
                 self.logger.error(f"Connection failed: {e}")
                 self.current_reconnect_attempts += 1
                 if self.current_reconnect_attempts >= self.max_reconnect_attempts:
-                    self.logger.error("Max reconnection attempts reached. Stopping scanner.")
+                    self.logger.error("Max connection attempts reached")
                     self.active = False
             finally:
                 try:
@@ -341,7 +310,7 @@ class PolygonTickerScanner:
                     time.sleep(0.5)
                     
             except Exception as e:
-                self.logger.error(f"Event processing error: {e}", exc_info=True)
+                self.logger.error(f"Event processing error: {e}")
 
     def _handle_single_event(self, event):
         """Handle individual WebSocket events"""
@@ -354,18 +323,13 @@ class PolygonTickerScanner:
                     exists = ticker in self.ticker_cache["ticker"].values
                 
                 if not exists and ticker not in self.known_missing_tickers:
-                    self.logger.info(f"New ticker detected: {ticker}")
                     # Use thread pool for parallel updates if needed
                     Thread(target=self._update_single_ticker, args=(ticker,), daemon=True).start()
                     
-                # Add your custom processing logic here
-                # price = event["p"]
-                # print(f"Trade: {ticker} @ {price}")
-                
-        except KeyError as e:
-            self.logger.warning(f"Missing key in event: {e}")
+        except KeyError:
+            pass
         except Exception as e:
-            self.logger.error(f"Event handling error: {e}", exc_info=True)
+            self.logger.error(f"Event handling error: {e}")
 
     def _background_refresher(self):
         """Periodically refresh tickers in the background"""
@@ -375,11 +339,7 @@ class PolygonTickerScanner:
                 if not self.active:
                     break
                     
-                self.logger.info("Starting background ticker refresh...")
-                start_time = time.time()
                 self._refresh_all_tickers()
-                elapsed = time.time() - start_time
-                self.logger.info(f"Background refresh completed in {elapsed:.2f} seconds")
             except Exception as e:
                 self.logger.error(f"Background refresh failed: {e}")
 
@@ -393,14 +353,14 @@ class PolygonTickerScanner:
             Thread(target=self._process_events, daemon=True).start()
             # Start background refresh thread
             Thread(target=self._background_refresher, daemon=True).start()
-            self.logger.info("Real-time scanner started")
+            self.logger.info("Scanner STARTED")
         else:
-            self.logger.warning("Scanner is already running")
+            self.logger.warning("Scanner already running")
 
     def stop(self):
         """Stop the scanner"""
         self.active = False
-        self.logger.info("Scanner stopped")
+        self.logger.info("Scanner STOPPED")
 
     def get_current_tickers(self):
         """Get current ticker list"""
@@ -413,7 +373,6 @@ class PolygonTickerScanner:
             old_tickers = set(self.ticker_cache["ticker"])
             old_count = len(old_tickers)
         
-        self.logger.info(f"Checking for new listings. Current tickers: {old_count}")
         self._refresh_all_tickers()
         
         with self.cache_lock:
@@ -424,32 +383,30 @@ class PolygonTickerScanner:
         removed = old_tickers - new_tickers
         
         if added:
-            self.logger.info(f"New tickers detected: {len(added)}")
-            self.logger.debug(f"New tickers: {', '.join(sorted(added)[:10])}{'...' if len(added) > 10 else ''}")
+            self.logger.info(f"New tickers: {len(added)}")
         if removed:
             self.logger.info(f"Delisted tickers: {len(removed)}")
-            self.logger.debug(f"Delisted tickers: {', '.join(sorted(removed)[:10])}{'...' if len(removed) > 10 else ''}")
         
-        self.logger.info(f"Total tickers after check: {new_count}")
+        self.logger.info(f"Total stocks: {new_count}")
         return added, removed
 
 
 if __name__ == "__main__":
     scanner = PolygonTickerScanner(
-        max_workers=15,  # Higher since no rate limits
-        refresh_interval=3600,  # Refresh every hour
+        max_workers=15,
+        refresh_interval=3600,
         log_level=logging.INFO
     )
     
     try:
         scanner.start()
-        scanner.logger.info("Scanner running. Press Ctrl+C to stop.")
+        scanner.logger.info("Press Ctrl+C to stop")
         
         # Run until keyboard interrupt
         while scanner.active:
             time.sleep(1)
         
     except KeyboardInterrupt:
-        scanner.logger.info("\nReceived keyboard interrupt. Shutting down...")
+        scanner.logger.info("Shutting down...")
     finally:
         scanner.stop()
