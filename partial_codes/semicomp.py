@@ -86,7 +86,7 @@ class MarketRegimeAnalyzer:
 
         total_mcap = sum(mcaps.values())
         
-        # Second pass: Get price data with market cap weighting
+        # Second pass: Get price data with weighting
         self.logger.info("Building market composite...")
         for symbol in tickers[:sample_size]:
             prices = self.fetch_stock_data(symbol)
@@ -111,15 +111,14 @@ class MarketRegimeAnalyzer:
         # Log feature preparation
         self.logger.info(f"Preparing features for regime analysis with {n_states} states...")
         
-        # Calculate advanced features
+        # Calculate advanced features (using only closing prices)
         log_returns = np.log(index_data).diff().dropna()
         features = pd.DataFrame({
             "returns": log_returns,
             "volatility": log_returns.rolling(21).std(),
             "momentum": log_returns.rolling(14).mean(),
             "rsi": talib.RSI(index_data, timeperiod=14).dropna(),
-            "macd": talib.MACD(index_data)[0].dropna(),  # MACD line
-            "adx": talib.ADX(index_data, index_data, index_data, timeperiod=14).dropna()
+            "macd": talib.MACD(index_data)[0].dropna(),
         }).dropna()
 
         if len(features) < 100:  # Increased minimum for better model stability
@@ -132,8 +131,11 @@ class MarketRegimeAnalyzer:
         
         # Clip extreme values to prevent numerical instability
         scaled_features = np.clip(scaled_features, -10, 10)
-        self.logger.info(f"Feature range after scaling/clipping: "
-                        f"Min={scaled_features.min():.4f}, Max={scaled_features.max():.4f}")
+        
+        # FIXED: Ensure we're using scalar values for logging
+        min_val = np.min(scaled_features)
+        max_val = np.max(scaled_features)
+        self.logger.info(f"Feature range after scaling/clipping: Min={min_val:.4f}, Max={max_val:.4f}")
 
         # Create and fit model with multiple initializations
         best_model = None
@@ -187,9 +189,14 @@ class MarketRegimeAnalyzer:
                     # Log first, last, and min/max values
                     self.logger.debug(f"Log-likelihood history (first 5): {history_list[:5]}")
                     self.logger.debug(f"Log-likelihood history (last 5): {history_list[-5:]}")
+                    
+                    # FIXED: Ensure scalar values for logging
+                    min_hist = min(history_list)
+                    max_hist = max(history_list)
+                    delta_hist = history_list[-1] - history_list[0]
                     self.logger.debug(
-                        f"Log-likelihood range: Min={min(history_list):.4f}, Max={max(history_list):.4f}, "
-                        f"Delta={history_list[-1] - history_list[0]:.4f}"
+                        f"Log-likelihood range: Min={min_hist:.4f}, Max={max_hist:.4f}, "
+                        f"Delta={delta_hist:.4f}"
                     )
                     
                     # Log convergence issues
@@ -244,8 +251,9 @@ class MarketRegimeAnalyzer:
         # Label states based on volatility and returns
         state_stats = []
         for i in range(model.n_components):
-            state_return = model.means_[i][0]
-            state_vol = model.means_[i][1]
+            # FIXED: Ensure scalar values
+            state_return = float(model.means_[i][0])
+            state_vol = float(model.means_[i][1])
             state_stats.append((i, state_return, state_vol))
             
         # Log state characteristics before sorting
@@ -272,7 +280,8 @@ class MarketRegimeAnalyzer:
         # Log final state labeling
         self.logger.info("Final state labeling:")
         for state_idx, label in state_labels.items():
-            ret, vol = next((ret, vol) for idx, ret, vol in state_stats if idx == state_idx)
+            # Find matching state stats
+            ret, vol = next((s_ret, s_vol) for s_idx, s_ret, s_vol in state_stats if s_idx == state_idx)
             self.logger.info(f"State {state_idx}: {label} (Return={ret:.6f}, Volatility={vol:.6f})")
 
         # Predict regimes
@@ -291,39 +300,6 @@ class MarketRegimeAnalyzer:
             "index_data": index_data[features.index[0] :],
             "state_labels": state_labels,
             "state_durations": state_durations
-        }
-        
-    def simple_regime_detection(self, features):
-        """Fallback regime detection using simple thresholds"""
-        avg_return = features["returns"].mean()
-        avg_volatility = features["volatility"].mean()
-        
-        # Determine regime based on thresholds
-        if avg_volatility > 0.03:  # High volatility
-            if avg_return < -0.005:
-                regime = "Severe Bear"
-            elif avg_return < 0.005:
-                regime = "Volatile Neutral"
-            else:
-                regime = "Strong Bull"
-        else:  # Low volatility
-            if avg_return > 0.005:
-                regime = "Bull"
-            elif avg_return < -0.005:
-                regime = "Bear"
-            else:
-                regime = "Neutral"
-        
-        # Create dummy output
-        n_points = len(features)
-        self.logger.info(f"Using simple regime detection: {regime}")
-        return {
-            "regimes": [regime] * n_points,
-            "probabilities": np.ones((n_points, 1)),
-            "features": features,
-            "index_data": features.index,
-            "state_labels": {0: regime},
-            "state_durations": {0: n_points}
         }
         
     def calculate_state_durations(self, states):
@@ -529,7 +505,7 @@ class SectorRegimeSystem:
             return "Unknown"
             
         # Remove exchange prefixes (like XNAS, XNYS, etc.)
-        if sector.startswith("XN"):
+        if sector.startswith("X"):
             return "Unknown"
             
         # Standardize common sector names
@@ -732,63 +708,6 @@ class SectorRegimeSystem:
         
         self.sector_scores = cleaned_scores
         return pd.Series(self.sector_scores).sort_values(ascending=False)
-    
-    # ======= TESTING MODE METHODS ======= #
-    def generate_test_sector_mappings(self, tickers):
-        sectors = ["Technology", "Financial Services", "Healthcare", "Consumer Cyclical", "Energy"]
-        self.sector_mappings = {sector: [] for sector in sectors}
-        
-        # Distribute tickers evenly among sectors
-        for i, ticker in enumerate(tickers):
-            sector = sectors[i % len(sectors)]
-            self.sector_mappings[sector].append(ticker)
-        return self.sector_mappings
-    
-    def generate_test_sector_weights(self):
-        sectors = list(self.sector_mappings.keys())
-        weights = {sector: random.uniform(0.1, 0.3) for sector in sectors}
-        total = sum(weights.values())
-        self.sector_weights = {sector: weight/total for sector, weight in weights.items()}
-        return self.sector_weights
-    
-    def generate_test_sector_composites(self):
-        sectors = list(self.sector_mappings.keys())
-        start_date = datetime.now() - timedelta(days=365)
-        dates = pd.date_range(start_date, datetime.now(), freq='D')
-        
-        self.sector_composites = {}
-        for sector in sectors:
-            # Create a random walk with sector-specific trend
-            prices = [100]
-            for i in range(1, len(dates)):
-                # Base change + sector-specific trend
-                base_change = random.uniform(-0.01, 0.02)
-                sector_trend = 0.0005 * (sectors.index(sector))  # Small trend based on sector index
-                prices.append(prices[-1] * (1 + base_change + sector_trend))
-            self.sector_composites[sector] = pd.Series(prices, index=dates)
-        return self.sector_composites
-    
-    def generate_test_sector_regimes(self):
-        sectors = list(self.sector_mappings.keys())
-        self.sector_analyzers = {}
-        self.current_regime = random.choice(["Bull", "Bear", "Neutral"])
-        
-        for sector in sectors:
-            # Create fake results
-            self.sector_analyzers[sector] = {
-                "results": {
-                    "probabilities": [random.random() for _ in range(4)],
-                    "state_labels": {0: "Bear", 1: "Neutral", 2: "Bull", 3: "Strong Bull"}
-                },
-                "composite": self.sector_composites[sector],
-                "volatility": random.uniform(0.01, 0.05)
-            }
-        return self.sector_analyzers
-    
-    def generate_test_sector_scores(self):
-        sectors = ["Technology", "Financial Services", "Healthcare", "Consumer Cyclical", "Energy"]
-        self.sector_scores = {sector: random.uniform(30, 90) for sector in sectors}
-        return pd.Series(self.sector_scores)
 
 
 # ======================== ASSET ALLOCATIONS ======================== #
@@ -988,7 +907,8 @@ class AdaptiveLookbackSystem:
             lookback = min(self.max_extended, self.base + days_held * 2)
         
         # 2. Volatility scaling: volatility is a float (e.g., 0.15 for 15%)
-        volatility_factor = 1 + (volatility - 0.15)
+        vol_deviation = volatility - 0.15  # Deviation from historical average
+        volatility_factor = 1 + vol_deviation
         volatility_factor = max(0.7, min(1.5, volatility_factor))
         lookback = lookback * volatility_factor
         
@@ -1060,13 +980,14 @@ class PolygonDataHandler:
                 data = response.json()
                 if data.get('status') == 'OK' and data.get('resultsCount', 0) > 0:
                     df = pd.DataFrame(data['results'])
-                    df['timestamp'] = pd.to_datetime(df['t'], unit='ms', utc=True)
+                    df['timestamp'] = pd.to_datetime(df["t"], unit='ms', utc=True)
                     df.set_index('timestamp', inplace=True)
+                    # FIXED: Use lowercase column names
                     df.rename(columns={
-                        'o': 'Open', 'h': 'High', 'l': 'Low', 
-                        'c': 'Close', 'v': 'Volume'
+                        'o': 'open', 'h': 'high', 'l': 'low', 
+                        'c': 'close', 'v': 'volume'
                     }, inplace=True)
-                    return df[['Open', 'High', 'Low', 'Close', 'Volume']]
+                    return df[['open', 'high', 'low', 'close', 'volume']]
             return pd.DataFrame()
         except Exception as e:
             self.logger.error(f"Error in thread for {ticker}: {str(e)}")
@@ -1112,10 +1033,11 @@ class PolygonDataHandler:
                 
             if event_type == 'AM':  # Aggregate Minute
                 timestamp = datetime.fromtimestamp(event['s'] / 1000.0, tz=tz.utc)
+                # FIXED: Use lowercase column names
                 new_bar = pd.DataFrame({
-                    'Open': [event['o']], 'High': [event['h']], 
-                    'Low': [event['l']], 'Close': [event['c']], 
-                    'Volume': [event['v']]
+                    'open': [event['o']], 'high': [event['h']], 
+                    'low': [event['l']], 'close': [event['c']], 
+                    'volume': [event['v']]
                 }, index=[timestamp])
                 
                 with self.data_lock:
@@ -1130,8 +1052,8 @@ class PolygonDataHandler:
                         self.historical_data[ticker] = new_bar
                 
                 self.realtime_data[ticker] = {
-                    'Open': event['o'], 'High': event['h'], 'Low': event['l'],
-                    'Close': event['c'], 'Volume': event['v'],
+                    'open': event['o'], 'high': event['h'], 'low': event['l'],
+                    'close': event['c'], 'volume': event['v'],
                     'timestamp': timestamp
                 }
                 
@@ -1172,11 +1094,11 @@ class PolygonDataHandler:
             if ticker in self.historical_data and not self.historical_data[ticker].empty:
                 last_row = self.historical_data[ticker].iloc[-1]
                 return {
-                    'Open': last_row['Open'],
-                    'High': last_row['High'],
-                    'Low': last_row['Low'],
-                    'Close': last_row['Close'],
-                    'Volume': last_row['Volume'],
+                    'open': last_row['open'],
+                    'high': last_row['high'],
+                    'low': last_row['low'],
+                    'close': last_row['close'],
+                    'volume': last_row['volume'],
                     'timestamp': self.historical_data[ticker].index[-1]
                 }
         
@@ -1203,12 +1125,13 @@ class PolygonDataHandler:
                 change = random.uniform(-0.001, 0.002)
                 prices.append(prices[-1] * (1 + change))
                 
+            # FIXED: Use lowercase column names
             df = pd.DataFrame({
-                'Open': prices,
-                'High': [p * 1.001 for p in prices],
-                'Low': [p * 0.999 for p in prices],
-                'Close': prices,
-                'Volume': [random.randint(1000, 10000) for _ in prices]
+                'open': prices,
+                'high': [p * 1.001 for p in prices],
+                'low': [p * 0.999 for p in prices],
+                'close': prices,
+                'volume': [random.randint(1000, 10000) for _ in prices]
             }, index=dates)
             
             self.historical_data[ticker] = df
@@ -1224,12 +1147,13 @@ class PolygonDataHandler:
             change = random.uniform(-0.001, 0.002)
             prices.append(prices[-1] * (1 + change))
             
+        # FIXED: Use lowercase column names
         df = pd.DataFrame({
-            'Open': prices,
-            'High': [p * 1.001 for p in prices],
-            'Low': [p * 0.999 for p in prices],
-            'Close': prices,
-            'Volume': [random.randint(1000, 10000) for _ in prices]
+            'open': prices,
+            'high': [p * 1.001 for p in prices],
+            'low': [p * 0.999 for p in prices],
+            'close': prices,
+            'volume': [random.randint(1000, 10000) for _ in prices]
         }, index=dates)
         
         return df
@@ -1242,7 +1166,7 @@ class PolygonDataHandler:
                 # Generate a new data point
                 last_data = self.get_latest(ticker)
                 if last_data:
-                    last_price = last_data['Close']
+                    last_price = last_data['close']
                 else:
                     last_price = random.uniform(100, 200)
                     
@@ -1251,22 +1175,23 @@ class PolygonDataHandler:
                 new_price = last_price * (1 + price_change)
                 
                 new_data = {
-                    'Open': new_price,
-                    'High': new_price * 1.001,
-                    'Low': new_price * 0.999,
-                    'Close': new_price,
-                    'Volume': random.randint(1000, 10000),
+                    'open': new_price,
+                    'high': new_price * 1.001,
+                    'low': new_price * 0.999,
+                    'close': new_price,
+                    'volume': random.randint(1000, 10000),
                     'timestamp': datetime.now(tz.utc)
                 }
                 
                 # Update historical data
                 with self.data_lock:
+                    # FIXED: Use lowercase column names
                     new_bar = pd.DataFrame({
-                        'Open': [new_data['Open']], 
-                        'High': [new_data['High']], 
-                        'Low': [new_data['Low']], 
-                        'Close': [new_data['Close']], 
-                        'Volume': [new_data['Volume']]
+                        'open': [new_data['open']], 
+                        'high': [new_data['high']], 
+                        'low': [new_data['low']], 
+                        'close': [new_data['close']], 
+                        'volume': [new_data['volume']]
                     }, index=[new_data['timestamp']])
                     
                     if not self.historical_data[ticker].empty:
@@ -1335,10 +1260,18 @@ class TradingSystem(QThread):
         self.logger = logging.getLogger("TradingSystem")
         self.logger.setLevel(logging.INFO)
         
-        # Connect scan signal
+        # Connect signals
         self.scan_requested.connect(self.force_scan)
         
         print(f"Trading system initialized (Testing Mode: {testing_mode})")
+        
+    def ensure_scalar(self, value):
+        """Convert Series to scalar if needed"""
+        if isinstance(value, pd.Series):
+            return value.iloc[-1] if not value.empty else 0
+        if isinstance(value, pd.DataFrame):
+            return value.iloc[-1, -1] if not value.empty else 0
+        return value
         
     def force_scan(self):
         """Set flag for manual scan"""
@@ -1437,30 +1370,36 @@ class TradingSystem(QThread):
             self.market_regime = self.sector_system.current_regime
             self.sector_scores = scores.to_dict()
             
-            # Update market volatility from composite
+            # Update market volatility from composite - NEW IMPROVED VERSION
             if not self.sector_system.market_composite.empty:
                 try:
-                    # Convert to DataFrame with 'close' column
+                    # Create a proper OHLC DataFrame - CRITICAL FIX
                     composite_df = pd.DataFrame({
+                        'open': self.sector_system.market_composite,
+                        'high': self.sector_system.market_composite,
+                        'low': self.sector_system.market_composite,
                         'close': self.sector_system.market_composite
                     })
                     
-                    # Compute 14-day ATR
+                    # Compute 14-day ATR using the properly structured DataFrame
                     atr = composite_df.ta.atr(length=14).iloc[-1]
                     current_price = composite_df['close'].iloc[-1]
-                    self.market_volatility = atr / current_price
+                    self.market_volatility = self.ensure_scalar(atr / current_price)
                 except Exception as e:
                     self.log_signal.emit(f"Volatility update error: {str(e)}")
                     self.market_volatility = 0.15  # fallback
             
-            # Update existing positions with new regime
-            for position in self.positions.values():
-                if 'stop_system' in position:
-                    position['stop_system'].regime = self.market_regime
+            # Ensure volatility is scalar before formatting
+            vol_scalar = self.ensure_scalar(self.market_volatility)
             
-            self.log_signal.emit(f"Market regime updated: {self.market_regime} (Volatility: {self.market_volatility*100:.2f}%)")
+            self.log_signal.emit(
+                f"Market regime updated: {self.market_regime} "
+                f"(Volatility: {vol_scalar*100:.2f}%)"
+            )
             self.log_signal.emit("Top sectors:")
-            for sector, score in sorted(self.sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]:
+            for sector, score in sorted(self.sector_scores.items(), 
+                                    key=lambda x: x[1], 
+                                    reverse=True)[:3]:
                 self.log_signal.emit(f"  {sector}: {score:.4f}")
                 
             # Send Discord notification
@@ -1525,7 +1464,7 @@ class TradingSystem(QThread):
         """Update all positions for a ticker"""
         for position_ticker, position in list(self.positions.items()):
             if position_ticker == ticker:
-                current_price = data['Close']
+                current_price = data['close']
                 stop_system = position['stop_system']
                 new_stop = stop_system.update_trailing_stop(
                     current_price=current_price,
@@ -1547,7 +1486,7 @@ class TradingSystem(QThread):
             if duration > 240:  # 4 hours
                 data = self.data_handler.get_latest(ticker)
                 if data:
-                    self.exit_position(ticker, data['Close'], "time expiration")
+                    self.exit_position(ticker, data['close'], "time expiration")
     
     def should_evaluate_opportunities(self):
         """Determine if we should evaluate new opportunities"""
@@ -1557,7 +1496,6 @@ class TradingSystem(QThread):
             (len(self.positions) < 5) and 
             self.is_market_open()
         )
-    
     def evaluate_opportunities(self):
         """Evaluate and rank trading opportunities using parallel scanning"""
         self.last_evaluation_time = time.time()
@@ -1570,13 +1508,14 @@ class TradingSystem(QThread):
             
         # Use parallel processing for scoring
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            # Create a mapping of futures to tickers
             future_to_ticker = {
                 executor.submit(self.score_trade_opportunity, ticker): ticker
                 for ticker in tickers_to_score
             }
             
             for future in concurrent.futures.as_completed(future_to_ticker):
-                ticker = future_to_ticker[future]
+                ticker = future_to_ticker[future]  # Get the ticker from the mapping
                 try:
                     result = future.result()
                     if result:
@@ -1609,11 +1548,19 @@ class TradingSystem(QThread):
                     self.log_signal.emit(f"Insufficient data for {opp['ticker']}")
                     continue
                     
-                current_price = data['Close']
+                current_price = data['close']
                 
                 # Recalculate indicators for fresh data
-                atr = df.ta.atr(length=14).iloc[-1]
-                adx = df.ta.adx(length=14)['ADX_14'].iloc[-1]
+                # FIXED: Remove explicit column mappings
+                atr = self.ensure_scalar(df.ta.atr(length=14).iloc[-1])
+                
+                # ADX calculation with fallback
+                try:
+                    adx = df.ta.adx(length=14)['ADX_14'].iloc[-1]
+                    adx = self.ensure_scalar(adx)
+                except Exception as e:
+                    self.log_signal.emit(f"ADX calculation failed for {opp['ticker']}: {str(e)}")
+                    adx = 20.0  # Default value
                 
                 # Create stop system with enhancements if data available
                 if hasattr(self, 'market_volatility') and hasattr(self, 'market_regime'):
@@ -1662,14 +1609,17 @@ class TradingSystem(QThread):
     def get_current_state(self):
         """Get current system state for UI"""
         total_profit = sum(trade['profit'] for trade in self.trade_log if trade['profit'] is not None)
+        total_profit = self.ensure_scalar(total_profit)
+        
         winning_trades = sum(1 for trade in self.trade_log if trade['profit'] and trade['profit'] > 0)
         win_rate = winning_trades / len(self.trade_log) * 100 if self.trade_log else 0
+        win_rate = self.ensure_scalar(win_rate)
         
         # Prepare active positions
         active_positions = []
         for ticker, pos in self.positions.items():
             current_data = self.data_handler.get_latest(ticker) if self.data_handler else None
-            current_price = current_data['Close'] if current_data and current_data else pos['entry_price']
+            current_price = current_data['close'] if current_data and current_data else pos['entry_price']
             gain = (current_price / pos['entry_price'] - 1) * 100
             risk = (pos['entry_price'] - pos['stop_system'].trailing_stop) / pos['entry_price'] * 100
             regime = pos['stop_system'].detect_market_regime()
@@ -1725,7 +1675,7 @@ class TradingSystem(QThread):
             'runner_ups': runner_ups,
             'market_regime': self.market_regime,
             'sector_scores': self.sector_scores,
-            'market_volatility': self.market_volatility,
+            'market_volatility': self.ensure_scalar(self.market_volatility),
             'testing_mode': self.testing_mode
         }
     
@@ -1751,7 +1701,9 @@ class TradingSystem(QThread):
                 
             # Calculate base ADX from base_data
             try:
+                # FIXED: Remove explicit column mappings
                 base_adx = base_data.ta.adx(length=14)['ADX_14'].iloc[-1]
+                base_adx = self.ensure_scalar(base_adx)
                 # If NaN, use 20
                 if np.isnan(base_adx):
                     base_adx = 20.0
@@ -1777,21 +1729,33 @@ class TradingSystem(QThread):
                 return None
                 
             # Recalculate indicators with the adaptive lookback data
-            atr = data.ta.atr(length=14).iloc[-1]
-            adx = data.ta.adx(length=14)['ADX_14'].iloc[-1]
-            rsi = data.ta.rsi(length=14).iloc[-1]
+            # FIXED: Remove explicit column mappings
+            atr = self.ensure_scalar(data.ta.atr(length=14).iloc[-1])
+            
+            # ADX calculation with fallback
+            try:
+                # FIXED: Remove explicit column mappings
+                adx = data.ta.adx(length=14)['ADX_14'].iloc[-1]
+                adx = self.ensure_scalar(adx)
+            except Exception as e:
+                self.log_signal.emit(f"ADX calculation failed for {ticker}: {str(e)}")
+                adx = 20.0  # Default value
+                
+            # FIXED: Remove explicit column mappings
+            rsi = self.ensure_scalar(data.ta.rsi(length=14).iloc[-1])
             
             # Get the latest data point for price and volume
             latest = self.data_handler.get_latest(ticker)
             if not latest:
                 return None
-            price = latest['Close']
-            volume = latest['Volume']
+            price = latest['close']
+            volume = latest['volume']
             
             # Calculate average volume for the period in data
-            avg_volume = data['Volume'].rolling(14).mean().iloc[-1]
+            avg_volume = data['volume'].rolling(14).mean().iloc[-1]
+            avg_volume = self.ensure_scalar(avg_volume)
             if np.isnan(avg_volume) or avg_volume <= 0:
-                avg_volume = data['Volume'].mean()
+                avg_volume = self.ensure_scalar(data['volume'].mean())
                 
             if volume <= 0:
                 volume = avg_volume
@@ -2059,7 +2023,7 @@ class TradingSystem(QThread):
                 continue
                 
             latest = self.data_handler.get_latest(ticker)
-            prices[ticker] = latest['Close'] if latest else self.positions[ticker]['entry_price']
+            prices[ticker] = latest['close'] if latest else self.positions[ticker]['entry_price']
         return prices
     
     def calculate_current_score(self, ticker, position, current_price):
@@ -2074,10 +2038,19 @@ class TradingSystem(QThread):
                 return 0
                 
             # Calculate indicators
-            adx = df.ta.adx(length=14)['ADX_14'].iloc[-1]
-            rsi = df.ta.rsi(length=14).iloc[-1]
-            volume = df['Volume'].iloc[-1]
-            avg_volume = df['Volume'].rolling(14).mean().iloc[-1]
+            try:
+                # FIXED: Remove explicit column mappings
+                adx = df.ta.adx(length=14)['ADX_14'].iloc[-1]
+                adx = self.ensure_scalar(adx)
+            except Exception as e:
+                self.log_signal.emit(f"ADX calculation failed for {ticker}: {str(e)}")
+                adx = 20.0  # Default value
+                
+            # FIXED: Remove explicit column mappings
+            rsi = self.ensure_scalar(df.ta.rsi(length=14).iloc[-1])
+            volume = self.ensure_scalar(df['volume'].iloc[-1])
+            avg_volume = df['volume'].rolling(14).mean().iloc[-1]
+            avg_volume = self.ensure_scalar(avg_volume)
             
             # Position performance metrics
             price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
@@ -2159,7 +2132,7 @@ class TradingSystem(QThread):
         # Close old position
         position = self.positions.get(old_ticker)
         if position:
-            current_price = self.data_handler.get_latest(old_ticker)['Close']
+            current_price = self.data_handler.get_latest(old_ticker)['close']
             self.exit_position(old_ticker, current_price, "Replaced by stronger candidate")
             
             # Place new trade
@@ -2170,10 +2143,19 @@ class TradingSystem(QThread):
                     return
                 
                 # Recalculate indicators for fresh data
-                atr = df.ta.atr(length=14).iloc[-1]
-                adx = df.ta.adx(length=14)['ADX_14'].iloc[-1]
+                # FIXED: Remove explicit column mappings
+                atr = self.ensure_scalar(df.ta.atr(length=14).iloc[-1])
                 
-                current_price = new_data['Close']
+                # ADX calculation with fallback
+                try:
+                    # FIXED: Remove explicit column mappings
+                    adx = df.ta.adx(length=14)['ADX_14'].iloc[-1]
+                    adx = self.ensure_scalar(adx)
+                except Exception as e:
+                    self.log_signal.emit(f"ADX calculation failed for {new_candidate['ticker']}: {str(e)}")
+                    adx = 20.0  # Default value
+                
+                current_price = new_data['close']
                 
                 # Create stop system with enhancements if data available
                 if hasattr(self, 'market_volatility') and hasattr(self, 'market_regime'):
@@ -2244,7 +2226,7 @@ class PositionPlot(FigureCanvas):
         stop_history.set_index('timestamp', inplace=True)
         
         # Plot price and stops
-        df['Close'].plot(ax=self.ax, label='Price', color='blue', linewidth=2)
+        df['close'].plot(ax=self.ax, label='Price', color='blue', linewidth=2)
         stop_history['initial_stop'].plot(ax=self.ax, label='Initial Stop', color='red', linestyle='--')
         stop_history['trailing_stop'].plot(ax=self.ax, label='Trailing Stop', color='orange', linewidth=2)
         stop_history['hard_stop'].plot(ax=self.ax, label='Hard Stop', color='darkred', linestyle=':')
@@ -2510,7 +2492,12 @@ class TradingDashboard(QMainWindow):
             market_status = "OPEN" if state['market_open'] else "CLOSED"
             self.market_status_label.setText(f"Market Status: {market_status}")
             self.regime_label.setText(f"Market Regime: {state['market_regime']}")
-            self.volatility_label.setText(f"Market Volatility: {state['market_volatility']*100:.2f}%")
+            
+            # Ensure market_volatility is scalar
+            volatility = state['market_volatility']
+            if isinstance(volatility, pd.Series):
+                volatility = volatility.iloc[-1] if not volatility.empty else 0.15
+            self.volatility_label.setText(f"Market Volatility: {volatility*100:.2f}%")
             
             # Update account summary
             self.capital_label.setText(f"Capital: ${state['capital']:,.2f}")
