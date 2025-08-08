@@ -200,7 +200,7 @@ class MarketRegimeAnalyzer:
                     )
                     
                     # Log convergence issues
-                    if any(np.isnan(x) for x in history_list) or any(np.isinf(x) for x in history_list):
+                    if any(np.isNaN(x) for x in history_list) or any(np.isinf(x) for x in history_list):
                         self.logger.warning("History contains NaN/Inf values!")
                         
                     decreasing_count = 0
@@ -1705,7 +1705,7 @@ class TradingSystem(QThread):
                 base_adx = base_data.ta.adx(length=14)['ADX_14'].iloc[-1]
                 base_adx = self.ensure_scalar(base_adx)
                 # If NaN, use 20
-                if np.isnan(base_adx):
+                if np.isNaN(base_adx):
                     base_adx = 20.0
             except:
                 base_adx = 20.0
@@ -1754,7 +1754,7 @@ class TradingSystem(QThread):
             # Calculate average volume for the period in data
             avg_volume = data['volume'].rolling(14).mean().iloc[-1]
             avg_volume = self.ensure_scalar(avg_volume)
-            if np.isnan(avg_volume) or avg_volume <= 0:
+            if np.isNaN(avg_volume) or avg_volume <= 0:
                 avg_volume = self.ensure_scalar(data['volume'].mean())
                 
             if volume <= 0:
