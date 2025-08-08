@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, 
     QTabWidget, QTextEdit, QGroupBox, QFormLayout, QDateTimeEdit,
-    QAbstractItemView, QDialog, QProgressBar, QLineEdit
+    QAbstractItemView, QDialog, QProgressBar, QLineEdit, QMessageBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QDateTime
 from PyQt5.QtGui import QColor, QBrush, QFont
@@ -1565,7 +1565,7 @@ class TradingSystem(QThread):
                     self.log_signal.emit(f"ADX calculation failed for {opp['ticker']}: {str(e)}")
                     adx = 20.0  # Default value
                 
-                # Create stop system with enhancements if data available
+                # Create stop system for scoring
                 if hasattr(self, 'market_volatility') and hasattr(self, 'market_regime'):
                     stop_system = SmartStopLoss(
                         entry_price=current_price,
@@ -1647,9 +1647,8 @@ class TradingSystem(QThread):
             status = "ENTERED" if opp['ticker'] in self.positions else "PASSED"
             opportunities.append({
                 'ticker': opp['ticker'], 'score': opp['score'],
-                'price': opp['price'], 'adx': opp['adx'],
-                'atr': opp['atr'], 'rsi': opp['rsi'],
-                'volume': opp['volume'], 'status': status,
+                'price': opp['price'], 'atr': opp['atr'], 'adx': opp['adx'],
+                'rsi': opp['rsi'], 'volume': opp['volume'], 'status': status,
                 'lookback': opp.get('lookback_days', 35)
             })
         
@@ -2291,7 +2290,7 @@ class TradingDashboard(QMainWindow):
     def __init__(self, testing_mode=False):
         super().__init__()
         self.tickers = ["AAPL", "MSFT", "GOOG", "AMZN", "TSLA", "META", "NVDA", "JPM", "V", "DIS"]
-        self.trading_system = TradingSystem(self.tickers, testing_mode=testing_mode)
+        self.trading_system = None
         self.setWindowTitle("Real-Time Trading Dashboard" + (" - TESTING MODE" if testing_mode else ""))
         self.setGeometry(100, 100, 1600, 900)
         self.testing_mode = testing_mode
@@ -2341,12 +2340,27 @@ class TradingDashboard(QMainWindow):
         self.start_button = QPushButton("Start System")
         self.stop_button = QPushButton("Stop System")
         self.scan_button = QPushButton("Scan Now")
+        
+        # Add capital input
+        self.capital_label_ctrl = QLabel("Capital:")
+        self.capital_input = QLineEdit("100000")
+        self.capital_input.setFixedWidth(100)
+        
+        # Add risk input
+        self.risk_label_ctrl = QLabel("Risk:")
+        self.risk_input = QLineEdit("0.01")
+        self.risk_input.setFixedWidth(50)
+        
         self.testing_label = QLabel("TESTING MODE" if testing_mode else "LIVE MODE")
         self.testing_label.setStyleSheet("color: red; font-weight: bold;" if testing_mode else "color: green; font-weight: bold;")
         
         control_layout.addWidget(self.start_button)
         control_layout.addWidget(self.stop_button)
         control_layout.addWidget(self.scan_button)
+        control_layout.addWidget(self.capital_label_ctrl)
+        control_layout.addWidget(self.capital_input)
+        control_layout.addWidget(self.risk_label_ctrl)
+        control_layout.addWidget(self.risk_input)
         control_layout.addStretch()
         control_layout.addWidget(self.testing_label)
         main_layout.addLayout(control_layout)
@@ -2536,8 +2550,6 @@ class TradingDashboard(QMainWindow):
         self.start_button.clicked.connect(self.start_system)
         self.stop_button.clicked.connect(self.stop_system)
         self.scan_button.clicked.connect(self.request_scan)
-        self.trading_system.update_signal.connect(self.update_ui)
-        self.trading_system.log_signal.connect(self.log_message)
         
         # Initial state
         self.stop_button.setEnabled(False)
@@ -2554,7 +2566,7 @@ class TradingDashboard(QMainWindow):
         self.update_ui({
             'timestamp': datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S UTC'),
             'market_open': False,
-            'capital': self.trading_system.capital,
+            'capital': 100000,
             'positions_count': 0,
             'trade_count': 0,
             'total_profit': 0,
@@ -2580,6 +2592,28 @@ class TradingDashboard(QMainWindow):
         
     def start_system(self):
         """Start the trading system"""
+        # Get capital and risk from inputs
+        try:
+            capital = float(self.capital_input.text())
+            risk = float(self.risk_input.text())
+        except ValueError:
+            self.log_message("Invalid capital or risk value. Using defaults.")
+            capital = 100000
+            risk = 0.01
+        
+        # Create new trading system with current parameters
+        self.trading_system = TradingSystem(
+            self.tickers, 
+            capital=capital, 
+            risk_per_trade=risk,
+            testing_mode=self.testing_mode
+        )
+        
+        # Reconnect signals
+        self.trading_system.update_signal.connect(self.update_ui)
+        self.trading_system.log_signal.connect(self.log_message)
+        
+        # Start the system
         if not self.trading_system.isRunning():
             if self.trading_system.start_system():
                 self.start_button.setEnabled(False)
@@ -2588,10 +2622,10 @@ class TradingDashboard(QMainWindow):
                 self.log_message("Trading system started")
                 return
         self.log_message("System already running")
-        
+    
     def stop_system(self):
         """Stop the trading system"""
-        if self.trading_system.isRunning():
+        if self.trading_system and self.trading_system.isRunning():
             if self.trading_system.stop_system():
                 self.start_button.setEnabled(True)
                 self.stop_button.setEnabled(False)
@@ -2602,7 +2636,7 @@ class TradingDashboard(QMainWindow):
     
     def request_scan(self):
         """Request manual scan"""
-        if self.trading_system.running:
+        if self.trading_system and self.trading_system.running:
             self.trading_system.scan_requested.emit()
             self.log_message("Manual scan requested")
         else:
@@ -2748,7 +2782,7 @@ class TradingDashboard(QMainWindow):
                 widget.deleteLater()
         
         # Create new plots only if system is running
-        if self.trading_system.running and self.trading_system.data_handler:
+        if self.trading_system and self.trading_system.running and self.trading_system.data_handler:
             for ticker, position in self.trading_system.positions.items():
                 historical_data = self.trading_system.data_handler.get_historical(ticker, 50)
                 if historical_data is None or historical_data.empty:
@@ -2759,7 +2793,7 @@ class TradingDashboard(QMainWindow):
                 self.plot_layout.addWidget(plot)
         
         # Add placeholder if no positions
-        if not self.trading_system.positions or not self.trading_system.running:
+        if not self.trading_system.positions or not (self.trading_system and self.trading_system.running):
             label = QLabel("No active positions to display")
             label.setAlignment(Qt.AlignCenter)
             label.setFont(QFont("Arial", 16))
@@ -2771,8 +2805,32 @@ class TradingDashboard(QMainWindow):
         tickers = [t.strip() for t in self.backtest_ticker_input.text().split(",")]
         start_date = self.backtest_start_date.dateTime().toString(Qt.ISODate)
         end_date = self.backtest_end_date.dateTime().toString(Qt.ISODate)
-        capital = float(self.backtest_capital_input.text())
-        risk = float(self.backtest_risk_input.text())
+        
+        # Get capital and risk from inputs
+        try:
+            capital = float(self.backtest_capital_input.text())
+            risk = float(self.backtest_risk_input.text())
+        except ValueError:
+            self.log_message("Invalid capital or risk value. Using defaults.")
+            capital = 100000
+            risk = 0.01
+        
+        # Validate inputs
+        if not tickers or not all(tickers):
+            QMessageBox.warning(self, "Warning", "Please enter valid tickers")
+            return
+            
+        if start_date >= end_date:
+            QMessageBox.warning(self, "Warning", "Start date must be before end date")
+            return
+            
+        if capital <= 0:
+            QMessageBox.warning(self, "Warning", "Capital must be positive")
+            return
+            
+        if risk <= 0 or risk > 0.1:
+            QMessageBox.warning(self, "Warning", "Risk per trade must be between 0 and 0.1")
+            return
         
         # Create and configure backtest system
         self.backtest_system = TradingSystem(tickers, capital, risk, testing_mode=True)
@@ -2821,7 +2879,7 @@ class TradingDashboard(QMainWindow):
             end=self.backtest_end_date.dateTime().toPyDateTime(),
             freq='D'
         )
-        equity = [100000]
+        equity = [float(self.backtest_capital_input.text())]
         for i in range(1, len(dates)):
             change = random.uniform(-0.02, 0.03)
             equity.append(equity[-1] * (1 + change))
@@ -2840,7 +2898,7 @@ class TradingDashboard(QMainWindow):
             entry = random.uniform(100, 200)
             exit_price = entry * random.uniform(0.9, 1.15)
             trade_log.append({
-                'ticker': random.choice(["AAPL", "MSFT", "GOOG", "AMZN", "TSLA"]),
+                'ticker': random.choice(self.backtest_ticker_input.text().split(",")),
                 'entry': entry,
                 'exit': exit_price,
                 'profit': (exit_price - entry) * 100,
@@ -2848,7 +2906,8 @@ class TradingDashboard(QMainWindow):
                 'duration': random.uniform(10, 240),
                 'exit_reason': random.choice(["profit_target", "stop_loss", "time_expiration"]),
                 'entry_time': random.choice(dates),
-                'shares': 100
+                'shares': 100,
+                'regime': random.choice(["Bull", "Bear", "Neutral"])
             })
         
         # Simulated regime performance
@@ -2916,14 +2975,14 @@ class TradingDashboard(QMainWindow):
         }
         
         # Performance metrics
-        total_return = (equity[-1] / 100000 - 1) * 100
+        total_return = (equity[-1] / float(self.backtest_capital_input.text()) - 1) * 100
         max_drawdown = random.uniform(8.0, 15.0)
         win_rate = sum(1 for t in trade_log if t['profit'] > 0) / len(trade_log) * 100
         
         return {
             'start_date': dates[0],
             'end_date': dates[-1],
-            'initial_capital': 100000,
+            'initial_capital': float(self.backtest_capital_input.text()),
             'final_equity': equity[-1],
             'total_return': total_return,
             'max_drawdown': max_drawdown,
@@ -3061,12 +3120,12 @@ class TradingDashboard(QMainWindow):
             
             self.backtest_trades_table.setItem(row, 5, QTableWidgetItem(f"{trade['duration']:.1f}m"))
             self.backtest_trades_table.setItem(row, 6, QTableWidgetItem(trade['exit_reason']))
-            self.backtest_trades_table.setItem(row, 7, QTableWidgetItem("Bull" if trade['profit'] > 0 else "Bear"))
+            self.backtest_trades_table.setItem(row, 7, QTableWidgetItem(trade['regime']))
     
     def closeEvent(self, event):
         """Handle window close event"""
         # Stop the trading system
-        if self.trading_system.isRunning():
+        if hasattr(self, 'trading_system') and self.trading_system and self.trading_system.isRunning():
             self.trading_system.stop_system()
             self.trading_system.wait(3000)  # Wait up to 3 seconds
         
