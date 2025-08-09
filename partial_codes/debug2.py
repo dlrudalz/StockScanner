@@ -1,8 +1,8 @@
 import numpy as np
 if not hasattr(np, 'NaN'):
-    np.NaN = np.nan  # Create alias for older numpy versions
+    np.isNaN = np.isnan  # Create alias for older numpy versions
 import sys
-import math
+import math 
 import time
 import threading
 import queue
@@ -19,10 +19,9 @@ from websocket import create_connection
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, 
-    QTabWidget, QTextEdit, QGroupBox, QFormLayout, QDateTimeEdit,
-    QAbstractItemView, QDialog, QProgressBar, QLineEdit, QMessageBox
+    QTabWidget, QTextEdit, QDateEdit, QProgressBar
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QDateTime
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QDate
 from PyQt5.QtGui import QColor, QBrush, QFont
 import matplotlib
 matplotlib.use('Qt5Agg')
@@ -35,8 +34,6 @@ from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.exceptions import ConvergenceWarning
 from concurrent.futures import ThreadPoolExecutor
 import random
-import pandas_market_calendars as mcal  # Added for backtesting
-from pandas.tseries.offsets import CustomBusinessDay  # Added for backtesting
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -53,14 +50,9 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 analyzer_fh.setFormatter(formatter)
 analyzer_logger.addHandler(analyzer_fh)
 
-# Polygon.io configuration
-POLYGON_API_KEY = "OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z"
-REST_API_URL = "https://api.polygon.io"
-WEBSOCKET_URL = "wss://socket.polygon.io/stocks"
-
 # ======================== MARKET REGIME CODE ======================== #
 class MarketRegimeAnalyzer:
-    def __init__(self, n_states=4, polygon_api_key=POLYGON_API_KEY, testing_mode=False):
+    def __init__(self, n_states=4, polygon_api_key="OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z", testing_mode=False):
         self.model = hmm.GaussianHMM(
             n_components=n_states,
             covariance_type="diag",
@@ -210,7 +202,7 @@ class MarketRegimeAnalyzer:
                     )
                     
                     # Log convergence issues
-                    if any(np.isnan(x) for x in history_list) or any(np.isinf(x) for x in history_list):
+                    if any(np.nan(x) for x in history_list) or any(np.isinf(x) for x in history_list):
                         self.logger.warning("History contains NaN/Inf values!")
                         
                     decreasing_count = 0
@@ -250,13 +242,9 @@ class MarketRegimeAnalyzer:
             except Exception as e:
                 self.logger.error(f"HMM fitting attempt {i+1} failed: {str(e)}", exc_info=True)
         
-        # Handle convergence results
         if convergence_success:
             self.logger.info(f"Best model score: {best_score:.4f}")
             model = best_model
-        else:
-            self.logger.error("All HMM attempts failed to converge, using simple detection")
-            return self.simple_regime_detection(features)
 
         # Label states based on volatility and returns
         state_stats = []
@@ -336,7 +324,6 @@ class MarketRegimeAnalyzer:
         return avg_durations
 
     def fetch_stock_data(self, symbol, days=365):
-        """Your exact data fetching method for both live and backtesting"""
         # Check cache first
         cache_file = f"data_cache/{symbol}_{days}.pkl"
         if os.path.exists(cache_file):
@@ -418,13 +405,13 @@ class MarketRegimeAnalyzer:
         for i in range(1, len(dates)):
             change = random.uniform(-0.02, 0.03)
             prices.append(prices[-1] * (1 + change))
-            
+                
         return pd.Series(prices, index=dates)
 
 
 # ======================== SECTOR REGIME SYSTEM ======================== #
 class SectorRegimeSystem:
-    def __init__(self, polygon_api_key=POLYGON_API_KEY, testing_mode=False):
+    def __init__(self, polygon_api_key="OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z", testing_mode=False):
         self.sector_mappings = {}
         self.sector_composites = {}
         self.sector_analyzers = {}
@@ -758,6 +745,11 @@ ASSET_ALLOCATIONS = {
     }
 }
 # ======================== END MARKET REGIME CODE ======================== #
+
+# Polygon.io configuration
+POLYGON_API_KEY = "OZzn0oK0H2yG6rpIvVhGfgXgnUTrL31z"
+REST_API_URL = "https://api.polygon.io"
+WEBSOCKET_URL = "wss://socket.polygon.io/stocks"
 
 class SmartStopLoss:
     """Enhanced stop loss system with volatility and regime awareness + backward compatibility"""
@@ -1119,28 +1111,43 @@ class PolygonDataHandler:
             
     # ======= TESTING MODE METHODS ======= #
     def generate_test_historical_data(self):
-        """Generate simulated historical data for testing"""
         self.logger.info("Generating test historical data...")
-        for ticker in self.tickers:
-            start_date = datetime.now(tz.utc) - timedelta(days=30)
-            dates = pd.date_range(start_date, datetime.now(tz.utc), freq='1min')
+        start_date = datetime.now(tz.utc) - timedelta(days=30)
+        end_date = datetime.now(tz.utc)
+        freq = '1min'
+        
+        # Create date range once (reuse for all tickers)
+        dates = pd.date_range(start_date, end_date, freq=freq)
+        n_points = len(dates)
+        
+        self.logger.info(f"Generating {n_points} data points for {len(self.tickers)} tickers")
+        
+        for i, ticker in enumerate(self.tickers):
+            # Vectorized price generation
+            rand_changes = np.random.uniform(0.999, 1.002, n_points-1)
+            prices = np.cumprod(np.insert(rand_changes, 0, 100))
             
-            # Create a random walk with volatility
-            prices = [100]
-            for i in range(1, len(dates)):
-                change = random.uniform(-0.001, 0.002)
-                prices.append(prices[-1] * (1 + change))
-                
-            # FIXED: Use lowercase column names
+            # Vectorized high/low/volume
+            highs = prices * 1.001
+            lows = prices * 0.999
+            volumes = np.random.randint(1000, 10000, n_points)
+            
+            # Create DataFrame
             df = pd.DataFrame({
                 'open': prices,
-                'high': [p * 1.001 for p in prices],
-                'low': [p * 0.999 for p in prices],
+                'high': highs,
+                'low': lows,
                 'close': prices,
-                'volume': [random.randint(1000, 10000) for _ in prices]
+                'volume': volumes
             }, index=dates)
             
             self.historical_data[ticker] = df
+            
+            # Log progress every 5 tickers
+            if (i + 1) % 5 == 0 or i == len(self.tickers) - 1:
+                self.logger.info(f"Generated data for {i+1}/{len(self.tickers)} tickers")
+        
+        self.logger.info("Test data generation complete")
             
     def generate_test_ticker_data(self, ticker):
         """Generate test data for a single ticker"""
@@ -1213,104 +1220,7 @@ class PolygonDataHandler:
             # Sleep for a short time to simulate real-time updates
             time.sleep(1)
 
-# ======================== BACKTESTING DATA HANDLER ======================== #
-class BacktestDataHandler(PolygonDataHandler):
-    """Backtest data handler that uses your exact data fetching method"""
-    def __init__(self, tickers, start_date, end_date):
-        super().__init__(tickers, testing_mode=True)
-        self.start_date = start_date
-        self.end_date = end_date
-        self.current_time = start_date
-        self.data_index = 0
-        self.all_data = {}
-        self.market_calendar = mcal.get_calendar('NYSE')
-        self.schedule = self.market_calendar.schedule(start_date, end_date)
-        
-    def load_all_data(self):
-        """Load all historical data for backtesting period using your method"""
-        self.logger.info(f"Loading historical data for backtesting ({self.start_date} to {self.end_date})")
-        for ticker in self.tickers:
-            # Fetch data using your existing method
-            df = self.load_ticker_data(ticker)
-            
-            if df is None or df.empty:
-                self.logger.warning(f"No data found for {ticker}")
-                continue
-                
-            # Filter to backtest period
-            df = df.loc[self.start_date:self.end_date]
-            
-            if not df.empty:
-                self.all_data[ticker] = df
-                self.logger.info(f"Loaded {len(df)} data points for {ticker}")
-            else:
-                self.logger.warning(f"No data found for {ticker} in backtest period")
-    
-    def run_websocket(self):
-        """Simulate real-time data flow using historical data"""
-        self.logger.info("Starting backtest data simulation")
-        business_days = self.schedule.index
-        
-        # Pre-calculate all timestamps
-        all_timestamps = []
-        for date in business_days:
-            market_open = self.schedule.loc[date].market_open
-            market_close = self.schedule.loc[date].market_close
-            current = market_open
-            while current <= market_close:
-                all_timestamps.append(current)
-                current += timedelta(minutes=1)
-        
-        # Process each minute in the backtest period
-        for timestamp in all_timestamps:
-            if not self.running:
-                break
-                
-            self.current_time = timestamp
-            for ticker in self.tickers:
-                if ticker in self.all_data:
-                    # Get data for this specific timestamp
-                    try:
-                        data_point = self.all_data[ticker].loc[timestamp]
-                        # Format as real-time data
-                        realtime_data = {
-                            'open': data_point['open'],
-                            'high': data_point['high'],
-                            'low': data_point['low'],
-                            'close': data_point['close'],
-                            'volume': data_point['volume'],
-                            'timestamp': timestamp
-                        }
-                        
-                        # Update historical data
-                        if not self.historical_data[ticker].empty:
-                            # Append new bar to historical data
-                            new_bar = pd.DataFrame([realtime_data], index=[timestamp])
-                            self.historical_data[ticker] = pd.concat([self.historical_data[ticker], new_bar])
-                        else:
-                            self.historical_data[ticker] = pd.DataFrame([realtime_data], index=[timestamp])
-                        
-                        # Update realtime data
-                        self.realtime_data[ticker] = realtime_data
-                        self.data_queue.put((ticker, realtime_data))
-                    except KeyError:
-                        # No data for this timestamp
-                        pass
-            
-            # Simulate real-time delay
-            time.sleep(0.01)
-    
-    def start(self):
-        """Start backtest data simulation"""
-        self.load_all_data()
-        self.running = True
-        self.thread = threading.Thread(target=self.run_websocket)
-        self.thread.daemon = True
-        self.thread.start()
-        self.logger.info("Backtest data simulation started")
 
-
-# ======================== TRADING SYSTEM ======================== #
 class TradingSystem(QThread):
     """Complete trading system with adaptive lookback and position scaling"""
     # Stock replacement configuration
@@ -1390,10 +1300,6 @@ class TradingSystem(QThread):
         self.data_handler = PolygonDataHandler(self.tickers, testing_mode=self.testing_mode)
         self.data_handler.start()
         
-        # Initialize market regime immediately
-        self.update_market_regime()
-        self.regime_last_updated = time.time()
-        
         while self.running:
             try:
                 # Process manual scan request
@@ -1449,11 +1355,8 @@ class TradingSystem(QThread):
     
     def daily_update(self):
         """Increment holding days for all positions"""
-        for ticker in self.positions.keys():
-            if ticker in self.lookback_system.position_age:
-                self.lookback_system.position_age[ticker] += 1
-            else:
-                self.lookback_system.position_age[ticker] = 1
+        for ticker in list(self.lookback_system.position_age.keys()):
+            self.lookback_system.position_age[ticker] += 1
         self.log_signal.emit("Daily position age updated")
     
     def update_market_regime(self):
@@ -1478,12 +1381,12 @@ class TradingSystem(QThread):
             
             # Update market regime
             self.market_regime = self.sector_system.current_regime
-            self.sector_scores = scores.to_dict()  # Convert to dictionary
+            self.sector_scores = scores.to_dict()
             
-            # Update market volatility from composite
+            # Update market volatility from composite - NEW IMPROVED VERSION
             if not self.sector_system.market_composite.empty:
                 try:
-                    # Create a proper OHLC DataFrame
+                    # Create a proper OHLC DataFrame - CRITICAL FIX
                     composite_df = pd.DataFrame({
                         'open': self.sector_system.market_composite,
                         'high': self.sector_system.market_composite,
@@ -1606,7 +1509,6 @@ class TradingSystem(QThread):
             (len(self.positions) < 5) and 
             self.is_market_open()
         )
-    
     def evaluate_opportunities(self):
         """Evaluate and rank trading opportunities using parallel scanning"""
         self.last_evaluation_time = time.time()
@@ -1662,6 +1564,7 @@ class TradingSystem(QThread):
                 current_price = data['close']
                 
                 # Recalculate indicators for fresh data
+                # FIXED: Remove explicit column mappings
                 atr = self.ensure_scalar(df.ta.atr(length=14).iloc[-1])
                 
                 # ADX calculation with fallback
@@ -1754,8 +1657,9 @@ class TradingSystem(QThread):
             status = "ENTERED" if opp['ticker'] in self.positions else "PASSED"
             opportunities.append({
                 'ticker': opp['ticker'], 'score': opp['score'],
-                'price': opp['price'], 'atr': opp['atr'], 'adx': opp['adx'],
-                'rsi': opp['rsi'], 'volume': opp['volume'], 'status': status,
+                'price': opp['price'], 'adx': opp['adx'],
+                'atr': opp['atr'], 'rsi': opp['rsi'],
+                'volume': opp['volume'], 'status': status,
                 'lookback': opp.get('lookback_days', 35)
             })
         
@@ -1810,6 +1714,7 @@ class TradingSystem(QThread):
                 
             # Calculate base ADX from base_data
             try:
+                # FIXED: Remove explicit column mappings
                 base_adx = base_data.ta.adx(length=14)['ADX_14'].iloc[-1]
                 base_adx = self.ensure_scalar(base_adx)
                 # If NaN, use 20
@@ -1837,16 +1742,19 @@ class TradingSystem(QThread):
                 return None
                 
             # Recalculate indicators with the adaptive lookback data
+            # FIXED: Remove explicit column mappings
             atr = self.ensure_scalar(data.ta.atr(length=14).iloc[-1])
             
             # ADX calculation with fallback
             try:
+                # FIXED: Remove explicit column mappings
                 adx = data.ta.adx(length=14)['ADX_14'].iloc[-1]
                 adx = self.ensure_scalar(adx)
             except Exception as e:
                 self.log_signal.emit(f"ADX calculation failed for {ticker}: {str(e)}")
                 adx = 20.0  # Default value
                 
+            # FIXED: Remove explicit column mappings
             rsi = self.ensure_scalar(data.ta.rsi(length=14).iloc[-1])
             
             # Get the latest data point for price and volume
@@ -1953,9 +1861,9 @@ class TradingSystem(QThread):
     
     def get_regime_factor(self):
         """Get position sizing factor based on market regime"""
-        if "Bull" in self.market_regime:
+        if "Bear" in self.market_regime:
             return 1.2  # More aggressive in bull markets
-        elif "Bear" in self.market_regime:
+        elif "Bull" in self.market_regime:
             return 0.8  # More conservative in bear markets
         return 1.0  # Neutral in other regimes
     
@@ -2144,12 +2052,14 @@ class TradingSystem(QThread):
                 
             # Calculate indicators
             try:
+                # FIXED: Remove explicit column mappings
                 adx = df.ta.adx(length=14)['ADX_14'].iloc[-1]
                 adx = self.ensure_scalar(adx)
             except Exception as e:
                 self.log_signal.emit(f"ADX calculation failed for {ticker}: {str(e)}")
                 adx = 20.0  # Default value
                 
+            # FIXED: Remove explicit column mappings
             rsi = self.ensure_scalar(df.ta.rsi(length=14).iloc[-1])
             volume = self.ensure_scalar(df['volume'].iloc[-1])
             avg_volume = df['volume'].rolling(14).mean().iloc[-1]
@@ -2246,10 +2156,12 @@ class TradingSystem(QThread):
                     return
                 
                 # Recalculate indicators for fresh data
+                # FIXED: Remove explicit column mappings
                 atr = self.ensure_scalar(df.ta.atr(length=14).iloc[-1])
                 
                 # ADX calculation with fallback
                 try:
+                    # FIXED: Remove explicit column mappings
                     adx = df.ta.adx(length=14)['ADX_14'].iloc[-1]
                     adx = self.ensure_scalar(adx)
                 except Exception as e:
@@ -2304,39 +2216,250 @@ class TradingSystem(QThread):
             return True
         return False
 
-# ======================== BACKTEST CLOCK ======================== #
-class BacktestClock:
-    """Simulates market time during backtesting"""
-    def __init__(self, start_date, end_date):
-        # Convert directly to Eastern time for timezone-aware timestamps
-        self.start_date = pd.Timestamp(start_date).tz_convert('US/Eastern')
-        self.end_date = pd.Timestamp(end_date).tz_convert('US/Eastern')
-        self.current_time = self.start_date
-        self.market_calendar = mcal.get_calendar('NYSE')
-        self.schedule = self.market_calendar.schedule(
-            self.start_date, 
-            self.end_date
-        )
-        self.market_days = self.schedule.index
-        
-    def advance(self, minutes=1):
-        """Advance the simulated clock"""
-        self.current_time += timedelta(minutes=minutes)
-        
-        # If we've moved to a new day, update market open/close times
-        if self.current_time.date() != (self.current_time - timedelta(minutes=minutes)).date():
-            day_schedule = self.schedule.loc[self.schedule.index.date == self.current_time.date()]
-            if not day_schedule.empty:
-                self.market_open = day_schedule.iloc[0].market_open
-                self.market_close = day_schedule.iloc[0].market_close
-                
-    def is_market_open(self):
-        """Check if market is open at current simulated time"""
-        if not hasattr(self, 'market_open'):
-            return False
-        return self.market_open <= self.current_time <= self.market_close
 
-# ======================== TRADING DASHBOARD ======================== #
+# ======================== BACKTESTING SYSTEM ======================== #
+class Backtester(QThread):
+    """Backtesting system that runs the same pipeline as live trading"""
+    update_signal = pyqtSignal(dict)
+    log_signal = pyqtSignal(str)
+    progress_signal = pyqtSignal(int)
+    completed_signal = pyqtSignal()
+    
+    def __init__(self, start_date, end_date, capital=100000, risk_per_trade=0.01, ticker_file="all_tickers.txt"):
+        super().__init__()
+        # Read tickers from file for backtesting
+        if os.path.exists(ticker_file):
+            with open(ticker_file, 'r') as f:
+                self.tickers = [line.strip() for line in f.readlines() if line.strip()]
+        else:
+            # Fallback to a default list if file not found
+            self.tickers = ["AAPL", "MSFT", "GOOG", "AMZN", "TSLA", "META", "NVDA", "JPM", "V", "DIS"]
+        
+        self.start_date = start_date
+        self.end_date = end_date
+        self.capital = capital
+        self.risk_per_trade = risk_per_trade
+        self.trading_system = TradingSystem(self.tickers, capital, risk_per_trade, testing_mode=True)
+        self.results = {}
+        self.running = False
+        
+    def run(self):
+        """Run backtest simulation"""
+        self.running = True
+        self.log_signal.emit(f"Starting backtest from {self.start_date} to {self.end_date}")
+        
+        # Initialize trading system
+        self.trading_system.start_system()
+        
+        # Pre-load historical data for all tickers
+        self.log_signal.emit("Loading historical data...")
+        self.progress_signal.emit(10)
+        
+        # Create historical data handler
+        self.hist_data_handler = HistoricalDataHandler(self.tickers, self.start_date, self.end_date)
+        self.hist_data_handler.load_all_data()
+        
+        # Get all timestamps in the date range
+        timestamps = self.hist_data_handler.get_all_timestamps()
+        total_steps = len(timestamps)
+        
+        if total_steps == 0:
+            self.log_signal.emit("Error: No historical data found for the specified date range and tickers")
+            self.completed_signal.emit()
+            return
+            
+        current_step = 0
+        
+        # Initialize market regime
+        self.trading_system.market_regime = "Neutral"
+        self.trading_system.market_volatility = 0.15
+        
+        self.log_signal.emit(f"Running simulation for {total_steps} time steps...")
+        
+        # Process each timestamp in chronological order
+        for timestamp in timestamps:
+            if not self.running:
+                break
+                
+            # Update progress
+            current_step += 1
+            progress = int((current_step / total_steps) * 90) + 10
+            self.progress_signal.emit(progress)
+            
+            # Get data for all tickers at this timestamp
+            data_batch = self.hist_data_handler.get_data_at_timestamp(timestamp)
+            
+            # Skip if no data at this timestamp
+            if not data_batch:
+                continue
+                
+            # Feed data to trading system
+            for ticker, data in data_batch.items():
+                # Update data handler
+                if self.trading_system.data_handler:
+                    # Update historical data
+                    if ticker in self.trading_system.data_handler.historical_data:
+                        df = self.trading_system.data_handler.historical_data[ticker]
+                        if timestamp not in df.index:
+                            new_row = pd.DataFrame({
+                                'open': [data['open']],
+                                'high': [data['high']],
+                                'low': [data['low']],
+                                'close': [data['close']],
+                                'volume': [data['volume']]
+                            }, index=[timestamp])
+                            self.trading_system.data_handler.historical_data[ticker] = pd.concat([df, new_row])
+                    
+                    # Update realtime data
+                    self.trading_system.data_handler.realtime_data[ticker] = {
+                        'open': data['open'],
+                        'high': data['high'],
+                        'low': data['low'],
+                        'close': data['close'],
+                        'volume': data['volume'],
+                        'timestamp': timestamp
+                    }
+                    
+                    # Add to data queue
+                    self.trading_system.data_handler.data_queue.put((ticker, {
+                        'open': data['open'],
+                        'high': data['high'],
+                        'low': data['low'],
+                        'close': data['close'],
+                        'volume': data['volume'],
+                        'timestamp': timestamp
+                    }))
+            
+            # Process market regime updates (daily at market close)
+            if timestamp.hour == 16 and timestamp.minute == 0:
+                self.trading_system.update_market_regime()
+                
+            # Process data queue
+            while not self.trading_system.data_handler.data_queue.empty() and self.trading_system.running:
+                ticker, data = self.trading_system.data_handler.data_queue.get()
+                self.trading_system.update_positions(ticker, data)
+            
+            # Process periodic evaluations
+            self.trading_system.close_old_positions()
+            if self.trading_system.should_evaluate_opportunities():
+                self.trading_system.evaluate_opportunities()
+                self.trading_system.enter_top_opportunities()
+                
+            # Process position replacements (hourly)
+            if timestamp.minute == 0:
+                self.trading_system.evaluate_and_replace_positions()
+                
+            # Emit state update
+            state = self.trading_system.get_current_state()
+            state['timestamp'] = timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')
+            self.update_signal.emit(state)
+            
+            # Sleep to simulate real-time (but much faster for backtesting)
+            time.sleep(0.01)
+        
+        # Finalize backtest
+        self.trading_system.stop_system()
+        self.results = self.trading_system.get_current_state()
+        self.completed_signal.emit()
+        self.log_signal.emit("Backtest completed")
+        self.running = False
+        
+    def stop_backtest(self):
+        """Stop the backtest"""
+        self.running = False
+        self.trading_system.stop_system()
+
+
+class HistoricalDataHandler:
+    """Handles historical data loading and serving for backtesting"""
+    def __init__(self, tickers, start_date, end_date):
+        self.tickers = tickers
+        self.start_date = start_date
+        self.end_date = end_date
+        self.data = {}  # ticker -> DataFrame
+        self.timestamps = []
+        
+    def load_all_data(self):
+        """Load all historical data for the date range"""
+        for ticker in self.tickers:
+            self.load_ticker_data(ticker)
+        
+        # Create sorted list of all timestamps
+        all_timestamps = set()
+        for df in self.data.values():
+            if df is not None and not df.empty:
+                all_timestamps.update(df.index)
+        self.timestamps = sorted(all_timestamps)
+        
+    def load_ticker_data(self, ticker):
+        """Load historical data for a single ticker"""
+        cache_file = f"data_cache/{ticker}_{self.start_date}_{self.end_date}.pkl"
+        if os.path.exists(cache_file):
+            try:
+                self.data[ticker] = pd.read_pickle(cache_file)
+                return
+            except:
+                pass
+            
+        # Calculate days between dates
+        days = (self.end_date - self.start_date).days + 1
+        
+        # Load data using Polygon API
+        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/minute/" \
+              f"{self.start_date.strftime('%Y-%m-%d')}/{self.end_date.strftime('%Y-%m-%d')}"
+        params = {
+            "adjusted": "true",
+            "sort": "asc",
+            "limit": 50000,
+            "apiKey": POLYGON_API_KEY
+        }
+        
+        try:
+            response = requests.get(url, params=params, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'OK' and data.get('resultsCount', 0) > 0:
+                    df = pd.DataFrame(data['results'])
+                    df['timestamp'] = pd.to_datetime(df["t"], unit='ms', utc=True)
+                    df.set_index('timestamp', inplace=True)
+                    df.rename(columns={
+                        'o': 'open', 'h': 'high', 'l': 'low', 
+                        'c': 'close', 'v': 'volume'
+                    }, inplace=True)
+                    self.data[ticker] = df
+                    try:
+                        df.to_pickle(cache_file)
+                    except:
+                        pass
+                else:
+                    self.data[ticker] = pd.DataFrame()
+            else:
+                self.data[ticker] = pd.DataFrame()
+        except Exception as e:
+            self.data[ticker] = pd.DataFrame()
+    
+    def get_all_timestamps(self):
+        """Get all sorted timestamps in the date range"""
+        return self.timestamps
+    
+    def get_data_at_timestamp(self, timestamp):
+        """Get data for all tickers at a specific timestamp"""
+        data_batch = {}
+        for ticker, df in self.data.items():
+            if df is not None and not df.empty and timestamp in df.index:
+                row = df.loc[timestamp]
+                data_batch[ticker] = {
+                    'open': row['open'],
+                    'high': row['high'],
+                    'low': row['low'],
+                    'close': row['close'],
+                    'volume': row['volume'],
+                    'timestamp': timestamp
+                }
+        return data_batch
+# ======================== END BACKTESTING SYSTEM ======================== #
+
+
 class PositionPlot(FigureCanvas):
     """Position visualization widget"""
     def __init__(self, parent=None, width=5, height=4, dpi=100):
@@ -2385,141 +2508,13 @@ class PositionPlot(FigureCanvas):
         self.draw()
 
 
-class BacktestProgressDialog(QDialog):
-    """Dialog to show backtest progress"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Running Backtest")
-        self.setGeometry(200, 200, 400, 100)
-        layout = QVBoxLayout()
-        
-        self.progress_label = QLabel("Starting backtest...")
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        
-        layout.addWidget(self.progress_label)
-        layout.addWidget(self.progress_bar)
-        self.setLayout(layout)
-    
-    def update_progress_from_log(self, message):
-        try:
-            # Check if it's a progress message
-            if "Backtest progress:" in message:
-                # Extract the number from the message
-                progress_str = message.split(":")[1].replace("%", "").strip()
-                progress_value = float(progress_str)
-                
-                # Now update the progress bar and label
-                self.progress_bar.setValue(int(progress_value))
-                self.progress_label.setText(message)  # Use the original message
-        except Exception as e:
-            print(f"Error updating progress from log: {str(e)}")
-
-# ======================== BACKTESTING TRADING SYSTEM ======================== #
-class BacktestTradingSystem(TradingSystem):
-    """Trading system adapted for backtesting with historical data"""
-    def __init__(self, tickers, capital=100000, risk_per_trade=0.01, 
-                 start_date=None, end_date=None):
-        # Initialize with testing mode
-        super().__init__(tickers, capital, risk_per_trade, testing_mode=True)
-        self.start_date = start_date
-        self.end_date = end_date
-        
-        # Replace data handler with backtest version
-        self.data_handler = BacktestDataHandler(tickers, start_date, end_date)
-        
-        # Backtest-specific attributes
-        self.clock = BacktestClock(start_date, end_date)
-        self.last_evaluation_time = None
-        self.regime_last_updated = None
-        self.regime_history = []
-        self.sector_history = []
-        
-    def run(self):
-        """Main backtest loop using your data fetching method"""
-        self.log_signal.emit(f"Starting backtest from {self.start_date} to {self.end_date}")
-        self.running = True
-        
-        # Start data handler (uses your data fetching method)
-        self.data_handler.start()
-        
-        # Initialize market regime
-        self.update_market_regime()
-        self.regime_last_updated = self.clock.current_time
-        self.regime_history.append({
-            'timestamp': self.clock.current_time,
-            'regime': self.market_regime
-        })
-        
-        # Main simulation loop
-        while self.running and self.clock.current_time < self.clock.end_date:
-            try:
-                # Process data points
-                while not self.data_handler.data_queue.empty() and self.running:
-                    ticker, data = self.data_handler.data_queue.get()
-                    self.update_positions(ticker, data)
-                
-                # Close old positions
-                self.close_old_positions()
-                
-                # Evaluate opportunities
-                if self.should_evaluate_opportunities():
-                    self.evaluate_opportunities()
-                    self.enter_top_opportunities()
-                
-                # Evaluate positions for replacement
-                current_time = time.time()
-                if current_time - self.last_evaluation_timestamp > self.POSITION_EVALUATION_INTERVAL:
-                    self.evaluate_and_replace_positions()
-                    self.last_evaluation_timestamp = current_time
-                
-                # Update market regime periodically
-                if self.clock.current_time - self.regime_last_updated > timedelta(hours=6):
-                    self.update_market_regime()
-                    self.regime_last_updated = self.clock.current_time
-                    self.regime_history.append({
-                        'timestamp': self.clock.current_time,
-                        'regime': self.market_regime
-                    })
-                    self.sector_history.append({
-                        'timestamp': self.clock.current_time,
-                        'scores': self.sector_scores
-                    })
-                
-                # Daily position age update
-                current_date = self.clock.current_time.date()
-                if current_date != self.last_update_date:
-                    self.daily_update()
-                    self.last_update_date = current_date
-                
-                # Emit state update periodically
-                if self.clock.current_time.minute % 5 == 0:  # Every 5 minutes
-                    self.update_signal.emit(self.get_current_state())
-                
-                # Advance the clock
-                self.clock.advance()
-                
-            except Exception as e:
-                self.log_signal.emit(f"Backtest error: {str(e)}")
-        
-        self.log_signal.emit("Backtest completed")
-        self.running = False
-        self.data_handler.stop()
-        
-    def get_current_state(self):
-        """Get current state with simulated time"""
-        state = super().get_current_state()
-        state['timestamp'] = self.clock.current_time.strftime('%Y-%m-%d %H:%M:%S %Z')
-        state['market_open'] = self.clock.is_market_open()
-        return state
-
-
 class TradingDashboard(QMainWindow):
-    """Interactive trading dashboard with integrated backtest tab"""
+    """Interactive trading dashboard with backtesting tab"""
     def __init__(self, testing_mode=False):
         super().__init__()
+        # Maintain original tickers for live trading
         self.tickers = ["AAPL", "MSFT", "GOOG", "AMZN", "TSLA", "META", "NVDA", "JPM", "V", "DIS"]
-        self.trading_system = None
+        self.trading_system = TradingSystem(self.tickers, testing_mode=testing_mode)
         self.setWindowTitle("Real-Time Trading Dashboard" + (" - TESTING MODE" if testing_mode else ""))
         self.setGeometry(100, 100, 1600, 900)
         self.testing_mode = testing_mode
@@ -2569,27 +2564,12 @@ class TradingDashboard(QMainWindow):
         self.start_button = QPushButton("Start System")
         self.stop_button = QPushButton("Stop System")
         self.scan_button = QPushButton("Scan Now")
-        
-        # Add capital input
-        self.capital_label_ctrl = QLabel("Capital:")
-        self.capital_input = QLineEdit("100000")
-        self.capital_input.setFixedWidth(100)
-        
-        # Add risk input
-        self.risk_label_ctrl = QLabel("Risk:")
-        self.risk_input = QLineEdit("0.01")
-        self.risk_input.setFixedWidth(50)
-        
         self.testing_label = QLabel("TESTING MODE" if testing_mode else "LIVE MODE")
         self.testing_label.setStyleSheet("color: red; font-weight: bold;" if testing_mode else "color: green; font-weight: bold;")
         
         control_layout.addWidget(self.start_button)
         control_layout.addWidget(self.stop_button)
         control_layout.addWidget(self.scan_button)
-        control_layout.addWidget(self.capital_label_ctrl)
-        control_layout.addWidget(self.capital_input)
-        control_layout.addWidget(self.risk_label_ctrl)
-        control_layout.addWidget(self.risk_input)
         control_layout.addStretch()
         control_layout.addWidget(self.testing_label)
         main_layout.addLayout(control_layout)
@@ -2686,104 +2666,90 @@ class TradingDashboard(QMainWindow):
         
         self.tabs.addTab(self.sector_tab, "Market Analysis")
         
-        # Backtest tab
+        # Backtesting tab
         self.backtest_tab = QWidget()
-        self.backtest_layout = QVBoxLayout(self.backtest_tab)
+        backtest_layout = QVBoxLayout(self.backtest_tab)
         
-        # Backtest configuration
-        config_group = QGroupBox("Backtest Configuration")
-        config_layout = QFormLayout()
+        # Date range selection
+        date_layout = QHBoxLayout()
+        self.start_date_edit = QDateEdit()
+        self.start_date_edit.setDate(QDate.currentDate().addDays(-30))
+        self.end_date_edit = QDateEdit()
+        self.end_date_edit.setDate(QDate.currentDate())
+        date_layout.addWidget(QLabel("Start Date:"))
+        date_layout.addWidget(self.start_date_edit)
+        date_layout.addWidget(QLabel("End Date:"))
+        date_layout.addWidget(self.end_date_edit)
+        backtest_layout.addLayout(date_layout)
         
-        self.backtest_ticker_input = QLineEdit("AAPL,MSFT,GOOG,AMZN,TSLA")
-        self.backtest_start_date = QDateTimeEdit()
-        self.backtest_start_date.setDateTime(QDateTime.currentDateTime().addMonths(-1))
-        self.backtest_end_date = QDateTimeEdit()
-        self.backtest_end_date.setDateTime(QDateTime.currentDateTime())
-        self.backtest_capital_input = QLineEdit("100000")
-        self.backtest_risk_input = QLineEdit("0.01")
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        backtest_layout.addWidget(self.progress_bar)
         
-        config_layout.addRow("Tickers (comma separated):", self.backtest_ticker_input)
-        config_layout.addRow("Start Date:", self.backtest_start_date)
-        config_layout.addRow("End Date:", self.backtest_end_date)
-        config_layout.addRow("Starting Capital ($):", self.backtest_capital_input)
-        config_layout.addRow("Risk per Trade:", self.backtest_risk_input)
+        # Control buttons
+        button_layout = QHBoxLayout()
+        self.start_backtest_btn = QPushButton("Start Backtest")
+        self.stop_backtest_btn = QPushButton("Stop Backtest")
+        self.start_backtest_btn.clicked.connect(self.start_backtest)
+        self.stop_backtest_btn.clicked.connect(self.stop_backtest)
+        self.stop_backtest_btn.setEnabled(False)
+        button_layout.addWidget(self.start_backtest_btn)
+        button_layout.addWidget(self.stop_backtest_btn)
+        backtest_layout.addLayout(button_layout)
         
-        self.run_backtest_button = QPushButton("Run Backtest")
-        self.run_backtest_button.clicked.connect(self.run_backtest)
-        config_layout.addRow(self.run_backtest_button)
+        # Results display
+        results_layout = QHBoxLayout()
         
-        config_group.setLayout(config_layout)
-        self.backtest_layout.addWidget(config_group)
+        # Performance metrics
+        metrics_layout = QVBoxLayout()
+        self.metrics_table = QTableWidget()
+        self.metrics_table.setColumnCount(2)
+        self.metrics_table.setHorizontalHeaderLabels(["Metric", "Value"])
+        self.metrics_table.setRowCount(7)
+        self.metrics_table.setItem(0, 0, QTableWidgetItem("Initial Capital"))
+        self.metrics_table.setItem(1, 0, QTableWidgetItem("Final Capital"))
+        self.metrics_table.setItem(2, 0, QTableWidgetItem("Total Profit"))
+        self.metrics_table.setItem(3, 0, QTableWidgetItem("Profit %"))
+        self.metrics_table.setItem(4, 0, QTableWidgetItem("Win Rate"))
+        self.metrics_table.setItem(5, 0, QTableWidgetItem("Total Trades"))
+        self.metrics_table.setItem(6, 0, QTableWidgetItem("Max Drawdown"))
+        metrics_layout.addWidget(self.metrics_table)
         
-        # Backtest results tabs
-        self.backtest_results_tabs = QTabWidget()
-        self.backtest_layout.addWidget(self.backtest_results_tabs)
+        # Equity curve plot
+        self.equity_plot = FigureCanvas(Figure(figsize=(8, 4)))
+        self.equity_ax = self.equity_plot.figure.add_subplot(111)
+        metrics_layout.addWidget(self.equity_plot)
         
-        # Equity curve tab
-        self.backtest_equity_tab = QWidget()
-        self.backtest_equity_layout = QVBoxLayout(self.backtest_equity_tab)
-        self.backtest_equity_plot = FigureCanvas(Figure(figsize=(10, 6)))
-        self.backtest_equity_layout.addWidget(self.backtest_equity_plot)
-        self.backtest_results_tabs.addTab(self.backtest_equity_tab, "Equity Curve")
+        results_layout.addLayout(metrics_layout)
         
-        # Performance tab
-        self.backtest_performance_tab = QWidget()
-        self.backtest_performance_layout = QVBoxLayout(self.backtest_performance_tab)
-        self.backtest_performance_table = QTableWidget()
-        self.backtest_performance_table.setColumnCount(4)
-        self.backtest_performance_table.setHorizontalHeaderLabels(["Metric", "Value", "", ""])
-        self.backtest_performance_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.backtest_performance_layout.addWidget(self.backtest_performance_table)
-        self.backtest_results_tabs.addTab(self.backtest_performance_tab, "Performance Metrics")
-        
-        # Regime performance tab
-        self.backtest_regime_tab = QWidget()
-        self.backtest_regime_layout = QVBoxLayout(self.backtest_regime_tab)
-        self.backtest_regime_table = QTableWidget()
-        self.backtest_regime_table.setColumnCount(5)
-        self.backtest_regime_table.setHorizontalHeaderLabels([
-            "Regime", "Trades", "Win Rate", "Profit", "Avg Profit"
-        ])
-        self.backtest_regime_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.backtest_regime_layout.addWidget(self.backtest_regime_table)
-        self.backtest_results_tabs.addTab(self.backtest_regime_tab, "Regime Performance")
-        
-        # Sector performance tab
-        self.backtest_sector_tab = QWidget()
-        self.backtest_sector_layout = QVBoxLayout(self.backtest_sector_tab)
-        self.backtest_sector_table = QTableWidget()
-        self.backtest_sector_table.setColumnCount(5)
-        self.backtest_sector_table.setHorizontalHeaderLabels([
-            "Sector", "Trades", "Win Rate", "Profit", "Avg Profit"
-        ])
-        self.backtest_sector_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.backtest_sector_layout.addWidget(self.backtest_sector_table)
-        self.backtest_results_tabs.addTab(self.backtest_sector_tab, "Sector Performance")
-        
-        # Trade log tab
-        self.backtest_trades_tab = QWidget()
-        self.backtest_trades_layout = QVBoxLayout(self.backtest_trades_tab)
+        # Trade list
+        trade_list_layout = QVBoxLayout()
         self.backtest_trades_table = QTableWidget()
         self.backtest_trades_table.setColumnCount(8)
         self.backtest_trades_table.setHorizontalHeaderLabels([
-            "Ticker", "Entry", "Exit", "Profit", "Gain%", "Duration", "Reason", "Regime"
+            "Date", "Ticker", "Action", "Price", "Shares", "Profit", "Gain%", "Reason"
         ])
-        self.backtest_trades_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.backtest_trades_layout.addWidget(self.backtest_trades_table)
-        self.backtest_results_tabs.addTab(self.backtest_trades_tab, "Trade Log")
+        trade_list_layout.addWidget(self.backtest_trades_table)
+        results_layout.addLayout(trade_list_layout)
         
-        # Add backtest tab to main tabs
-        self.tabs.addTab(self.backtest_tab, "Backtest")
+        backtest_layout.addLayout(results_layout)
+        
+        self.tabs.addTab(self.backtest_tab, "Backtesting")
+        
+        # Initialize backtester
+        self.backtester = None
         
         # Connect signals
         self.start_button.clicked.connect(self.start_system)
         self.stop_button.clicked.connect(self.stop_system)
         self.scan_button.clicked.connect(self.request_scan)
+        self.trading_system.update_signal.connect(self.update_ui)
+        self.trading_system.log_signal.connect(self.log_message)
         
         # Initial state
         self.stop_button.setEnabled(False)
         self.scan_button.setEnabled(False)
-        self.backtest_results_tabs.setEnabled(False)  # Disable until backtest runs
         
         # Initialize log
         self.log_message("Trading Dashboard Initialized")
@@ -2795,7 +2761,7 @@ class TradingDashboard(QMainWindow):
         self.update_ui({
             'timestamp': datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S UTC'),
             'market_open': False,
-            'capital': 100000,
+            'capital': self.trading_system.capital,
             'positions_count': 0,
             'trade_count': 0,
             'total_profit': 0,
@@ -2821,28 +2787,6 @@ class TradingDashboard(QMainWindow):
         
     def start_system(self):
         """Start the trading system"""
-        # Get capital and risk from inputs
-        try:
-            capital = float(self.capital_input.text())
-            risk = float(self.risk_input.text())
-        except ValueError:
-            self.log_message("Invalid capital or risk value. Using defaults.")
-            capital = 100000
-            risk = 0.01
-        
-        # Create new trading system with current parameters
-        self.trading_system = TradingSystem(
-            self.tickers, 
-            capital=capital, 
-            risk_per_trade=risk,
-            testing_mode=self.testing_mode
-        )
-        
-        # Reconnect signals
-        self.trading_system.update_signal.connect(self.update_ui)
-        self.trading_system.log_signal.connect(self.log_message)
-        
-        # Start the system
         if not self.trading_system.isRunning():
             if self.trading_system.start_system():
                 self.start_button.setEnabled(False)
@@ -2851,10 +2795,10 @@ class TradingDashboard(QMainWindow):
                 self.log_message("Trading system started")
                 return
         self.log_message("System already running")
-    
+        
     def stop_system(self):
         """Stop the trading system"""
-        if self.trading_system and self.trading_system.isRunning():
+        if self.trading_system.isRunning():
             if self.trading_system.stop_system():
                 self.start_button.setEnabled(True)
                 self.stop_button.setEnabled(False)
@@ -2865,12 +2809,61 @@ class TradingDashboard(QMainWindow):
     
     def request_scan(self):
         """Request manual scan"""
-        if self.trading_system and self.trading_system.running:
+        if self.trading_system.running:
             self.trading_system.scan_requested.emit()
             self.log_message("Manual scan requested")
         else:
             self.log_message("System not running - cannot scan")
     
+    def start_backtest(self):
+        """Start the backtest"""
+        start_date = self.start_date_edit.date().toPyDate()
+        end_date = self.end_date_edit.date().toPyDate()
+        
+        if start_date >= end_date:
+            self.log_message("Invalid date range: start date must be before end date")
+            return
+            
+        self.log_message(f"Starting backtest from {start_date} to {end_date}")
+        
+        # Initialize backtester with ticker file
+        self.backtester = Backtester(
+            start_date,
+            end_date,
+            self.trading_system.capital,
+            self.trading_system.risk_per_trade,
+            ticker_file="all_tickers.txt"  # Use ticker file for backtesting
+        )
+        
+        # Connect signals
+        self.backtester.update_signal.connect(self.update_backtest_ui)
+        self.backtester.log_signal.connect(self.log_message)
+        self.backtester.progress_signal.connect(self.progress_bar.setValue)
+        self.backtester.completed_signal.connect(self.backtest_completed)
+        
+        # Disable start button, enable stop button
+        self.start_backtest_btn.setEnabled(False)
+        self.stop_backtest_btn.setEnabled(True)
+        
+        # Start backtest
+        self.backtester.start()
+        
+    def stop_backtest(self):
+        """Stop the backtest"""
+        if self.backtester and self.backtester.isRunning():
+            self.backtester.stop_backtest()
+            self.log_message("Backtest stopped")
+            
+    def backtest_completed(self):
+        """Handle backtest completion"""
+        self.start_backtest_btn.setEnabled(True)
+        self.stop_backtest_btn.setEnabled(False)
+        self.log_message("Backtest completed")
+        
+        # Update metrics table
+        if self.backtester.results:
+            self.update_backtest_results(self.backtester.results)
+            
     def update_ui(self, state):
         """Update all UI elements with current state"""
         try:
@@ -2893,127 +2886,162 @@ class TradingDashboard(QMainWindow):
             self.profit_label.setText(f"Total Profit: ${state['total_profit']:,.2f}")
             self.win_rate_label.setText(f"Win Rate: {state['win_rate']:.1f}%")
             
-            # Update all tables and visualizations
-            self.update_positions_table(state)
-            self.update_trades_table(state)
-            self.update_opportunities_table(state)
-            self.update_runner_ups_table(state)
+            # Update positions table
+            self.positions_table.setRowCount(len(state['active_positions']))
+            for row, pos in enumerate(state['active_positions']):
+                self.positions_table.setItem(row, 0, QTableWidgetItem(pos['ticker']))
+                self.positions_table.setItem(row, 1, QTableWidgetItem(str(pos['shares'])))
+                self.positions_table.setItem(row, 2, QTableWidgetItem(f"{pos['entry_price']:.2f}"))
+                self.positions_table.setItem(row, 3, QTableWidgetItem(f"{pos['current_price']:.2f}"))
+                
+                gain_item = QTableWidgetItem(f"{pos['gain']:.2f}%")
+                gain_item.setForeground(QBrush(QColor('green') if pos['gain'] > 0 else QColor('red')))
+                self.positions_table.setItem(row, 4, gain_item)
+                
+                self.positions_table.setItem(row, 5, QTableWidgetItem(f"{pos['trailing_stop']:.2f}"))
+                self.positions_table.setItem(row, 6, QTableWidgetItem(f"{pos['hard_stop']:.2f}"))
+                self.positions_table.setItem(row, 7, QTableWidgetItem(f"{pos['profit_target']:.2f}"))
+                self.positions_table.setItem(row, 8, QTableWidgetItem(f"{pos['risk']:.2f}%"))
+                self.positions_table.setItem(row, 9, QTableWidgetItem(pos['regime']))
+                self.positions_table.setItem(row, 10, QTableWidgetItem(f"{pos.get('original_score', 0):.1f}"))
+                
+                # Add sector information
+                sector = self.trading_system.get_ticker_sector(pos['ticker'])
+                self.positions_table.setItem(row, 11, QTableWidgetItem(sector))
+                
+                # Add days held
+                self.positions_table.setItem(row, 12, QTableWidgetItem(str(pos.get('days_held', 0))))
+            
+            # Update trades table
+            self.trades_table.setRowCount(len(state['recent_trades']))
+            for row, trade in enumerate(state['recent_trades']):
+                self.trades_table.setItem(row, 0, QTableWidgetItem(trade['ticker']))
+                self.trades_table.setItem(row, 1, QTableWidgetItem(f"{trade['entry']:.2f}"))
+                self.trades_table.setItem(row, 2, QTableWidgetItem(f"{trade['exit']:.2f}" if trade['exit'] else ""))
+                
+                profit = trade['profit'] or 0
+                profit_item = QTableWidgetItem(f"{profit:+.2f}")
+                profit_item.setForeground(QBrush(QColor('green') if profit > 0 else QColor('red')))
+                self.trades_table.setItem(row, 3, profit_item)
+                
+                gain = trade['percent_gain'] or 0
+                gain_item = QTableWidgetItem(f"{gain:+.2f}%")
+                gain_item.setForeground(QBrush(QColor('green') if gain >= 0 else QColor('red')))
+                self.trades_table.setItem(row, 4, gain_item)
+                
+                self.trades_table.setItem(row, 5, QTableWidgetItem(f"{trade['duration'] or 0:.1f}m"))
+                self.trades_table.setItem(row, 6, QTableWidgetItem(trade['exit_reason'] or ""))
+            
+            # Update opportunities table
+            self.opportunities_table.setRowCount(len(state['top_opportunities']))
+            for row, opp in enumerate(state['top_opportunities']):
+                self.opportunities_table.setItem(row, 0, QTableWidgetItem(opp['ticker']))
+                self.opportunities_table.setItem(row, 1, QTableWidgetItem(f"{opp['score']:.1f}"))
+                self.opportunities_table.setItem(row, 2, QTableWidgetItem(f"{opp['price']:.2f}"))
+                self.opportunities_table.setItem(row, 3, QTableWidgetItem(f"{opp['adx']:.1f}"))
+                self.opportunities_table.setItem(row, 4, QTableWidgetItem(f"{opp['atr']:.2f}"))
+                self.opportunities_table.setItem(row, 5, QTableWidgetItem(f"{opp['rsi']:.1f}"))
+                self.opportunities_table.setItem(row, 6, QTableWidgetItem(f"{opp['volume']:,.0f}"))
+                
+                status_item = QTableWidgetItem(opp['status'])
+                status_item.setForeground(QBrush(QColor('green') if opp['status'] == "ENTERED" else QColor('black')))
+                self.opportunities_table.setItem(row, 7, status_item)
+                
+                self.opportunities_table.setItem(row, 8, QTableWidgetItem(f"{opp.get('lookback', 35)}d"))
+            
+            # Update runner-ups table
+            self.runner_ups_table.setRowCount(len(state['runner_ups']))
+            for row, opp in enumerate(state['runner_ups']):
+                self.runner_ups_table.setItem(row, 0, QTableWidgetItem(opp['ticker']))
+                self.runner_ups_table.setItem(row, 1, QTableWidgetItem(f"{opp['score']:.1f}"))
+                self.runner_ups_table.setItem(row, 2, QTableWidgetItem(f"{opp['price']:.2f}"))
+                self.runner_ups_table.setItem(row, 3, QTableWidgetItem(f"{opp['adx']:.1f}"))
+                self.runner_ups_table.setItem(row, 4, QTableWidgetItem(f"{opp['atr']:.2f}"))
+                self.runner_ups_table.setItem(row, 5, QTableWidgetItem(f"{opp['rsi']:.1f}"))
+                self.runner_ups_table.setItem(row, 6, QTableWidgetItem(f"{opp['volume']:,.0f}"))
+                self.runner_ups_table.setItem(row, 7, QTableWidgetItem(f"{opp.get('lookback', 35)}d"))
+            
+            # Update position plots
             self.update_plots()
+            
+            # Update sector analysis tab
             self.update_sector_tab(state)
             
         except Exception as e:
             self.log_message(f"UI update error: {str(e)}")
     
-    def update_positions_table(self, state):
-        """Update positions table with current state"""
-        self.positions_table.setRowCount(len(state['active_positions']))
-        for row, pos in enumerate(state['active_positions']):
-            self.positions_table.setItem(row, 0, QTableWidgetItem(pos['ticker']))
-            self.positions_table.setItem(row, 1, QTableWidgetItem(str(pos['shares'])))
-            self.positions_table.setItem(row, 2, QTableWidgetItem(f"{pos['entry_price']:.2f}"))
-            self.positions_table.setItem(row, 3, QTableWidgetItem(f"{pos['current_price']:.2f}"))
-            
-            gain_item = QTableWidgetItem(f"{pos['gain']:.2f}%")
-            gain_item.setForeground(QBrush(QColor('green') if pos['gain'] > 0 else QColor('red')))
-            self.positions_table.setItem(row, 4, gain_item)
-            
-            self.positions_table.setItem(row, 5, QTableWidgetItem(f"{pos['trailing_stop']:.2f}"))
-            self.positions_table.setItem(row, 6, QTableWidgetItem(f"{pos['hard_stop']:.2f}"))
-            self.positions_table.setItem(row, 7, QTableWidgetItem(f"{pos['profit_target']:.2f}"))
-            self.positions_table.setItem(row, 8, QTableWidgetItem(f"{pos['risk']:.2f}%"))
-            self.positions_table.setItem(row, 9, QTableWidgetItem(pos['regime']))
-            self.positions_table.setItem(row, 10, QTableWidgetItem(f"{pos.get('original_score', 0):.1f}"))
-            
-            # Add sector information
-            if hasattr(self, 'trading_system') and self.trading_system:
-                sector = self.trading_system.get_ticker_sector(pos['ticker'])
-                self.positions_table.setItem(row, 11, QTableWidgetItem(sector))
-            else:
-                self.positions_table.setItem(row, 11, QTableWidgetItem("Unknown"))
-            
-            # Add days held
-            self.positions_table.setItem(row, 12, QTableWidgetItem(str(pos.get('days_held', 0))))
-    
-    def update_trades_table(self, state):
-        """Update trades table with current state"""
-        self.trades_table.setRowCount(len(state['recent_trades']))
-        for row, trade in enumerate(state['recent_trades']):
-            self.trades_table.setItem(row, 0, QTableWidgetItem(trade['ticker']))
-            self.trades_table.setItem(row, 1, QTableWidgetItem(f"{trade['entry']:.2f}"))
-            self.trades_table.setItem(row, 2, QTableWidgetItem(f"{trade['exit']:.2f}" if trade['exit'] else ""))
-            
-            profit = trade['profit'] or 0
-            profit_item = QTableWidgetItem(f"{profit:+.2f}")
-            profit_item.setForeground(QBrush(QColor('green') if profit > 0 else QColor('red')))
-            self.trades_table.setItem(row, 3, profit_item)
-            
-            gain = trade['percent_gain'] or 0
-            gain_item = QTableWidgetItem(f"{gain:+.2f}%")
-            gain_item.setForeground(QBrush(QColor('green') if gain > 0 else QColor('red')))
-            self.trades_table.setItem(row, 4, gain_item)
-            
-            self.trades_table.setItem(row, 5, QTableWidgetItem(f"{trade['duration'] or 0:.1f}m"))
-            self.trades_table.setItem(row, 6, QTableWidgetItem(trade['exit_reason'] or ""))
-    
-    def update_opportunities_table(self, state):
-        """Update opportunities table with current state"""
-        self.opportunities_table.setRowCount(len(state['top_opportunities']))
-        for row, opp in enumerate(state['top_opportunities']):
-            self.opportunities_table.setItem(row, 0, QTableWidgetItem(opp['ticker']))
-            self.opportunities_table.setItem(row, 1, QTableWidgetItem(f"{opp['score']:.1f}"))
-            self.opportunities_table.setItem(row, 2, QTableWidgetItem(f"{opp['price']:.2f}"))
-            self.opportunities_table.setItem(row, 3, QTableWidgetItem(f"{opp['adx']:.1f}"))
-            self.opportunities_table.setItem(row, 4, QTableWidgetItem(f"{opp['atr']:.2f}"))
-            self.opportunities_table.setItem(row, 5, QTableWidgetItem(f"{opp['rsi']:.1f}"))
-            self.opportunities_table.setItem(row, 6, QTableWidgetItem(f"{opp['volume']:,.0f}"))
-            
-            status_item = QTableWidgetItem(opp['status'])
-            status_item.setForeground(QBrush(QColor('green') if opp['status'] == "ENTERED" else QColor('black')))
-            self.opportunities_table.setItem(row, 7, status_item)
-            
-            self.opportunities_table.setItem(row, 8, QTableWidgetItem(f"{opp.get('lookback', 35)}d"))
-    
-    def update_runner_ups_table(self, state):
-        """Update runner-ups table with current state"""
-        self.runner_ups_table.setRowCount(len(state['runner_ups']))
-        for row, opp in enumerate(state['runner_ups']):
-            self.runner_ups_table.setItem(row, 0, QTableWidgetItem(opp['ticker']))
-            self.runner_ups_table.setItem(row, 1, QTableWidgetItem(f"{opp['score']:.1f}"))
-            self.runner_ups_table.setItem(row, 2, QTableWidgetItem(f"{opp['price']:.2f}"))
-            self.runner_ups_table.setItem(row, 3, QTableWidgetItem(f"{opp['adx']:.1f}"))
-            self.runner_ups_table.setItem(row, 4, QTableWidgetItem(f"{opp['atr']:.2f}"))
-            self.runner_ups_table.setItem(row, 5, QTableWidgetItem(f"{opp['rsi']:.1f}"))
-            self.runner_ups_table.setItem(row, 6, QTableWidgetItem(f"{opp['volume']:,.0f}"))
-            self.runner_ups_table.setItem(row, 7, QTableWidgetItem(f"{opp.get('lookback', 35)}d"))
-    
-    def update_plots(self):
-        """Update position analysis plots"""
-        # Clear existing plots
-        for i in reversed(range(self.plot_layout.count())):
-            widget = self.plot_layout.itemAt(i).widget()
-            if widget:
-                widget.deleteLater()
+    def update_backtest_ui(self, state):
+        """Update UI during backtest"""
+        # Update progress in real-time
+        self.update_backtest_results(state)
         
-        # Create new plots only if system is running
-        if self.trading_system and self.trading_system.running and self.trading_system.data_handler:
-            for ticker, position in self.trading_system.positions.items():
-                historical_data = self.trading_system.data_handler.get_historical(ticker, 50)
-                if historical_data is None or historical_data.empty:
-                    continue
+    def update_backtest_results(self, results):
+        """Update backtest results display"""
+        try:
+            # Update metrics table
+            self.metrics_table.setItem(0, 1, QTableWidgetItem(f"${results['capital']:,.2f}"))
+            self.metrics_table.setItem(1, 1, QTableWidgetItem(f"${results.get('final_capital', results['capital']):,.2f}"))
+            
+            total_profit = results['total_profit']
+            self.metrics_table.setItem(2, 1, QTableWidgetItem(f"${total_profit:,.2f}"))
+            
+            profit_pct = (total_profit / results['capital']) * 100 if results['capital'] > 0 else 0
+            self.metrics_table.setItem(3, 1, QTableWidgetItem(f"{profit_pct:.2f}%"))
+            
+            win_rate = results['win_rate']
+            self.metrics_table.setItem(4, 1, QTableWidgetItem(f"{win_rate:.1f}%"))
+            
+            trade_count = results['trade_count']
+            self.metrics_table.setItem(5, 1, QTableWidgetItem(str(trade_count)))
+            
+            # Update equity curve
+            if not hasattr(self, 'equity_history'):
+                self.equity_history = []
+            self.equity_history.append(results['capital'])
+            self.equity_ax.clear()
+            self.equity_ax.plot(self.equity_history, label='Equity Curve')
+            self.equity_ax.set_title('Portfolio Equity Curve')
+            self.equity_ax.set_xlabel('Time Step')
+            self.equity_ax.set_ylabel('Portfolio Value ($)')
+            self.equity_ax.grid(True)
+            self.equity_ax.legend()
+            self.equity_plot.draw()
+                
+            # Update trades table
+            self.backtest_trades_table.setRowCount(len(results['recent_trades']))
+            for row, trade in enumerate(results['recent_trades']):
+                self.backtest_trades_table.setItem(row, 0, QTableWidgetItem(trade['entry_time'].strftime('%Y-%m-%d')))
+                self.backtest_trades_table.setItem(row, 1, QTableWidgetItem(trade['ticker']))
+                
+                action = "BUY" if trade['profit'] is None else "SELL"
+                action_item = QTableWidgetItem(action)
+                action_item.setForeground(QBrush(QColor('green') if action == "BUY" else QColor('red')))
+                self.backtest_trades_table.setItem(row, 2, action_item)
+                
+                self.backtest_trades_table.setItem(row, 3, QTableWidgetItem(f"{trade['entry']:.2f}" if action == "BUY" else f"{trade['exit']:.2f}"))
+                self.backtest_trades_table.setItem(row, 4, QTableWidgetItem(str(trade['shares'])))
+                
+                if trade['profit'] is not None:
+                    profit = trade['profit']
+                    profit_item = QTableWidgetItem(f"${profit:,.2f}")
+                    profit_item.setForeground(QBrush(QColor('green') if profit >= 0 else QColor('red')))
+                    self.backtest_trades_table.setItem(row, 5, profit_item)
                     
-                plot = PositionPlot(self.plot_container, width=10, height=4, dpi=100)
-                plot.plot_position(ticker, position, historical_data)
-                self.plot_layout.addWidget(plot)
-        
-        # Add placeholder if no positions
-        if not self.trading_system.positions or not (self.trading_system and self.trading_system.running):
-            label = QLabel("No active positions to display")
-            label.setAlignment(Qt.AlignCenter)
-            label.setFont(QFont("Arial", 16))
-            self.plot_layout.addWidget(label)
+                    gain = trade['percent_gain'] or 0
+                    gain_item = QTableWidgetItem(f"{gain:.2f}%")
+                    gain_item.setForeground(QBrush(QColor('green') if gain >= 0 else QColor('red')))
+                    self.backtest_trades_table.setItem(row, 6, gain_item)
+                else:
+                    self.backtest_trades_table.setItem(row, 5, QTableWidgetItem(""))
+                    self.backtest_trades_table.setItem(row, 6, QTableWidgetItem(""))
+                    
+                self.backtest_trades_table.setItem(row, 7, QTableWidgetItem(trade.get('exit_reason', "")))
+                
+        except Exception as e:
+            self.log_message(f"Error updating backtest UI: {str(e)}")
     
     def update_sector_tab(self, state):
-        """Update the sector analysis tab with current state"""
+        """Update the sector analysis tab"""
         # Update sector scores
         self.sector_table.setRowCount(len(state['sector_scores']))
         for row, (sector, score) in enumerate(state['sector_scores'].items()):
@@ -3037,304 +3065,36 @@ class TradingDashboard(QMainWindow):
             <p>{alloc_text}</p>
         """)
     
-    def run_backtest(self):
-        """Run backtest with configured parameters"""
-        # Get parameters
-        tickers = [t.strip() for t in self.backtest_ticker_input.text().split(",")]
-        if not tickers:
-            QMessageBox.warning(self, "Warning", "Please enter at least one ticker")
-            return
-            
-        # Get dates as UTC timezone-aware datetime objects
-        start_date = self.backtest_start_date.dateTime().toPyDateTime().replace(tzinfo=pytz.UTC)
-        end_date = self.backtest_end_date.dateTime().toPyDateTime().replace(tzinfo=pytz.UTC)
+    def update_plots(self):
+        """Update position analysis plots"""
+        # Clear existing plots
+        for i in reversed(range(self.plot_layout.count())):
+            widget = self.plot_layout.itemAt(i).widget()
+            if widget:
+                widget.deleteLater()
         
-        # Get capital and risk from inputs
-        try:
-            capital = float(self.backtest_capital_input.text())
-            risk = float(self.backtest_risk_input.text())
-        except ValueError:
-            self.log_message("Invalid capital or risk value. Using defaults.")
-            capital = 100000
-            risk = 0.01
+        # Create new plots only if system is running
+        if self.trading_system.running and self.trading_system.data_handler:
+            for ticker, position in self.trading_system.positions.items():
+                historical_data = self.trading_system.data_handler.get_historical(ticker, 50)
+                if historical_data is None or historical_data.empty:
+                    continue
+                    
+                plot = PositionPlot(self.plot_container, width=10, height=4, dpi=100)
+                plot.plot_position(ticker, position, historical_data)
+                self.plot_layout.addWidget(plot)
         
-        # Validate inputs
-        if start_date >= end_date:
-            QMessageBox.warning(self, "Warning", "Start date must be before end date")
-            return
-            
-        if capital <= 0:
-            QMessageBox.warning(self, "Warning", "Capital must be positive")
-            return
-            
-        if risk <= 0 or risk > 0.1:
-            QMessageBox.warning(self, "Warning", "Risk per trade must be between 0 and 0.1")
-            return
-        
-        # Create and configure backtest system
-        self.backtest_system = BacktestTradingSystem(
-            tickers=tickers,
-            capital=capital,
-            risk_per_trade=risk,
-            start_date=start_date,
-            end_date=end_date
-        )
-        
-        # Connect signals
-        self.backtest_system.update_signal.connect(self.update_ui)
-        self.backtest_system.log_signal.connect(self.log_message)
-        
-        # Show progress dialog
-        self.progress_dialog = BacktestProgressDialog(self)
-        self.backtest_system.log_signal.connect(self.progress_dialog.update_progress_from_log)
-        self.progress_dialog.show()
-        
-        # Run in a separate thread
-        self.backtest_thread = QThread()
-        self.backtest_system.moveToThread(self.backtest_thread)
-        self.backtest_thread.started.connect(self.backtest_system.run)
-        self.backtest_thread.finished.connect(self.on_backtest_finished)
-        self.backtest_thread.start()
-        
-        # Disable run button during backtest
-        self.run_backtest_button.setEnabled(False)
-        
-    def on_backtest_finished(self):
-        """Handle backtest completion"""
-        # Enable button
-        self.run_backtest_button.setEnabled(True)
-        
-        # Close progress dialog
-        self.progress_dialog.close()
-        
-        # Display results
-        self.display_backtest_results()
-        
-    def display_backtest_results(self):
-        """Display backtest results in the dashboard"""
-        try:
-            # Enable results tabs
-            self.backtest_results_tabs.setEnabled(True)
-            
-            # Get results from backtest system
-            results = {
-                'start_date': self.backtest_system.start_date,
-                'end_date': self.backtest_system.end_date,
-                'initial_capital': self.backtest_system.capital,
-                'final_equity': self.backtest_system.capital + sum(
-                    t['profit'] for t in self.backtest_system.trade_log if t['profit'] is not None
-                ),
-                'trade_log': self.backtest_system.trade_log,
-                'regime_history': self.backtest_system.regime_history,
-                'sector_history': self.backtest_system.sector_history
-            }
-            
-            # Calculate performance metrics
-            results['total_return'] = (results['final_equity'] / results['initial_capital'] - 1) * 100
-            results['win_rate'] = self.calculate_win_rate(results['trade_log'])
-            
-            # Plot equity curve
-            self.plot_backtest_equity_curve(results)
-            
-            # Display performance metrics
-            self.display_backtest_performance_metrics(results)
-            
-            # Display regime performance
-            self.display_backtest_regime_performance(results)
-            
-            # Display sector performance
-            self.display_backtest_sector_performance(results)
-            
-            # Display trade log
-            self.display_backtest_trade_log(results['trade_log'])
-            
-        except Exception as e:
-            self.log_message(f"Error displaying backtest results: {str(e)}")
-            
-    def calculate_win_rate(self, trade_log):
-        """Calculate win rate from trade log"""
-        winning_trades = sum(1 for trade in trade_log if trade.get('profit', 0) > 0)
-        return (winning_trades / len(trade_log)) * 100 if trade_log else 0
-        
-    def plot_backtest_equity_curve(self, results):
-        """Plot the backtest equity curve"""
-        # Extract dates and equity values from trade log
-        equity_curve = [results['initial_capital']]
-        dates = [results['start_date']]
-        
-        # Calculate equity over time
-        current_equity = results['initial_capital']
-        for trade in results['trade_log']:
-            if trade['profit'] is not None:
-                current_equity += trade['profit']
-                equity_curve.append(current_equity)
-                dates.append(trade['exit_time'])
-        
-        ax = self.backtest_equity_plot.figure.subplots()
-        ax.clear()
-        
-        # Plot equity curve
-        ax.plot(dates, equity_curve, label='Equity', color='blue', linewidth=2)
-        
-        # Add regime background colors if available
-        if results.get('regime_history'):
-            for i in range(len(results['regime_history']) - 1):
-                start_date = results['regime_history'][i]['timestamp']
-                end_date = results['regime_history'][i+1]['timestamp']
-                regime = results['regime_history'][i]['regime']
-                
-                # Color coding for regimes
-                if "Bull" in regime:
-                    color = 'green'
-                elif "Bear" in regime:
-                    color = 'red'
-                else:
-                    color = 'gray'
-                
-                ax.axvspan(start_date, end_date, color=color, alpha=0.1)
-        
-        ax.set_title("Backtest Equity Curve")
-        ax.set_xlabel("Date")
-        ax.set_ylabel("Equity ($)")
-        ax.grid(True)
-        ax.legend()
-        self.backtest_equity_plot.draw()
-    
-    def display_backtest_performance_metrics(self, results):
-        """Display key backtest performance metrics"""
-        metrics = [
-            ("Total Return (%)", f"{results['total_return']:.2f}%"),
-            ("Win Rate (%)", f"{results['win_rate']:.2f}%"),
-            ("Total Trades", f"{len(results['trade_log'])}"),
-            ("Final Equity", f"${results['final_equity']:,.2f}"),
-            ("Start Date", results['start_date'].strftime('%Y-%m-%d')),
-            ("End Date", results['end_date'].strftime('%Y-%m-%d')),
-            ("Initial Capital", f"${results['initial_capital']:,.2f}")
-        ]
-        
-        self.backtest_performance_table.setRowCount(len(metrics))
-        for i, (label, value) in enumerate(metrics):
-            self.backtest_performance_table.setItem(i, 0, QTableWidgetItem(label))
-            self.backtest_performance_table.setItem(i, 1, QTableWidgetItem(value))
-    
-    def display_backtest_regime_performance(self, results):
-        """Display backtest regime performance"""
-        # Aggregate performance by regime
-        regime_performance = {}
-        for trade in results['trade_log']:
-            # Find the regime at the time of entry
-            entry_time = trade['entry_time']
-            regime = "Unknown"
-            for reg in reversed(results['regime_history']):
-                if reg['timestamp'] <= entry_time:
-                    regime = reg['regime']
-                    break
-            
-            if regime not in regime_performance:
-                regime_performance[regime] = {
-                    'trades': 0,
-                    'profit': 0,
-                    'wins': 0
-                }
-            
-            regime_performance[regime]['trades'] += 1
-            regime_performance[regime]['profit'] += trade['profit'] or 0
-            if trade['profit'] and trade['profit'] > 0:
-                regime_performance[regime]['wins'] += 1
-        
-        # Prepare table data
-        self.backtest_regime_table.setRowCount(len(regime_performance))
-        for i, (regime, data) in enumerate(regime_performance.items()):
-            self.backtest_regime_table.setItem(i, 0, QTableWidgetItem(regime))
-            self.backtest_regime_table.setItem(i, 1, QTableWidgetItem(str(data['trades'])))
-            
-            win_rate = (data['wins'] / data['trades']) * 100 if data['trades'] > 0 else 0
-            self.backtest_regime_table.setItem(i, 2, QTableWidgetItem(f"{win_rate:.2f}%"))
-            
-            profit = data['profit']
-            profit_item = QTableWidgetItem(f"${profit:,.2f}")
-            profit_item.setForeground(QBrush(QColor('green') if profit > 0 else QColor('red')))
-            self.backtest_regime_table.setItem(i, 3, profit_item)
-            
-            avg_profit = profit / data['trades'] if data['trades'] > 0 else 0
-            self.backtest_regime_table.setItem(i, 4, QTableWidgetItem(f"${avg_profit:,.2f}"))
-    
-    def display_backtest_sector_performance(self, results):
-        """Display backtest sector performance"""
-        # Aggregate performance by sector
-        sector_performance = {}
-        for trade in results['trade_log']:
-            # Find the sector for this ticker
-            sector = "Unknown"
-            for sector_data in results['sector_history']:
-                if sector_data['timestamp'] <= trade['entry_time']:
-                    sector = self.backtest_system.get_ticker_sector(trade['ticker'])
-                    break
-            
-            if sector not in sector_performance:
-                sector_performance[sector] = {
-                    'trades': 0,
-                    'profit': 0,
-                    'wins': 0
-                }
-            
-            sector_performance[sector]['trades'] += 1
-            sector_performance[sector]['profit'] += trade['profit'] or 0
-            if trade['profit'] and trade['profit'] > 0:
-                sector_performance[sector]['wins'] += 1
-        
-        # Prepare table data
-        self.backtest_sector_table.setRowCount(len(sector_performance))
-        for i, (sector, data) in enumerate(sector_performance.items()):
-            self.backtest_sector_table.setItem(i, 0, QTableWidgetItem(sector))
-            self.backtest_sector_table.setItem(i, 1, QTableWidgetItem(str(data['trades'])))
-            
-            win_rate = (data['wins'] / data['trades']) * 100 if data['trades'] > 0 else 0
-            self.backtest_sector_table.setItem(i, 2, QTableWidgetItem(f"{win_rate:.2f}%"))
-            
-            profit = data['profit']
-            profit_item = QTableWidgetItem(f"${profit:,.2f}")
-            profit_item.setForeground(QBrush(QColor('green') if profit > 0 else QColor('red')))
-            self.backtest_sector_table.setItem(i, 3, profit_item)
-            
-            avg_profit = profit / data['trades'] if data['trades'] > 0 else 0
-            self.backtest_sector_table.setItem(i, 4, QTableWidgetItem(f"${avg_profit:,.2f}"))
-    
-    def display_backtest_trade_log(self, trade_log):
-        """Display backtest trade log"""
-        self.backtest_trades_table.setRowCount(len(trade_log))
-        
-        for row, trade in enumerate(trade_log):
-            self.backtest_trades_table.setItem(row, 0, QTableWidgetItem(trade['ticker']))
-            self.backtest_trades_table.setItem(row, 1, QTableWidgetItem(f"{trade['entry']:.2f}"))
-            self.backtest_trades_table.setItem(row, 2, QTableWidgetItem(f"{trade['exit']:.2f}"))
-            
-            profit = trade['profit'] or 0
-            profit_item = QTableWidgetItem(f"{profit:+,.2f}")
-            profit_item.setForeground(QBrush(QColor('green') if profit > 0 else QColor('red')))
-            self.backtest_trades_table.setItem(row, 3, profit_item)
-            
-            gain = trade.get('percent_gain', 0) or 0
-            gain_item = QTableWidgetItem(f"{gain:+.2f}%")
-            gain_item.setForeground(QBrush(QColor('green') if gain > 0 else QColor('red')))
-            self.backtest_trades_table.setItem(row, 4, gain_item)
-            
-            duration = trade.get('duration', 0) or 0
-            self.backtest_trades_table.setItem(row, 5, QTableWidgetItem(f"{duration:.1f}m"))
-            self.backtest_trades_table.setItem(row, 6, QTableWidgetItem(trade['exit_reason']))
-            
-            # Find the regime at the time of entry
-            regime = "Unknown"
-            for reg in reversed(self.backtest_system.regime_history):
-                if reg['timestamp'] <= trade['entry_time']:
-                    regime = reg['regime']
-                    break
-            self.backtest_trades_table.setItem(row, 7, QTableWidgetItem(regime))
+        # Add placeholder if no positions
+        if not self.trading_system.positions or not self.trading_system.running:
+            label = QLabel("No active positions to display")
+            label.setAlignment(Qt.AlignCenter)
+            label.setFont(QFont("Arial", 16))
+            self.plot_layout.addWidget(label)
     
     def closeEvent(self, event):
         """Handle window close event"""
         # Stop the trading system
-        if hasattr(self, 'trading_system') and self.trading_system and self.trading_system.isRunning():
+        if self.trading_system.isRunning():
             self.trading_system.stop_system()
             self.trading_system.wait(3000)  # Wait up to 3 seconds
         
@@ -3349,6 +3109,10 @@ if __name__ == "__main__":
     
     # Check for testing mode flag
     testing_mode = "--testing" in sys.argv
+    
+    # Create and show dashboard
     dashboard = TradingDashboard(testing_mode=testing_mode)
     dashboard.show()
+    
+    # Start application
     sys.exit(app.exec_())

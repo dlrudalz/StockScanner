@@ -1,3 +1,6 @@
+import numpy as np
+if not hasattr(np, 'NaN'):
+    np.isNaN = np.isnan  # Create alias for older numpy versions
 import sys
 import math
 import time
@@ -9,7 +12,6 @@ import pytz
 import warnings
 import os
 import logging
-import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta, timezone as tz
 import pandas_ta as ta
@@ -200,7 +202,7 @@ class MarketRegimeAnalyzer:
                     )
                     
                     # Log convergence issues
-                    if any(np.isNaN(x) for x in history_list) or any(np.isinf(x) for x in history_list):
+                    if any(np.nan(x) for x in history_list) or any(np.isinf(x) for x in history_list):
                         self.logger.warning("History contains NaN/Inf values!")
                         
                     decreasing_count = 0
@@ -240,13 +242,9 @@ class MarketRegimeAnalyzer:
             except Exception as e:
                 self.logger.error(f"HMM fitting attempt {i+1} failed: {str(e)}", exc_info=True)
         
-        # Handle convergence results
         if convergence_success:
             self.logger.info(f"Best model score: {best_score:.4f}")
             model = best_model
-        else:
-            self.logger.error("All HMM attempts failed to converge, using simple detection")
-            return self.simple_regime_detection(features)
 
         # Label states based on volatility and returns
         state_stats = []
@@ -1705,7 +1703,7 @@ class TradingSystem(QThread):
                 base_adx = base_data.ta.adx(length=14)['ADX_14'].iloc[-1]
                 base_adx = self.ensure_scalar(base_adx)
                 # If NaN, use 20
-                if np.isNaN(base_adx):
+                if np.isnan(base_adx):
                     base_adx = 20.0
             except:
                 base_adx = 20.0
@@ -1754,7 +1752,7 @@ class TradingSystem(QThread):
             # Calculate average volume for the period in data
             avg_volume = data['volume'].rolling(14).mean().iloc[-1]
             avg_volume = self.ensure_scalar(avg_volume)
-            if np.isNaN(avg_volume) or avg_volume <= 0:
+            if np.isnan(avg_volume) or avg_volume <= 0:
                 avg_volume = self.ensure_scalar(data['volume'].mean())
                 
             if volume <= 0:
