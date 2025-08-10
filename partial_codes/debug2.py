@@ -423,6 +423,7 @@ class SectorRegimeSystem:
         self.logger = logging.getLogger("SectorRegimeSystem")
         self.logger.setLevel(logging.INFO)
         self.testing_mode = testing_mode
+        self.market_composite = pd.Series()  # Initialize market composite
 
     def map_tickers_to_sectors(self, tickers):
         if self.testing_mode:
@@ -618,7 +619,7 @@ class SectorRegimeSystem:
         self.sector_analyzers = {}
         
         # Get overall market regime first
-        if not hasattr(self, 'market_composite'):
+        if self.market_composite.empty:
             tickers = [t for sublist in self.sector_mappings.values() for t in sublist]
             self.logger.info("Creating market composite...")
             self.market_composite = self.overall_analyzer.prepare_market_data(tickers[:100])
@@ -973,7 +974,7 @@ class PolygonDataHandler:
                   f"{from_date.strftime('%Y-%m-%d')}/{to_date.strftime('%Y-%m-%d')}" \
                   f"?adjusted=true&sort=asc&limit=50000&apiKey={self.api_key}"
             
-            response = requests.get(url)
+            response = requests.get(url, timeout=15)
             if response.status_code == 200:
                 data = response.json()
                 if data.get('status') == 'OK' and data.get('resultsCount', 0) > 0:
@@ -1111,23 +1112,26 @@ class PolygonDataHandler:
             
     # ======= TESTING MODE METHODS ======= #
     def generate_test_historical_data(self):
+        """Generate simulated historical data for testing"""
         self.logger.info("Generating test historical data...")
         start_date = datetime.now(tz.utc) - timedelta(days=30)
         end_date = datetime.now(tz.utc)
-        freq = '1min'
+        freq = '5min'  # Use 5-minute bars for faster processing
         
-        # Create date range once (reuse for all tickers)
+        # Create date range for 30 days of 5-minute bars
         dates = pd.date_range(start_date, end_date, freq=freq)
         n_points = len(dates)
-        
         self.logger.info(f"Generating {n_points} data points for {len(self.tickers)} tickers")
         
         for i, ticker in enumerate(self.tickers):
             # Vectorized price generation
-            rand_changes = np.random.uniform(0.999, 1.002, n_points-1)
-            prices = np.cumprod(np.insert(rand_changes, 0, 100))
+            # Start at 100, then cumulative product of random returns
+            random_returns = np.random.uniform(0.999, 1.001, n_points-1)
+            prices = np.zeros(n_points)
+            prices[0] = 100
+            prices[1:] = 100 * np.cumprod(random_returns)
             
-            # Vectorized high/low/volume
+            # Generate high and low based on the price
             highs = prices * 1.001
             lows = prices * 0.999
             volumes = np.random.randint(1000, 10000, n_points)
@@ -1144,29 +1148,39 @@ class PolygonDataHandler:
             self.historical_data[ticker] = df
             
             # Log progress every 5 tickers
-            if (i + 1) % 5 == 0 or i == len(self.tickers) - 1:
+            if (i+1) % 5 == 0 or i == len(self.tickers)-1:
                 self.logger.info(f"Generated data for {i+1}/{len(self.tickers)} tickers")
-        
+                
         self.logger.info("Test data generation complete")
-            
+        
     def generate_test_ticker_data(self, ticker):
         """Generate test data for a single ticker"""
         start_date = datetime.now(tz.utc) - timedelta(days=30)
-        dates = pd.date_range(start_date, datetime.now(tz.utc), freq='1min')
+        end_date = datetime.now(tz.utc)
+        freq = '5min'  # Use 5-minute bars for faster processing
         
-        # Create a random walk with volatility
-        prices = [100]
-        for i in range(1, len(dates)):
-            change = random.uniform(-0.001, 0.002)
-            prices.append(prices[-1] * (1 + change))
-            
+        # Create date range
+        dates = pd.date_range(start_date, end_date, freq=freq)
+        n_points = len(dates)
+        
+        # Vectorized price generation
+        random_returns = np.random.uniform(0.999, 1.001, n_points-1)
+        prices = np.zeros(n_points)
+        prices[0] = 100
+        prices[1:] = 100 * np.cumprod(random_returns)
+        
+        # Generate high and low based on the price
+        highs = prices * 1.001
+        lows = prices * 0.999
+        volumes = np.random.randint(1000, 10000, n_points)
+        
         # FIXED: Use lowercase column names
         df = pd.DataFrame({
             'open': prices,
-            'high': [p * 1.001 for p in prices],
-            'low': [p * 0.999 for p in prices],
+            'high': highs,
+            'low': lows,
             'close': prices,
-            'volume': [random.randint(1000, 10000) for _ in prices]
+            'volume': volumes
         }, index=dates)
         
         return df
@@ -1241,6 +1255,7 @@ class TradingSystem(QThread):
         self.tickers = tickers
         self.positions = {}
         self.trade_log = []
+        self.full_trade_history = []  # NEW: Store all trades for backtesting
         self.data_handler = None
         self.running = False
         self.eastern = pytz.timezone('US/Eastern')
@@ -1264,6 +1279,8 @@ class TradingSystem(QThread):
         self.sector_scores = {}
         self.regime_last_updated = 0
         self.regime_analysis_interval = 3600 * 6  # 6 hours
+        if testing_mode:
+            self.regime_analysis_interval = 10  # 10 seconds in testing mode
         self.market_volatility = 0.15  # Default volatility
         
         # Adaptive lookback system
@@ -1299,6 +1316,10 @@ class TradingSystem(QThread):
         self.log_signal.emit("Trading system started")
         self.data_handler = PolygonDataHandler(self.tickers, testing_mode=self.testing_mode)
         self.data_handler.start()
+        
+        # Force initial market analysis
+        self.update_market_regime()
+        self.regime_last_updated = time.time()
         
         while self.running:
             try:
@@ -1387,11 +1408,12 @@ class TradingSystem(QThread):
             if not self.sector_system.market_composite.empty:
                 try:
                     # Create a proper OHLC DataFrame - CRITICAL FIX
+                    composite = self.sector_system.market_composite
                     composite_df = pd.DataFrame({
-                        'open': self.sector_system.market_composite,
-                        'high': self.sector_system.market_composite,
-                        'low': self.sector_system.market_composite,
-                        'close': self.sector_system.market_composite
+                        'open': composite,
+                        'high': composite,
+                        'low': composite,
+                        'close': composite
                     })
                     
                     # Compute 14-day ATR using the properly structured DataFrame
@@ -1401,6 +1423,9 @@ class TradingSystem(QThread):
                 except Exception as e:
                     self.log_signal.emit(f"Volatility update error: {str(e)}")
                     self.market_volatility = 0.15  # fallback
+            else:
+                self.log_signal.emit("Market composite is empty, using default volatility")
+                self.market_volatility = 0.15
             
             # Ensure volatility is scalar before formatting
             vol_scalar = self.ensure_scalar(self.market_volatility)
@@ -1411,8 +1436,8 @@ class TradingSystem(QThread):
             )
             self.log_signal.emit("Top sectors:")
             for sector, score in sorted(self.sector_scores.items(), 
-                                    key=lambda x: x[1], 
-                                    reverse=True)[:3]:
+                                      key=lambda x: x[1], 
+                                      reverse=True)[:3]:
                 self.log_signal.emit(f"  {sector}: {score:.4f}")
                 
             # Send Discord notification
@@ -1509,6 +1534,7 @@ class TradingSystem(QThread):
             (len(self.positions) < 5) and 
             self.is_market_open()
         )
+    
     def evaluate_opportunities(self):
         """Evaluate and rank trading opportunities using parallel scanning"""
         self.last_evaluation_time = time.time()
@@ -1895,14 +1921,17 @@ class TradingSystem(QThread):
             # Initialize position age
             self.lookback_system.position_age[ticker] = 0
             
-            self.trade_log.append({
+            # Create trade record and add to both logs
+            trade = {
                 'ticker': ticker, 'entry': price,
                 'entry_time': datetime.now(tz.utc),
                 'exit': None, 'exit_time': None,
                 'profit': None, 'percent_gain': None,
                 'duration': None, 'exit_reason': None,
                 'shares': position_size
-            })
+            }
+            self.trade_log.append(trade)
+            self.full_trade_history.append(trade)  # NEW: Add to full history
             
             self.executed_tickers.add(ticker)
             self.log_signal.emit(f"Entered {ticker} at ${price:.2f} - {position_size} shares")
@@ -1931,8 +1960,19 @@ class TradingSystem(QThread):
             if ticker in self.lookback_system.position_age:
                 del self.lookback_system.position_age[ticker]
             
-            # Find the open trade for this position
+            # Find the open trade for this position in both logs
             for trade in reversed(self.trade_log):
+                if trade['ticker'] == ticker and trade['exit'] is None:
+                    trade['exit'] = exit_price
+                    trade['exit_time'] = datetime.now(tz.utc)
+                    trade['profit'] = profit
+                    trade['percent_gain'] = percent_gain
+                    trade['duration'] = duration
+                    trade['exit_reason'] = reason
+                    break
+                    
+            # Also update in full history
+            for trade in self.full_trade_history:
                 if trade['ticker'] == ticker and trade['exit'] is None:
                     trade['exit'] = exit_price
                     trade['exit_time'] = datetime.now(tz.utc)
@@ -1971,7 +2011,8 @@ class TradingSystem(QThread):
             self.capital += profit
             position['shares'] -= shares_to_sell
             
-            self.trade_log.append({
+            # Create new trade for partial exit and add to both logs
+            trade = {
                 'ticker': ticker,
                 'entry': position['entry_price'],
                 'entry_time': position['entry_time'],
@@ -1982,7 +2023,9 @@ class TradingSystem(QThread):
                 'duration': (datetime.now(tz.utc) - position['entry_time']).total_seconds() / 60,
                 'exit_reason': reason,
                 'shares': shares_to_sell
-            })
+            }
+            self.trade_log.append(trade)
+            self.full_trade_history.append(trade)  # NEW: Add to full history
             
             self.log_signal.emit(
                 f"Partial exit {ticker} {shares_to_sell} shares at ${exit_price:.2f} (Profit: ${profit:.2f})"
@@ -2217,9 +2260,148 @@ class TradingSystem(QThread):
         return False
 
 
+# ======================== HISTORICAL DATA HANDLER ======================== #
+class HistoricalDataHandler:
+    """Optimized data handler for backtesting with test data fallback"""
+    def __init__(self, tickers, start_date, end_date):
+        self.tickers = tickers
+        self.start_date = start_date
+        self.end_date = end_date
+        self.data = {}  # ticker -> DataFrame
+        self.timestamps = []
+        self.logger = logging.getLogger("BacktestData")
+        self.logger.setLevel(logging.INFO)
+        
+    def generate_test_data(self, ticker):
+        """Generate simulated historical data for backtesting"""
+        self.logger.info(f"Generating test data for {ticker}")
+        # Create date range for the backtest period
+        dates = pd.date_range(self.start_date, self.end_date, freq='1min')
+        n_points = len(dates)
+        
+        # Vectorized price generation
+        random_returns = np.random.uniform(0.999, 1.001, n_points-1)
+        prices = np.zeros(n_points)
+        prices[0] = 100
+        prices[1:] = 100 * np.cumprod(random_returns)
+        
+        # Generate high and low based on the price
+        highs = prices * 1.001
+        lows = prices * 0.999
+        volumes = np.random.randint(1000, 10000, n_points)
+        
+        # Create DataFrame
+        df = pd.DataFrame({
+            'open': prices,
+            'high': highs,
+            'low': lows,
+            'close': prices,
+            'volume': volumes
+        }, index=dates)
+        
+        return df
+        
+    def load_all_data(self):
+        """Load all historical data for the date range with test fallback"""
+        self.logger.info(f"Loading data for {len(self.tickers)} tickers from {self.start_date} to {self.end_date}")
+        for ticker in self.tickers:
+            self.load_ticker_data(ticker)
+        
+        # Create sorted list of all timestamps
+        all_timestamps = set()
+        for df in self.data.values():
+            if df is not None and not df.empty:
+                all_timestamps.update(df.index)
+        self.timestamps = sorted(all_timestamps)
+        self.logger.info(f"Total data points: {len(self.timestamps)}")
+        
+    def load_ticker_data(self, ticker):
+        """Load historical data for a single ticker with test fallback"""
+        try:
+            cache_file = f"data_cache/{ticker}_{self.start_date}_{self.end_date}.pkl"
+            if os.path.exists(cache_file):
+                try:
+                    self.data[ticker] = pd.read_pickle(cache_file)
+                    self.logger.info(f"Loaded cached data for {ticker}")
+                    return
+                except Exception as e:
+                    self.logger.warning(f"Cache load failed for {ticker}: {str(e)}")
+                    
+            # Calculate days between dates
+            days = (self.end_date - self.start_date).days + 1
+            
+            # Load data using Polygon API
+            url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/minute/" \
+                f"{self.start_date.strftime('%Y-%m-%d')}/{self.end_date.strftime('%Y-%m-%d')}"
+            params = {
+                "adjusted": "true",
+                "sort": "asc",
+                "limit": 50000,
+                "apiKey": POLYGON_API_KEY
+            }
+            
+            try:
+                self.logger.info(f"Fetching data for {ticker}")
+                response = requests.get(url, params=params, timeout=30)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('status') == 'OK' and data.get('resultsCount', 0) > 0:
+                        df = pd.DataFrame(data['results'])
+                        df['timestamp'] = pd.to_datetime(df["t"], unit='ms', utc=True)
+                        df.set_index('timestamp', inplace=True)
+                        df.rename(columns={
+                            'o': 'open', 'h': 'high', 'l': 'low', 
+                            'c': 'close', 'v': 'volume'
+                        }, inplace=True)
+                        self.data[ticker] = df
+                        self.logger.info(f"Loaded {len(df)} data points for {ticker}")
+                        try:
+                            df.to_pickle(cache_file)
+                        except Exception as e:
+                            self.logger.warning(f"Cache save failed for {ticker}: {str(e)}")
+                        return
+                    else:
+                        self.logger.warning(f"No results for {ticker}: {data.get('status', '')}")
+                else:
+                    self.logger.warning(f"API error for {ticker}: {response.status_code}")
+            except Exception as e:
+                self.logger.error(f"API request failed for {ticker}: {str(e)}")
+                
+            # Fallback to test data generation
+            self.logger.warning(f"Generating test data for {ticker}")
+            self.data[ticker] = self.generate_test_data(ticker)
+            
+        except Exception as e:
+            self.logger.error(f"Data loading failed for {ticker}: {str(e)}")
+            self.data[ticker] = pd.DataFrame()
+
+    def get_all_timestamps(self):
+        """Get all sorted timestamps in the date range"""
+        return self.timestamps
+    
+    def get_data_at_timestamp(self, timestamp):
+        """Get data for all tickers at a specific timestamp with downsampling"""
+        data_batch = {}
+        for ticker, df in self.data.items():
+            if df is not None and not df.empty and timestamp in df.index:
+                # Downsample to 5-minute intervals for better performance
+                idx = df.index.get_loc(timestamp)
+                if idx % 5 == 0 or idx == len(df)-1:
+                    row = df.loc[timestamp]
+                    data_batch[ticker] = {
+                        'open': row['open'],
+                        'high': row['high'],
+                        'low': row['low'],
+                        'close': row['close'],
+                        'volume': row['volume'],
+                        'timestamp': timestamp
+                    }
+        return data_batch
+
+
 # ======================== BACKTESTING SYSTEM ======================== #
 class Backtester(QThread):
-    """Backtesting system that runs the same pipeline as live trading"""
+    """Optimized backtesting system with performance enhancements"""
     update_signal = pyqtSignal(dict)
     log_signal = pyqtSignal(str)
     progress_signal = pyqtSignal(int)
@@ -2244,7 +2426,7 @@ class Backtester(QThread):
         self.running = False
         
     def run(self):
-        """Run backtest simulation"""
+        """Optimized backtest simulation"""
         self.running = True
         self.log_signal.emit(f"Starting backtest from {self.start_date} to {self.end_date}")
         
@@ -2264,202 +2446,99 @@ class Backtester(QThread):
         total_steps = len(timestamps)
         
         if total_steps == 0:
-            self.log_signal.emit("Error: No historical data found for the specified date range and tickers")
+            self.log_signal.emit("Error: No data points found for the specified date range and tickers")
             self.completed_signal.emit()
             return
             
         current_step = 0
-        
-        # Initialize market regime
-        self.trading_system.market_regime = "Neutral"
-        self.trading_system.market_volatility = 0.15
-        
         self.log_signal.emit(f"Running simulation for {total_steps} time steps...")
         
-        # Process each timestamp in chronological order
-        for timestamp in timestamps:
+        # Performance optimization parameters
+        BATCH_SIZE = 100  # Process data in batches
+        update_interval = 1.0  # Update UI every second
+        last_update_time = time.time()
+        batch_data = []
+        
+        # Estimate total time steps for progress
+        self.expected_steps = total_steps
+        
+        # Process timestamps in batches
+        for i, timestamp in enumerate(timestamps):
             if not self.running:
                 break
                 
-            # Update progress
-            current_step += 1
-            progress = int((current_step / total_steps) * 90) + 10
-            self.progress_signal.emit(progress)
+            # Update progress periodically
+            if i % 1000 == 0:
+                progress = int((i / total_steps) * 90) + 10
+                self.progress_signal.emit(progress)
             
             # Get data for all tickers at this timestamp
             data_batch = self.hist_data_handler.get_data_at_timestamp(timestamp)
+            if data_batch:
+                batch_data.append((timestamp, data_batch))
             
-            # Skip if no data at this timestamp
-            if not data_batch:
-                continue
-                
-            # Feed data to trading system
-            for ticker, data in data_batch.items():
-                # Update data handler
-                if self.trading_system.data_handler:
-                    # Update historical data
-                    if ticker in self.trading_system.data_handler.historical_data:
-                        df = self.trading_system.data_handler.historical_data[ticker]
-                        if timestamp not in df.index:
-                            new_row = pd.DataFrame({
-                                'open': [data['open']],
-                                'high': [data['high']],
-                                'low': [data['low']],
-                                'close': [data['close']],
-                                'volume': [data['volume']]
-                            }, index=[timestamp])
-                            self.trading_system.data_handler.historical_data[ticker] = pd.concat([df, new_row])
-                    
-                    # Update realtime data
-                    self.trading_system.data_handler.realtime_data[ticker] = {
-                        'open': data['open'],
-                        'high': data['high'],
-                        'low': data['low'],
-                        'close': data['close'],
-                        'volume': data['volume'],
-                        'timestamp': timestamp
-                    }
-                    
-                    # Add to data queue
-                    self.trading_system.data_handler.data_queue.put((ticker, {
-                        'open': data['open'],
-                        'high': data['high'],
-                        'low': data['low'],
-                        'close': data['close'],
-                        'volume': data['volume'],
-                        'timestamp': timestamp
-                    }))
+            # Process batch when full or at end
+            if len(batch_data) >= BATCH_SIZE or i == len(timestamps)-1:
+                self.process_batch(batch_data)
+                batch_data = []  # Reset batch
             
-            # Process market regime updates (daily at market close)
-            if timestamp.hour == 16 and timestamp.minute == 0:
-                self.trading_system.update_market_regime()
-                
-            # Process data queue
-            while not self.trading_system.data_handler.data_queue.empty() and self.trading_system.running:
-                ticker, data = self.trading_system.data_handler.data_queue.get()
-                self.trading_system.update_positions(ticker, data)
-            
-            # Process periodic evaluations
-            self.trading_system.close_old_positions()
-            if self.trading_system.should_evaluate_opportunities():
-                self.trading_system.evaluate_opportunities()
-                self.trading_system.enter_top_opportunities()
-                
-            # Process position replacements (hourly)
-            if timestamp.minute == 0:
-                self.trading_system.evaluate_and_replace_positions()
-                
-            # Emit state update
-            state = self.trading_system.get_current_state()
-            state['timestamp'] = timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')
-            self.update_signal.emit(state)
-            
-            # Sleep to simulate real-time (but much faster for backtesting)
-            time.sleep(0.01)
+            # Update UI periodically
+            current_time = time.time()
+            if current_time - last_update_time > update_interval or i == len(timestamps)-1:
+                state = self.trading_system.get_current_state()
+                state['timestamp'] = timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')
+                self.update_signal.emit(state)
+                last_update_time = current_time
+                QApplication.processEvents()  # Keep UI responsive
         
         # Finalize backtest
         self.trading_system.stop_system()
         self.results = self.trading_system.get_current_state()
+        # NEW: Add full trade history to results
+        self.results['full_trade_history'] = self.trading_system.full_trade_history
         self.completed_signal.emit()
         self.log_signal.emit("Backtest completed")
         self.running = False
         
+    def process_batch(self, batch):
+        """Process a batch of timestamped data efficiently"""
+        for timestamp, data_batch in batch:
+            # Feed data to trading system
+            for ticker, data in data_batch.items():
+                # Update data handler
+                if self.trading_system.data_handler:
+                    # Skip historical data updates during backtest to reduce overhead
+                    
+                    # Update realtime data directly
+                    self.trading_system.data_handler.realtime_data[ticker] = data
+                    
+                    # Add to data queue
+                    self.trading_system.data_handler.data_queue.put((ticker, data))
+            
+            # Process data queue in bulk
+            while not self.trading_system.data_handler.data_queue.empty() and self.trading_system.running:
+                ticker, data = self.trading_system.data_handler.data_queue.get()
+                self.trading_system.update_positions(ticker, data)
+
     def stop_backtest(self):
         """Stop the backtest"""
         self.running = False
         self.trading_system.stop_system()
 
 
-class HistoricalDataHandler:
-    """Handles historical data loading and serving for backtesting"""
-    def __init__(self, tickers, start_date, end_date):
-        self.tickers = tickers
-        self.start_date = start_date
-        self.end_date = end_date
-        self.data = {}  # ticker -> DataFrame
-        self.timestamps = []
+# ======================== LOG HANDLER ======================== #
+class LogSignalHandler(logging.Handler):
+    """Log handler that emits to a pyqtSignal"""
+    def __init__(self, signal):
+        super().__init__()
+        self.signal = signal
         
-    def load_all_data(self):
-        """Load all historical data for the date range"""
-        for ticker in self.tickers:
-            self.load_ticker_data(ticker)
-        
-        # Create sorted list of all timestamps
-        all_timestamps = set()
-        for df in self.data.values():
-            if df is not None and not df.empty:
-                all_timestamps.update(df.index)
-        self.timestamps = sorted(all_timestamps)
-        
-    def load_ticker_data(self, ticker):
-        """Load historical data for a single ticker"""
-        cache_file = f"data_cache/{ticker}_{self.start_date}_{self.end_date}.pkl"
-        if os.path.exists(cache_file):
-            try:
-                self.data[ticker] = pd.read_pickle(cache_file)
-                return
-            except:
-                pass
-            
-        # Calculate days between dates
-        days = (self.end_date - self.start_date).days + 1
-        
-        # Load data using Polygon API
-        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/minute/" \
-              f"{self.start_date.strftime('%Y-%m-%d')}/{self.end_date.strftime('%Y-%m-%d')}"
-        params = {
-            "adjusted": "true",
-            "sort": "asc",
-            "limit": 50000,
-            "apiKey": POLYGON_API_KEY
-        }
-        
-        try:
-            response = requests.get(url, params=params, timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('status') == 'OK' and data.get('resultsCount', 0) > 0:
-                    df = pd.DataFrame(data['results'])
-                    df['timestamp'] = pd.to_datetime(df["t"], unit='ms', utc=True)
-                    df.set_index('timestamp', inplace=True)
-                    df.rename(columns={
-                        'o': 'open', 'h': 'high', 'l': 'low', 
-                        'c': 'close', 'v': 'volume'
-                    }, inplace=True)
-                    self.data[ticker] = df
-                    try:
-                        df.to_pickle(cache_file)
-                    except:
-                        pass
-                else:
-                    self.data[ticker] = pd.DataFrame()
-            else:
-                self.data[ticker] = pd.DataFrame()
-        except Exception as e:
-            self.data[ticker] = pd.DataFrame()
-    
-    def get_all_timestamps(self):
-        """Get all sorted timestamps in the date range"""
-        return self.timestamps
-    
-    def get_data_at_timestamp(self, timestamp):
-        """Get data for all tickers at a specific timestamp"""
-        data_batch = {}
-        for ticker, df in self.data.items():
-            if df is not None and not df.empty and timestamp in df.index:
-                row = df.loc[timestamp]
-                data_batch[ticker] = {
-                    'open': row['open'],
-                    'high': row['high'],
-                    'low': row['low'],
-                    'close': row['close'],
-                    'volume': row['volume'],
-                    'timestamp': timestamp
-                }
-        return data_batch
-# ======================== END BACKTESTING SYSTEM ======================== #
+    def emit(self, record):
+        msg = self.format(record)
+        self.signal.emit(msg)
 
 
+# ======================== POSITION PLOT ======================== #
 class PositionPlot(FigureCanvas):
     """Position visualization widget"""
     def __init__(self, parent=None, width=5, height=4, dpi=100):
@@ -2508,8 +2587,9 @@ class PositionPlot(FigureCanvas):
         self.draw()
 
 
+# ======================== TRADING DASHBOARD ======================== #
 class TradingDashboard(QMainWindow):
-    """Interactive trading dashboard with backtesting tab"""
+    """Optimized trading dashboard with backtesting"""
     def __init__(self, testing_mode=False):
         super().__init__()
         # Maintain original tickers for live trading
@@ -2739,6 +2819,8 @@ class TradingDashboard(QMainWindow):
         
         # Initialize backtester
         self.backtester = None
+        self.equity_history = []
+        self.plot_lock = threading.Lock()
         
         # Connect signals
         self.start_button.clicked.connect(self.start_system)
@@ -2824,6 +2906,11 @@ class TradingDashboard(QMainWindow):
             self.log_message("Invalid date range: start date must be before end date")
             return
             
+        # Stop live system if running
+        if self.trading_system.running:
+            self.trading_system.stop_system()
+            self.log_message("Stopped live trading system for backtest")
+        
         self.log_message(f"Starting backtest from {start_date} to {end_date}")
         
         # Initialize backtester with ticker file
@@ -2832,7 +2919,7 @@ class TradingDashboard(QMainWindow):
             end_date,
             self.trading_system.capital,
             self.trading_system.risk_per_trade,
-            ticker_file="all_tickers.txt"  # Use ticker file for backtesting
+            ticker_file="all_tickers.txt"
         )
         
         # Connect signals
@@ -2845,9 +2932,12 @@ class TradingDashboard(QMainWindow):
         self.start_backtest_btn.setEnabled(False)
         self.stop_backtest_btn.setEnabled(True)
         
+        # Reset equity history
+        self.equity_history = []
+        
         # Start backtest
         self.backtester.start()
-        
+    
     def stop_backtest(self):
         """Stop the backtest"""
         if self.backtester and self.backtester.isRunning():
@@ -2998,18 +3088,28 @@ class TradingDashboard(QMainWindow):
             if not hasattr(self, 'equity_history'):
                 self.equity_history = []
             self.equity_history.append(results['capital'])
-            self.equity_ax.clear()
-            self.equity_ax.plot(self.equity_history, label='Equity Curve')
-            self.equity_ax.set_title('Portfolio Equity Curve')
-            self.equity_ax.set_xlabel('Time Step')
-            self.equity_ax.set_ylabel('Portfolio Value ($)')
-            self.equity_ax.grid(True)
-            self.equity_ax.legend()
-            self.equity_plot.draw()
+            
+            # Only update plot every 100 points to improve performance
+            if len(self.equity_history) % 100 == 0 or not self.backtester.running:
+                with self.plot_lock:
+                    self.equity_ax.clear()
+                    self.equity_ax.plot(self.equity_history, label='Equity Curve')
+                    self.equity_ax.set_title('Portfolio Equity Curve')
+                    self.equity_ax.set_xlabel('Time Step')
+                    self.equity_ax.set_ylabel('Portfolio Value ($)')
+                    self.equity_ax.grid(True)
+                    self.equity_ax.legend()
+                    self.equity_plot.draw_idle()
                 
             # Update trades table
-            self.backtest_trades_table.setRowCount(len(results['recent_trades']))
-            for row, trade in enumerate(results['recent_trades']):
+            # NEW: Use full trade history if available
+            if 'full_trade_history' in results:
+                trades = results['full_trade_history']
+            else:
+                trades = results.get('recent_trades', [])
+                
+            self.backtest_trades_table.setRowCount(len(trades))
+            for row, trade in enumerate(trades):
                 self.backtest_trades_table.setItem(row, 0, QTableWidgetItem(trade['entry_time'].strftime('%Y-%m-%d')))
                 self.backtest_trades_table.setItem(row, 1, QTableWidgetItem(trade['ticker']))
                 
@@ -3066,30 +3166,31 @@ class TradingDashboard(QMainWindow):
         """)
     
     def update_plots(self):
-        """Update position analysis plots"""
-        # Clear existing plots
-        for i in reversed(range(self.plot_layout.count())):
-            widget = self.plot_layout.itemAt(i).widget()
-            if widget:
-                widget.deleteLater()
-        
-        # Create new plots only if system is running
-        if self.trading_system.running and self.trading_system.data_handler:
-            for ticker, position in self.trading_system.positions.items():
-                historical_data = self.trading_system.data_handler.get_historical(ticker, 50)
-                if historical_data is None or historical_data.empty:
-                    continue
-                    
-                plot = PositionPlot(self.plot_container, width=10, height=4, dpi=100)
-                plot.plot_position(ticker, position, historical_data)
-                self.plot_layout.addWidget(plot)
-        
-        # Add placeholder if no positions
-        if not self.trading_system.positions or not self.trading_system.running:
-            label = QLabel("No active positions to display")
-            label.setAlignment(Qt.AlignCenter)
-            label.setFont(QFont("Arial", 16))
-            self.plot_layout.addWidget(label)
+        """Update position analysis plots with thread safety"""
+        with self.plot_lock:
+            # Clear existing plots
+            for i in reversed(range(self.plot_layout.count())):
+                widget = self.plot_layout.itemAt(i).widget()
+                if widget:
+                    widget.deleteLater()
+            
+            # Create new plots only if system is running
+            if self.trading_system.running and self.trading_system.data_handler:
+                for ticker, position in self.trading_system.positions.items():
+                    historical_data = self.trading_system.data_handler.get_historical(ticker, 50)
+                    if historical_data is None or historical_data.empty:
+                        continue
+                        
+                    plot = PositionPlot(self.plot_container, width=10, height=4, dpi=100)
+                    plot.plot_position(ticker, position, historical_data)
+                    self.plot_layout.addWidget(plot)
+            
+            # Add placeholder if no positions
+            if not self.trading_system.positions or not self.trading_system.running:
+                label = QLabel("No active positions to display")
+                label.setAlignment(Qt.AlignCenter)
+                label.setFont(QFont("Arial", 16))
+                self.plot_layout.addWidget(label)
     
     def closeEvent(self, event):
         """Handle window close event"""
