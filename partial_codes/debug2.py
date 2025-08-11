@@ -61,7 +61,7 @@ WEBSOCKET_URL = "wss://socket.polygon.io/stocks"
 
 # ======================== MARKET REGIME CODE ======================== #
 class MarketRegimeAnalyzer:
-    def __init__(self, n_states=4, polygon_api_key=POLYGON_API_KEY, testing_mode=False):
+    def __init__(self, n_states=4, polygon_api_key=POLYGON_API_KEY, testing_mode=False, backtest_end_date=None):
         self.model = hmm.GaussianHMM(
             n_components=n_states,
             covariance_type="diag",
@@ -81,6 +81,7 @@ class MarketRegimeAnalyzer:
         os.makedirs("data_cache", exist_ok=True)
         self.logger = analyzer_logger
         self.testing_mode = testing_mode
+        self.backtest_end_date = backtest_end_date
 
     def prepare_market_data(self, tickers, sample_size=100, min_days_data=200):
         if self.testing_mode:
@@ -122,8 +123,6 @@ class MarketRegimeAnalyzer:
         features = pd.DataFrame({
             "returns": log_returns,
             "volatility": log_returns.rolling(21).std(),
-            "skewness": log_returns.rolling(21).skew(),
-            "kurtosis": log_returns.rolling(21).kurt(),
             "momentum": log_returns.rolling(14).mean(),
             "rsi": talib.RSI(index_data, timeperiod=14).dropna(),
             "macd": talib.MACD(index_data)[0].dropna(),
@@ -140,7 +139,6 @@ class MarketRegimeAnalyzer:
         min_val = np.min(scaled_features)
         max_val = np.max(scaled_features)
         self.logger.info(f"Feature range after scaling/clipping: Min={min_val:.4f}, Max={max_val:.4f}")
-        self.logger.debug(f"Feature stats:\n{features.describe()}")
 
         best_model = None
         best_score = -np.inf
@@ -252,17 +250,16 @@ class MarketRegimeAnalyzer:
         for i, (state_idx, ret, vol) in enumerate(state_stats):
             self.logger.info(f"State {i}: Return={ret:.6f}, Volatility={vol:.6f}")
             
-        # Sort by return and then by negative volatility
         state_stats.sort(key=lambda x: (x[1], -x[2]))
         
         if n_states == 3:
             state_labels = {state_stats[0][0]: "Bear", state_stats[1][0]: "Neutral", state_stats[2][0]: "Bull"}
         elif n_states == 4:
             state_labels = {
-                state_stats[0][0]: "Severe Bear",   # Low return, high vol
-                state_stats[1][0]: "Mild Bear",      # Low return, medium vol
-                state_stats[2][0]: "Mild Bull",      # High return, medium vol
-                state_stats[3][0]: "Strong Bull",    # High return, low vol
+                state_stats[0][0]: "Severe Bear",
+                state_stats[1][0]: "Mild Bear",
+                state_stats[2][0]: "Mild Bull",
+                state_stats[3][0]: "Strong Bull",
             }
         else:
             state_labels = {i: f"State {i+1}" for i in range(n_states)}
@@ -310,18 +307,20 @@ class MarketRegimeAnalyzer:
         return avg_durations
 
     def fetch_stock_data(self, symbol, days=365):
-        if self.testing_mode:
-            # In testing mode, generate data without caching
-            return self.generate_test_ticker_data(symbol, days)
-            
-        cache_file = f"data_cache/{symbol}_{days}.pkl"
+        # Use backtest end date if available
+        if self.backtest_end_date:
+            end_date = self.backtest_end_date
+        else:
+            end_date = datetime.now()
+        
+        cache_file = f"data_cache/{symbol}_{end_date.strftime('%Y%m%d')}_{days}.pkl"
         if os.path.exists(cache_file):
             return pd.read_pickle(cache_file)
             
-        end_date = datetime.now().strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        start_date = (end_date - timedelta(days=days)).strftime("%Y-%m-%d")
+        end_date_str = end_date.strftime("%Y-%m-%d")
 
-        url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{start_date}/{end_date}"
+        url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{start_date}/{end_date_str}"
         params = {
             "adjusted": "true",
             "sort": "asc",
@@ -400,63 +399,30 @@ class MarketRegimeAnalyzer:
             regime_duration -= 1
             
             # Regime-specific price changes
-            if current_regime == "Severe Bear":
-                change = random.uniform(-0.05, 0.01)
-            elif current_regime == "Bear":
-                change = random.uniform(-0.03, 0.02)
-            elif current_regime == "Neutral":
+            if "Bear" in current_regime:
+                change = random.uniform(-0.05, 0.01) if "Severe" in current_regime else random.uniform(-0.03, 0.02)
+            elif "Bull" in current_regime:
+                change = random.uniform(-0.01, 0.06) if "Strong" in current_regime else random.uniform(-0.02, 0.04)
+            else:  # Neutral
                 change = random.uniform(-0.02, 0.03)
-            elif current_regime == "Bull":
-                change = random.uniform(-0.01, 0.04)
-            else:  # "Strong Bull"
-                change = random.uniform(-0.005, 0.06)
             
             prices.append(prices[-1] * (1 + change))
             regimes.append(current_regime)
             
-        return pd.Series(prices, index=dates)
-    
-    def simple_regime_detection(self, features):
-        """Fallback regime detection when HMM fails"""
-        self.logger.warning("Using simple regime detection as fallback")
-        
-        # Calculate rolling mean and volatility
-        rolling_mean = features['returns'].rolling(14).mean()
-        rolling_vol = features['volatility'].rolling(14).mean()
-        
-        # Determine current regime based on recent values
-        current_return = rolling_mean.iloc[-1]
-        current_vol = rolling_vol.iloc[-1]
-        
-        if current_return < -0.01 and current_vol > 0.02:
-            regime = "Severe Bear"
-        elif current_return < 0 and current_vol > 0.015:
-            regime = "Bear"
-        elif current_return > 0.02 and current_vol < 0.01:
-            regime = "Strong Bull"
-        elif current_return > 0 and current_vol < 0.015:
-            regime = "Bull"
-        else:
-            regime = "Neutral"
-            
-        return {
-            "regimes": [regime] * len(features),
-            "probabilities": np.ones((len(features), 1)),
-            "features": features,
-            "index_data": features.index,
-            "state_labels": {0: regime},
-            "state_durations": {0: 14},
-            "model": None
-        }
+        return pd.Series(prices, index=dates), regimes
 
 
 # ======================== SECTOR REGIME SYSTEM ======================== #
 class SectorRegimeSystem:
-    def __init__(self, polygon_api_key=POLYGON_API_KEY, testing_mode=False):
+    def __init__(self, polygon_api_key=POLYGON_API_KEY, testing_mode=False, backtest_end_date=None):
         self.sector_mappings = {}
         self.sector_composites = {}
         self.sector_analyzers = {}
-        self.overall_analyzer = MarketRegimeAnalyzer(polygon_api_key=polygon_api_key, testing_mode=testing_mode)
+        self.overall_analyzer = MarketRegimeAnalyzer(
+            polygon_api_key=polygon_api_key, 
+            testing_mode=testing_mode,
+            backtest_end_date=backtest_end_date
+        )
         self.sector_weights = {}
         self.sector_scores = {}
         self.polygon_api_key = polygon_api_key
@@ -464,6 +430,7 @@ class SectorRegimeSystem:
         self.logger = logging.getLogger("SectorRegimeSystem")
         self.logger.setLevel(logging.INFO)
         self.testing_mode = testing_mode
+        self.backtest_end_date = backtest_end_date
 
     def map_tickers_to_sectors(self, tickers):
         if self.testing_mode:
@@ -652,7 +619,11 @@ class SectorRegimeSystem:
         self.logger.info("Analyzing sector regimes...")
         for sector, composite in self.sector_composites.items():
             try:
-                analyzer = MarketRegimeAnalyzer(polygon_api_key=self.polygon_api_key, testing_mode=self.testing_mode)
+                analyzer = MarketRegimeAnalyzer(
+                    polygon_api_key=self.polygon_api_key, 
+                    testing_mode=self.testing_mode,
+                    backtest_end_date=self.backtest_end_date
+                )
                 results = analyzer.analyze_regime(composite, n_states=n_states)
                 self.sector_analyzers[sector] = {
                     "results": results,
@@ -716,74 +687,7 @@ class SectorRegimeSystem:
         
         self.sector_scores = cleaned_scores
         return pd.Series(self.sector_scores).sort_values(ascending=False)
-    
-    def generate_test_sector_mappings(self, tickers):
-        sectors = ["Technology", "Healthcare", "Financial Services", "Consumer Cyclical", 
-                   "Industrials", "Energy", "Utilities", "Communication Services"]
-        self.sector_mappings = {sector: [] for sector in sectors}
-        
-        for ticker in tickers:
-            sector = random.choice(sectors)
-            self.sector_mappings[sector].append(ticker)
-            
-        return self.sector_mappings
-    
-    def generate_test_sector_weights(self):
-        sectors = list(self.sector_mappings.keys())
-        weights = {sector: random.uniform(0.05, 0.25) for sector in sectors}
-        total = sum(weights.values())
-        self.sector_weights = {sector: weight/total for sector, weight in weights.items()}
-        return self.sector_weights
-    
-    def generate_test_sector_composites(self):
-        sectors = list(self.sector_mappings.keys())
-        self.sector_composites = {}
-        
-        for sector in sectors:
-            # Generate a synthetic price series for the sector
-            start_date = datetime.now() - timedelta(days=365)
-            dates = pd.date_range(start_date, datetime.now(), freq='D')
-            
-            prices = [100]
-            for i in range(1, len(dates)):
-                # Sector-specific volatility
-                if sector in ["Technology", "Healthcare"]:
-                    change = random.uniform(-0.03, 0.04)
-                elif sector in ["Utilities", "Consumer Defensive"]:
-                    change = random.uniform(-0.01, 0.02)
-                else:
-                    change = random.uniform(-0.02, 0.03)
-                    
-                prices.append(prices[-1] * (1 + change))
-                
-            self.sector_composites[sector] = pd.Series(prices, index=dates)
-            
-        return self.sector_composites
-    
-    def generate_test_sector_regimes(self):
-        sectors = list(self.sector_mappings.keys())
-        self.sector_analyzers = {}
-        
-        for sector in sectors:
-            # Generate a random regime for each sector
-            regimes = ["Severe Bear", "Bear", "Neutral", "Bull", "Strong Bull"]
-            regime = random.choice(regimes)
-            
-            self.sector_analyzers[sector] = {
-                "results": {
-                    "regimes": [regime] * 100,
-                    "probabilities": np.ones((100, 1)),
-                    "state_labels": {0: regime}
-                },
-                "volatility": random.uniform(0.01, 0.03)
-            }
-            
-        return self.sector_analyzers
-    
-    def generate_test_sector_scores(self):
-        sectors = list(self.sector_mappings.keys())
-        self.sector_scores = {sector: random.uniform(30, 80) for sector in sectors}
-        return pd.Series(self.sector_scores)
+
 
 # ======================== ASSET ALLOCATIONS ======================== #
 ASSET_ALLOCATIONS = {
@@ -1177,32 +1081,32 @@ class PolygonDataHandler(DataHandler):
             
             prices = [100]
             for i in range(1, len(dates)):
-                change = random.uniform(-0.005, 0.01)  # More volatile test data
+                change = random.uniform(-0.001, 0.002)
                 prices.append(prices[-1] * (1 + change))
                 
             df = pd.DataFrame({
                 'open': prices,
-                'high': [p * (1 + abs(random.uniform(0, 0.01))) for p in prices],
-                'low': [p * (1 - abs(random.uniform(0, 0.01))) for p in prices],
+                'high': [p * 1.001 for p in prices],
+                'low': [p * 0.999 for p in prices],
                 'close': prices,
                 'volume': [random.randint(1000, 10000) for _ in prices]
             }, index=dates)
             
             self.historical_data[ticker] = df
             
-    def generate_test_ticker_data(self, ticker, days=30):
-        start_date = datetime.now(tz.utc) - timedelta(days=days)
+    def generate_test_ticker_data(self, ticker):
+        start_date = datetime.now(tz.utc) - timedelta(days=30)
         dates = pd.date_range(start_date, datetime.now(tz.utc), freq='1min')
         
         prices = [100]
         for i in range(1, len(dates)):
-            change = random.uniform(-0.005, 0.01)  # More volatile test data
+            change = random.uniform(-0.001, 0.002)
             prices.append(prices[-1] * (1 + change))
             
         df = pd.DataFrame({
             'open': prices,
-            'high': [p * (1 + abs(random.uniform(0, 0.01))) for p in prices],
-            'low': [p * (1 - abs(random.uniform(0, 0.01))) for p in prices],
+            'high': [p * 1.001 for p in prices],
+            'low': [p * 0.999 for p in prices],
             'close': prices,
             'volume': [random.randint(1000, 10000) for _ in prices]
         }, index=dates)
@@ -1219,13 +1123,13 @@ class PolygonDataHandler(DataHandler):
                 else:
                     last_price = random.uniform(100, 200)
                     
-                price_change = random.uniform(-0.01, 0.02)  # More volatile
+                price_change = random.uniform(-0.005, 0.01)
                 new_price = last_price * (1 + price_change)
                 
                 new_data = {
                     'open': new_price,
-                    'high': new_price * (1 + abs(random.uniform(0, 0.01))),
-                    'low': new_price * (1 - abs(random.uniform(0, 0.01))),
+                    'high': new_price * 1.001,
+                    'low': new_price * 0.999,
                     'close': new_price,
                     'volume': random.randint(1000, 10000),
                     'timestamp': datetime.now(tz.utc)
@@ -1478,7 +1382,11 @@ class TradingSystem(QThread):
         self.scan_requested_flag = False
         self.position_evaluation_times = {}
         self.runner_ups = []
-        self.sector_system = SectorRegimeSystem(testing_mode=testing_mode)
+        # Pass backtest_end_date to sector regime system
+        self.sector_system = SectorRegimeSystem(
+            testing_mode=testing_mode and not backtest_mode,
+            backtest_end_date=end_date if backtest_mode else None
+        )
         self.executed_tickers = set()
         self.last_evaluation_timestamp = 0
         self.market_regime = "Neutral"
@@ -1985,7 +1893,7 @@ class TradingSystem(QThread):
             
             # Active positions with fallbacks
             active_positions = []
-            for ticker, pos in self.positions.values():
+            for ticker, pos in self.positions.items():
                 try:
                     current_data = self.data_handler.get_latest(ticker) if self.data_handler else None
                     current_price = current_data['close'] if current_data else pos['entry_price']
@@ -2711,7 +2619,7 @@ class PositionPlot(FigureCanvas):
             if not isinstance(df.index, pd.DatetimeIndex):
                 df.index = pd.to_datetime(df.index)
             if not isinstance(stop_history.index, pd.DatetimeIndex):
-                stop_history.index = pd.to_dat(stop_history.index)
+                stop_history.index = pd.to_datetime(stop_history.index)
             
             # Align indices for plotting
             df = df[df.index.isin(stop_history.index)]
