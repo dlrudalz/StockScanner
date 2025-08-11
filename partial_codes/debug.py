@@ -1301,8 +1301,11 @@ class TradingSystem(QThread):
         self.last_evaluation_timestamp = 0
         self.market_regime = "Neutral"
         self.sector_scores = {}
-        self.regime_last_updated = 0
-        self.regime_analysis_interval = 3600 * 6
+        
+        # Initialize regime tracking with UTC timezone
+        self.regime_last_updated = datetime.min.replace(tzinfo=tz.utc)  # Very old timestamp
+        self.regime_analysis_interval = 3600 * 6  # 6 hours between regime scans
+        
         self.market_volatility = 0.15
         self.lookback_system = AdaptiveLookbackSystem(base_lookback=35, max_extended=180)
         self.last_update_date = datetime.now(tz.utc).date()
@@ -1364,6 +1367,9 @@ class TradingSystem(QThread):
     def run_backtest(self):
         """Run backtest simulation"""
         self.log_signal.emit(f"Backtest started from {self.start_date} to {self.end_date}")
+        
+        # Initialize regime timestamp at start of backtest
+        self.regime_last_updated = self.clock.current_time
         
         # Initialize equity curve
         self.equity_curve = [(self.clock.current_time, self.capital)]
@@ -1466,9 +1472,13 @@ class TradingSystem(QThread):
                 self.evaluate_and_replace_positions()
                 self.last_evaluation_timestamp = current_time
             
-            if current_time - self.regime_last_updated > self.regime_analysis_interval:
+            # REGIME SCAN SCHEDULE - BACKTEST MODE
+            # Calculate time since last regime update using datetime objects
+            time_since_regime_update = (self.clock.current_time - self.regime_last_updated).total_seconds()
+            
+            # Run regime analysis if enough time has passed
+            if time_since_regime_update > self.regime_analysis_interval:
                 self.update_market_regime()
-                self.regime_last_updated = current_time
             
             now = datetime.now(tz.utc)
             current_date = now.date()
@@ -1515,9 +1525,13 @@ class TradingSystem(QThread):
                 self.evaluate_and_replace_positions()
                 self.last_evaluation_timestamp = current_time
             
-            if current_time - self.regime_last_updated > self.regime_analysis_interval:
+            # REGIME SCAN SCHEDULE - LIVE MODE
+            # Calculate time since last regime update in seconds
+            time_since_regime_update = current_time - self.regime_last_updated.timestamp()
+            
+            # Run regime analysis if enough time has passed
+            if time_since_regime_update > self.regime_analysis_interval:
                 self.update_market_regime()
-                self.regime_last_updated = current_time
             
             now = datetime.now(tz.utc)
             current_date = now.date()
@@ -1565,7 +1579,13 @@ class TradingSystem(QThread):
         self.sector_scores = result['sector_scores']
         self.market_regime = result['market_regime']
         self.market_volatility = result['market_volatility']
-        self.regime_last_updated = time.time()
+        
+        # Update timestamp appropriately for each mode
+        if self.backtest_mode:
+            self.regime_last_updated = self.clock.current_time
+        else:
+            self.regime_last_updated = datetime.now(tz.utc)
+        
         self.log_signal.emit(f"Market regime updated: {self.market_regime} (Volatility: {self.market_volatility*100:.2f}%)")
         
         # Notify UI
