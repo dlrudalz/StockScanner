@@ -1591,7 +1591,7 @@ class TradingSystem(QThread):
         # Notify UI
         if not self.backtest_mode:
             self.update_signal.emit(self.get_current_state())
-            
+                
         # Send notifications
         if not self.testing_mode and not self.backtest_mode:
             self.send_discord_notification()
