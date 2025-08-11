@@ -82,33 +82,69 @@ class MarketRegimeAnalyzer:
         self.logger = analyzer_logger
         self.testing_mode = testing_mode
 
-    def prepare_market_data(self, tickers, sample_size=100, min_days_data=200):
+    def prepare_market_data(self, tickers, sample_size=100, min_days_data=200, current_date=None, backtest_start_date=None):
         if self.testing_mode:
             return self.generate_test_market_data()
+            
+        if current_date is None:
+            current_date = datetime.now()
             
         prices_data = []
         valid_tickers = []
         mcaps = {}
-
-        self.logger.info("Collecting market caps...")
+        
+        # Calculate required lookback with business day awareness
+        nyse = mcal.get_calendar('NYSE')
+        if backtest_start_date:
+            # Get actual trading days between dates
+            trading_days = nyse.schedule(backtest_start_date, current_date)
+            required_lookback = len(trading_days) + min_days_data
+        else:
+            required_lookback = min_days_data
+            
+        self.logger.info(f"Collecting market caps with lookback: {required_lookback} days...")
+        
+        # Filter tickers with sufficient market cap first
         for ticker in tickers[:sample_size]:
-            mcaps[ticker] = self.get_market_cap(ticker) or 1
-
+            mcap = self.get_market_cap(ticker, current_date=current_date)
+            if mcap and mcap > 1e6:  # Only consider tickers with > $1M market cap
+                mcaps[ticker] = mcap
+                valid_tickers.append(ticker)
+        
+        if not valid_tickers:
+            self.logger.error("No valid tickers with sufficient market cap")
+            raise ValueError("No valid tickers with sufficient market cap")
+        
         total_mcap = sum(mcaps.values())
         
         self.logger.info("Building market composite...")
-        for symbol in tickers[:sample_size]:
-            prices = self.fetch_stock_data(symbol)
-            if prices is not None and len(prices) >= min_days_data:
+        for symbol in valid_tickers:
+            # Attempt to fetch data with extended lookback
+            try:
+                prices = self.fetch_stock_data(symbol, days=required_lookback, current_date=current_date)
+                if prices is None or len(prices) < min_days_data:
+                    self.logger.warning(f"Insufficient data for {symbol}: {len(prices) if prices else 0} < {min_days_data}")
+                    continue
+                    
                 weight = mcaps.get(symbol, 1) / total_mcap
                 prices_data.append(prices * weight)
-                valid_tickers.append(symbol)
+            except Exception as e:
+                self.logger.error(f"Error processing {symbol}: {str(e)}")
+                continue
 
         if not prices_data:
-            raise ValueError("Insufficient data to create market composite")
+            # Graceful degradation: try with reduced requirements
+            self.logger.warning("Primary composite failed - trying reduced requirements")
+            return self.prepare_market_data(
+                tickers, 
+                sample_size=sample_size,
+                min_days_data=max(100, min_days_data//2),  # Reduce requirement
+                current_date=current_date,
+                backtest_start_date=backtest_start_date
+            )
             
         composite = pd.concat(prices_data, axis=1)
-        composite.columns = valid_tickers
+        composite.columns = valid_tickers[:len(prices_data)]
         composite = composite.fillna(method='ffill').fillna(method='bfill')
         return composite.sum(axis=1).dropna()
 
@@ -305,13 +341,16 @@ class MarketRegimeAnalyzer:
             
         return avg_durations
 
-    def fetch_stock_data(self, symbol, days=365):
-        cache_file = f"data_cache/{symbol}_{days}.pkl"
+    def fetch_stock_data(self, symbol, days=365, current_date=None):
+        if current_date is None:
+            current_date = datetime.now()
+            
+        cache_file = f"data_cache/{symbol}_{days}_{current_date.strftime('%Y%m%d')}.pkl"
         if os.path.exists(cache_file):
             return pd.read_pickle(cache_file)
             
-        end_date = datetime.now().strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        end_date = current_date.strftime("%Y-%m-%d")
+        start_date = (current_date - timedelta(days=days)).strftime("%Y-%m-%d")
 
         url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{start_date}/{end_date}"
         params = {
@@ -326,7 +365,7 @@ class MarketRegimeAnalyzer:
             
             if response.status_code == 429:
                 time.sleep(0.5)
-                return self.fetch_stock_data(symbol, days)
+                return self.fetch_stock_data(symbol, days, current_date)
                 
             if response.status_code != 200:
                 return None
@@ -349,8 +388,11 @@ class MarketRegimeAnalyzer:
             self.logger.error(f"Error fetching {symbol}: {str(e)}")
             return None
             
-    def get_market_cap(self, symbol):
-        cache_file = f"data_cache/mcap_{symbol}.pkl"
+    def get_market_cap(self, symbol, current_date=None):
+        if current_date is None:
+            current_date = datetime.now()
+            
+        cache_file = f"data_cache/mcap_{symbol}_{current_date.strftime('%Y%m%d')}.pkl"
         if os.path.exists(cache_file):
             return pd.read_pickle(cache_file)
             
@@ -368,6 +410,9 @@ class MarketRegimeAnalyzer:
                 data = response.json().get("results", {})
                 mcap = data.get("market_cap", 0)
                 pd.Series([mcap]).to_pickle(cache_file)
+                
+                # Log market cap value for diagnostics
+                self.logger.info(f"Market cap for {symbol}: ${mcap:,.2f}")
                 return mcap
             return 0
         except Exception as e:
@@ -401,12 +446,14 @@ class SectorRegimeSystem:
         self.logger.setLevel(logging.INFO)
         self.testing_mode = testing_mode
 
-    def map_tickers_to_sectors(self, tickers):
+    def map_tickers_to_sectors(self, tickers, current_date=None):
         if self.testing_mode:
             return self.generate_test_sector_mappings(tickers)
             
-        self.sector_mappings = {}
-        cache_file = "data_cache/sector_mappings.pkl"
+        if current_date is None:
+            current_date = datetime.now()
+            
+        cache_file = f"data_cache/sector_mappings_{current_date.strftime('%Y%m%d')}.pkl"
         
         if os.path.exists(cache_file):
             try:
@@ -415,8 +462,8 @@ class SectorRegimeSystem:
             except:
                 pass
 
-        def map_single_ticker(symbol):
-            cache_file = f"data_cache/sector_{symbol}.pkl"
+        def map_single_ticker(symbol, current_date):
+            cache_file = f"data_cache/sector_{symbol}_{current_date.strftime('%Y%m%d')}.pkl"
             if os.path.exists(cache_file):
                 return symbol, pd.read_pickle(cache_file)
                 
@@ -427,7 +474,7 @@ class SectorRegimeSystem:
                 
                 if response.status_code == 429:
                     time.sleep(0.5)
-                    return map_single_ticker(symbol)
+                    return map_single_ticker(symbol, current_date)
                     
                 if response.status_code == 200:
                     data = response.json().get("results", {})
@@ -449,7 +496,7 @@ class SectorRegimeSystem:
             return symbol, "Unknown"
 
         with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {executor.submit(map_single_ticker, symbol): symbol for symbol in tickers}
+            futures = {executor.submit(map_single_ticker, symbol, current_date): symbol for symbol in tickers}
 
             for future in concurrent.futures.as_completed(futures):
                 try:
@@ -498,8 +545,8 @@ class SectorRegimeSystem:
         if "real estate" in sector_lower or "reit" in sector_lower:
             return "Real Estate"
         return sector
-
-    def calculate_sector_weights(self):
+    
+    def calculate_sector_weights(self, current_date=None):
         if self.testing_mode:
             return self.generate_test_sector_weights()
             
@@ -511,7 +558,7 @@ class SectorRegimeSystem:
             sector_mcap = 0
             with ThreadPoolExecutor(max_workers=10) as executor:
                 future_to_ticker = {
-                    executor.submit(self.overall_analyzer.get_market_cap, symbol): symbol
+                    executor.submit(self.overall_analyzer.get_market_cap, symbol, current_date=current_date): symbol
                     for symbol in tickers[:30]
                 }
                 for future in concurrent.futures.as_completed(future_to_ticker):
@@ -531,12 +578,14 @@ class SectorRegimeSystem:
         }
         return self.sector_weights
 
-    def build_sector_composites(self, sample_size=30):
+    def build_sector_composites(self, sample_size=30, current_date=None):
         if self.testing_mode:
             return self.generate_test_sector_composites()
             
-        self.sector_composites = {}
-        cache_file = "data_cache/sector_composites.pkl"
+        if current_date is None:
+            current_date = datetime.now()
+            
+        cache_file = f"data_cache/sector_composites_{current_date.strftime('%Y%m%d')}.pkl"
         
         if os.path.exists(cache_file):
             try:
@@ -551,12 +600,12 @@ class SectorRegimeSystem:
             mcaps = {}
             
             for symbol in tickers[:sample_size]:
-                mcaps[symbol] = self.overall_analyzer.get_market_cap(symbol) or 1
+                mcaps[symbol] = self.overall_analyzer.get_market_cap(symbol, current_date=current_date) or 1
             total_mcap = sum(mcaps.values())
             
             for symbol in tickers[:sample_size]:
                 try:
-                    prices = self.overall_analyzer.fetch_stock_data(symbol)
+                    prices = self.overall_analyzer.fetch_stock_data(symbol, current_date=current_date)
                     if prices is not None and len(prices) >= 200:
                         weight = mcaps[symbol] / total_mcap
                         prices_data.append(prices * weight)
@@ -571,7 +620,8 @@ class SectorRegimeSystem:
         pd.to_pickle(self.sector_composites, cache_file)
         return self.sector_composites
 
-    def analyze_sector_regimes(self, n_states=4):
+    def analyze_sector_regimes(self, n_states=4, current_date=None, backtest_start_date=None):
+        """Modified to pass backtest_start_date to prepare_market_data"""
         if self.testing_mode:
             return self.generate_test_sector_regimes()
             
@@ -580,7 +630,11 @@ class SectorRegimeSystem:
         if not hasattr(self, 'market_composite'):
             tickers = [t for sublist in self.sector_mappings.values() for t in sublist]
             self.logger.info("Creating market composite...")
-            self.market_composite = self.overall_analyzer.prepare_market_data(tickers[:100])
+            self.market_composite = self.overall_analyzer.prepare_market_data(
+                tickers[:100],
+                current_date=current_date,
+                backtest_start_date=backtest_start_date  # Pass backtest start date
+            )
         self.logger.info("Analyzing overall market regime...")
         market_result = self.overall_analyzer.analyze_regime(self.market_composite)
         self.current_regime = market_result["regimes"][-1]
@@ -1561,8 +1615,21 @@ class TradingSystem(QThread):
         self.regime_analysis_running = True
         self.log_signal.emit("Starting market regime analysis in background...")
         
-        # Create worker thread for heavy computation
-        self.worker = AnalysisWorker(self.sector_system, self.tickers)
+        # Determine current date for the analysis
+        if self.backtest_mode:
+            current_date = self.clock.current_time
+            backtest_start_date = self.start_date  # Get backtest start date
+        else:
+            current_date = datetime.now(tz.utc)
+            backtest_start_date = None
+        
+        # Create worker thread with current_date and backtest_start_date
+        self.worker = AnalysisWorker(
+            self.sector_system, 
+            self.tickers, 
+            current_date,
+            backtest_start_date  # Pass backtest start date
+        )
         self.thread = QThread()
         self.worker.moveToThread(self.thread)
         
@@ -2412,17 +2479,29 @@ class AnalysisWorker(QObject):
     finished = pyqtSignal()
     result = pyqtSignal(dict)
     
-    def __init__(self, sector_system, tickers):
+    def __init__(self, sector_system, tickers, current_date, backtest_start_date=None):
         super().__init__()
         self.sector_system = sector_system
         self.tickers = tickers
+        self.current_date = current_date
+        self.backtest_start_date = backtest_start_date
         
     def run(self):
         try:
-            self.sector_system.map_tickers_to_sectors(self.tickers)
-            self.sector_system.calculate_sector_weights()
-            self.sector_system.build_sector_composites()
-            self.sector_system.analyze_sector_regimes()
+            self.sector_system.map_tickers_to_sectors(
+                self.tickers, 
+                current_date=self.current_date
+            )
+            self.sector_system.calculate_sector_weights(
+                current_date=self.current_date
+            )
+            self.sector_system.build_sector_composites(
+                current_date=self.current_date
+            )
+            self.sector_system.analyze_sector_regimes(
+                current_date=self.current_date,
+                backtest_start_date=self.backtest_start_date  # Pass to analyze
+            )
             scores = self.sector_system.calculate_sector_scores()
             regime = self.sector_system.current_regime
             
@@ -3104,7 +3183,7 @@ class TradingDashboard(QMainWindow):
                 gain_item.setForeground(QBrush(QColor('green') if gain > 0 else QColor('red')))
                 self.backtest_trades_table.setItem(row, 4, gain_item)
                 
-                self.backtest_trades_table.setItem(row, 5, QTableWidgetItem(f"{trade['duration'] or 0:.1f}m"))
+                self.backtest_trades_table.setItem(row, 5, QTableWidgetItem(f"{trade.get('duration', 0):.1f}m"))
                 self.backtest_trades_table.setItem(row, 6, QTableWidgetItem(trade['exit_reason'] or ""))
                 self.backtest_trades_table.setItem(row, 7, QTableWidgetItem(trade.get('regime', '')))
             
