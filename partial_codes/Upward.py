@@ -6,9 +6,10 @@ import time
 import os
 import logging
 import json
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta, time as dt_time, date
 import pytz
 from threading import Lock, Event, Thread
+from tqdm import tqdm
 import signal
 from urllib.parse import urlencode
 import sys
@@ -22,7 +23,8 @@ import requests
 # PyQt5 imports for UI
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, 
                             QPushButton, QTableView, QTextEdit, QLabel, QHeaderView, QProgressBar,
-                            QAction, QMenu, QFileDialog, QStatusBar, QMessageBox, QGridLayout)
+                            QAction, QMenu, QFileDialog, QStatusBar, QMessageBox, QTableWidget, 
+                            QTableWidgetItem, QSplitter, QAbstractItemView)
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QAbstractTableModel, QTimer
 from PyQt5.QtGui import QFont, QColor, QIcon
 
@@ -153,6 +155,11 @@ class TradingCalendar:
             event_dt += timedelta(days=1)
             
         return (event_dt - now).total_seconds()
+    
+    def is_time_for_daily_refresh(self, dt=None):
+        """Check if it's time for daily refresh and we haven't refreshed today"""
+        dt = dt or datetime.now(self.ny_tz)
+        return dt.time() >= config.DAILY_TICKER_REFRESH_TIME
 
 # ======================== LOGGING SETUP ======================== #
 def setup_logging():
@@ -284,9 +291,6 @@ class PolygonTickerScanner:
                     logger.warning(f"Rate limit hit, retrying after {retry_after} seconds")
                     await asyncio.sleep(retry_after)
                     return await self._call_polygon_api(session, url)
-                elif response.status == 404:
-                    logger.error(f"API endpoint not found: {url}")
-                    return None
                 else:
                     logger.error(f"API request failed: {response.status}")
                     return None
@@ -306,8 +310,7 @@ class PolygonTickerScanner:
             "exchange": exchange,
             "active": "true",
             "limit": 1000,
-            "apiKey": config.POLYGON_API_KEY,
-            "type": "CS"  # Only common stocks
+            "apiKey": self.api_key
         }
         
         # Initial URL construction
@@ -316,7 +319,7 @@ class PolygonTickerScanner:
         while True:
             # For subsequent pages, use next_url with API key
             if next_url:
-                url = f"{next_url}&apiKey={config.POLYGON_API_KEY}"
+                url = f"{next_url}&apiKey={self.api_key}"
             
             data = await self._call_polygon_api(session, url)
             if not data:
@@ -379,10 +382,12 @@ class PolygonTickerScanner:
         elapsed = time.time() - start_time
         logger.info(f"Ticker refresh completed in {elapsed:.2f}s")
         logger.info(f"Total: {len(new_df)} | Added: {len(added)} | Removed: {len(removed)}")
+        return True
 
-    def _refresh_all_tickers(self):
+    async def refresh_all_tickers(self):
+        """Public async method to refresh tickers"""
         with self.refresh_lock:
-            asyncio.run(self._refresh_all_tickers_async())
+            return await self._refresh_all_tickers_async()
 
     def start(self):
         if not self.active:
@@ -500,284 +505,6 @@ class EnhancedBreakoutStrategy:
         
         return self.current_stop
 
-# ======================== POSITION SIZING & TRADE EXECUTION ======================== #
-class PositionManager:
-    def __init__(self, trading_system):
-        self.trading_system = trading_system
-        self.position_risk = {}  # Track risk per position
-        self.max_portfolio_risk = 0.15  # Max 15% of portfolio at risk
-        self.sector_exposure = {}  # Track sector exposure
-        self.volatility_factor = 1.0  # Adjust based on market volatility
-        self.last_vix = 0.0
-        self.last_vix_update = 0
-        self.order_history = []
-        
-    async def calculate_position_size(self, symbol, entry_price, stop_loss, atr, adx):
-        """Calculate position size with multiple risk constraints"""
-        # 1. Basic risk-per-trade calculation
-        risk_per_share = entry_price - stop_loss
-        max_risk_amount = self.trading_system.account_value * config.MAX_RISK_PERCENT
-        base_size = max_risk_amount / risk_per_share if risk_per_share > 0 else 0
-        
-        # 2. Volatility scaling (VIX-based)
-        await self.update_volatility_factor()
-        volatility_size = base_size * self.volatility_factor
-        
-        # 3. Liquidity constraint (max 5% of average daily volume)
-        avg_volume = await self.get_average_volume(symbol)
-        if avg_volume is None:
-            # Fallback: use a conservative average volume of 100,000
-            avg_volume = 100000
-            logger.warning(f"Using fallback volume for {symbol}")
-            
-        volume_constrained_size = min(volatility_size, avg_volume * 0.05)
-        
-        # 4. Sector exposure constraint (max 25% per sector)
-        sector = await self.get_sector(symbol)
-        sector_exposure = self.sector_exposure.get(sector, 0)
-        sector_constrained_size = min(volume_constrained_size, 
-                                    (0.25 * self.trading_system.account_value - sector_exposure) / entry_price)
-        
-        # 5. Portfolio risk constraint
-        current_risk = self.calculate_portfolio_risk()
-        portfolio_constrained_size = min(sector_constrained_size, 
-                                        (self.max_portfolio_risk * self.trading_system.account_value - current_risk) / risk_per_share)
-        
-        # Final sizing with integer shares
-        position_size = max(1, int(portfolio_constrained_size))
-        
-        # Store risk metrics
-        self.position_risk[symbol] = {
-            'risk_per_share': risk_per_share,
-            'position_value': position_size * entry_price,
-            'risk_amount': position_size * risk_per_share,
-            'sector': sector,
-            'avg_volume': avg_volume
-        }
-        
-        # Update sector exposure
-        if sector:
-            self.sector_exposure[sector] = self.sector_exposure.get(sector, 0) + (position_size * entry_price)
-        
-        return position_size
-    
-    def calculate_portfolio_risk(self):
-        """Calculate total portfolio risk"""
-        return sum(pos['risk_amount'] for pos in self.position_risk.values())
-    
-    async def update_volatility_factor(self):
-        """Update volatility scaling based on VIX"""
-        # Only update once per hour
-        if time.time() - self.last_vix_update < 3600:
-            return
-            
-        try:
-            # Updated endpoint for VIX: get the previous day's data
-            vix_url = f"https://api.polygon.io/v2/aggs/ticker/VIX/prev?adjusted=true&apiKey={config.POLYGON_API_KEY}"
-            async with self.trading_system.session.get(vix_url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data.get('resultsCount', 0) > 0:
-                        vix = data['results'][0]['c']
-                    else:
-                        vix = 20  # Default value if no results
-                else:
-                    logger.warning(f"VIX request failed: {response.status}")
-                    return
-                
-            # Normalize VIX to scaling factor (15-25 is normal range)
-            if vix < 15:
-                self.volatility_factor = 1.2  # Increase size in low volatility
-            elif vix < 25:
-                self.volatility_factor = 1.0
-            elif vix < 35:
-                self.volatility_factor = 0.8
-            else:
-                self.volatility_factor = 0.6  # Reduce size in high volatility
-                
-            self.last_vix = vix
-            self.last_vix_update = time.time()
-            logger.info(f"Updated volatility factor: VIX={vix}, Factor={self.volatility_factor}")
-        except Exception as e:
-            logger.error(f"VIX update failed: {str(e)}")
-    
-    async def get_average_volume(self, symbol):
-        """Get 30-day average volume"""
-        try:
-            # Calculate date range for last 30 days
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-            
-            url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{start_date}/{end_date}?adjusted=true&sort=desc&apiKey={config.POLYGON_API_KEY}"
-            async with self.trading_system.session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data.get('resultsCount', 0) > 0:
-                        volumes = [r['v'] for r in data['results']]
-                        return sum(volumes) / len(volumes)
-                else:
-                    logger.warning(f"Volume request for {symbol} failed: {response.status}")
-                    return None
-        except Exception as e:
-            logger.error(f"Volume data error for {symbol}: {e}")
-            return None
-    
-    async def get_sector(self, symbol):
-        """Get stock sector from Polygon"""
-        try:
-            url = f"https://api.polygon.io/v3/reference/tickers/{symbol.upper()}?apiKey={config.POLYGON_API_KEY}"
-            async with self.trading_system.session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['results'].get('sic_description', 'Unknown') if 'results' in data else 'Unknown'
-                else:
-                    logger.warning(f"Sector request for {symbol} failed: {response.status}")
-                    return 'Unknown'
-        except Exception as e:
-            logger.error(f"Sector data error for {symbol}: {e}")
-            return 'Unknown'
-    
-    def estimate_slippage(self, symbol, quantity, order_type):
-        """Estimate slippage based on liquidity and order size"""
-        # Simple model: 0.1% for liquid stocks, 0.5% for illiquid
-        liquidity = self.get_liquidity_tier(symbol)
-        slippage_rates = {'liquid': 0.001, 'medium': 0.003, 'illiquid': 0.005}
-        return slippage_rates.get(liquidity, 0.005)
-    
-    def get_liquidity_tier(self, symbol):
-        """Classify stock liquidity based on average volume"""
-        # In production, use more sophisticated classification
-        if symbol not in self.position_risk:
-            return 'medium'
-        
-        avg_volume = self.position_risk[symbol].get('avg_volume', 0)
-        if avg_volume > 1000000:
-            return 'liquid'
-        elif avg_volume > 500000:
-            return 'medium'
-        return 'illiquid'
-    
-    async def execute_trade(self, symbol, side, quantity, price, stop_loss, profit_target):
-        """Execute trades with robust order management"""
-        try:
-            # 1. Determine optimal order type
-            liquidity = self.get_liquidity_tier(symbol)
-            order_type = 'limit' if liquidity in ['liquid', 'medium'] else 'vwap'
-            
-            # 2. Calculate limit price with buffer
-            current_price = await self.get_realtime_price(symbol)
-            if side == "BUY":
-                limit_price = current_price * 1.005  # Pay up 0.5% for fills
-            else:
-                limit_price = current_price * 0.995  # Sell down 0.5%
-            
-            # 3. Estimate slippage
-            slippage = self.estimate_slippage(symbol, quantity, order_type)
-            
-            # 4. Place primary order
-            order_id = await self.place_order(symbol, side, quantity, order_type, limit_price)
-            
-            # 5. Place bracket orders (OCO - One Cancels Other)
-            bracket_id = await self.place_bracket_order(
-                symbol, 
-                side, 
-                quantity, 
-                limit_price, 
-                stop_loss, 
-                profit_target
-            )
-            
-            # 6. Record trade details
-            self.order_history.append({
-                'timestamp': datetime.now(),
-                'symbol': symbol,
-                'side': side,
-                'quantity': quantity,
-                'price': price,
-                'limit_price': limit_price,
-                'stop_loss': stop_loss,
-                'profit_target': profit_target,
-                'order_id': order_id,
-                'bracket_id': bracket_id,
-                'slippage_est': slippage,
-                'status': 'pending'
-            })
-            
-            logger.info(f"Order placed: {side} {quantity} {symbol} @ {limit_price:.2f}")
-            return True
-        except Exception as e:
-            logger.error(f"Trade execution failed: {str(e)}")
-            return False
-    
-    async def place_order(self, symbol, side, quantity, order_type, price=None):
-        """Place order with broker API (placeholder)"""
-        # In production, integrate with actual broker API
-        logger.info(f"Placing {order_type} order: {side} {quantity} {symbol} @ {price or 'market'}")
-        return f"ORDER-{int(time.time() * 1000)}"
-    
-    async def place_bracket_order(self, symbol, side, quantity, price, stop_loss, profit_target):
-        """Place bracket order for stop loss and take profit"""
-        # This would be implemented with broker's OCO order functionality
-        logger.info(f"Placing bracket order: SL={stop_loss:.2f}, PT={profit_target:.2f}")
-        return f"BRACKET-{int(time.time() * 1000)}"
-    
-    async def monitor_orders(self):
-        """Monitor open orders and handle partial fills/timeouts"""
-        active_orders = [o for o in self.order_history if o['status'] in ['pending', 'partial']]
-        
-        for order in active_orders:
-            # Check order status with broker
-            order_age = (datetime.now() - order['timestamp']).total_seconds() / 60
-            
-            # Handle timeouts
-            if order_age > 5:  # 5 minutes without fill
-                await self.handle_order_timeout(order)
-            
-            # Handle partial fills
-            # (Implementation would depend on broker API)
-            
-    async def handle_order_timeout(self, order):
-        """Handle orders that haven't filled within expected time"""
-        logger.warning(f"Order {order['order_id']} timed out - adjusting")
-        
-        # Cancel original order
-        await self.cancel_order(order['order_id'])
-        
-        # Determine new price based on current market
-        current_price = await self.get_realtime_price(order['symbol'])
-        
-        # Adjust price based on side
-        if order['side'] == "BUY":
-            new_price = current_price * 1.01  # Increase bid by 1%
-        else:
-            new_price = current_price * 0.99  # Reduce ask by 1%
-        
-        # Place new order
-        new_order_id = await self.place_order(
-            order['symbol'],
-            order['side'],
-            order['quantity'],
-            'limit',
-            new_price
-        )
-        
-        # Update order record
-        order['limit_price'] = new_price
-        order['order_id'] = new_order_id
-        order['timestamp'] = datetime.now()
-        order['status'] = 'adjusted'
-        
-    async def cancel_order(self, order_id):
-        """Cancel order with broker"""
-        logger.info(f"Cancelling order {order_id}")
-        # Broker API implementation would go here
-        return True
-    
-    async def get_realtime_price(self, symbol):
-        """Placeholder for real-time price feed"""
-        # In production, connect to Polygon websocket or broker API
-        return 150.0  # Dummy value
-
 # ======================== TRADING SYSTEM CORE ======================== #
 class QuantTradingSystem:
     def __init__(self, ticker_scanner):
@@ -797,22 +524,22 @@ class QuantTradingSystem:
         self.consecutive_errors = 0
         self.last_health_check = 0
         self.last_state_save = 0
-        self.position_manager = None
+        self.failure_summary = {}
+        self.last_data_refresh = 0
+        self.state_loaded = False  # Track if state has been loaded
+        self.refresh_in_progress = False  # Add refresh lock flag
+        self.last_refresh_date = None  # Track last successful refresh date
+        self.daily_refresh_done = False  # Track if daily refresh completed
         
     async def async_init(self):
         self.session = aiohttp.ClientSession()
-        self.spy_data = await self.async_get_polygon_data("SPY")
-        if self.spy_data is not None:
-            self.spy_3mo_return = self.calculate_3mo_return(self.spy_data)
-            
-            # Calculate SPY moving averages for market regime filter
-            if len(self.spy_data) >= 200:
-                self.spy_sma_50 = self.spy_data['Close'].rolling(50).mean().iloc[-1]
-                self.spy_sma_200 = self.spy_data['Close'].rolling(200).mean().iloc[-1]
+        await self.refresh_market_data()
+        self.ticker_scanner.initial_refresh_complete.wait()
+        # Only load state once
+        if not self.state_loaded:
+            self.load_system_state()
+            self.state_loaded = True
         
-        # Initialize position manager
-        self.position_manager = PositionManager(self)
-
     async def async_close(self):
         if self.session:
             self.shutting_down = True
@@ -823,6 +550,65 @@ class QuantTradingSystem:
             for handler in self.failure_logger.handlers[:]:
                 handler.close()
                 self.failure_logger.removeHandler(handler)
+
+    def should_refresh_market_data(self):
+        """Check if market data needs refreshing"""
+        current_time = time.time()
+        # Don't refresh if we just did one
+        if current_time - self.last_data_refresh < 5:  # 5-second cooldown
+            return False
+            
+        # Check if we're already refreshing
+        if self.refresh_in_progress:
+            return False
+            
+        # Get current date and time
+        now = datetime.now(self.calendar.ny_tz)
+        current_date = now.date()
+        
+        # If we've already done a daily refresh today, skip
+        if self.daily_refresh_done and self.last_refresh_date == current_date:
+            return False
+            
+        # Check if it's past refresh time (4:00 AM ET)
+        return now.time() >= config.DAILY_TICKER_REFRESH_TIME
+
+    async def refresh_market_data(self):
+        """Refresh all market data including tickers and SPY"""
+        # Only refresh if needed and not already refreshing
+        if not self.should_refresh_market_data() or self.refresh_in_progress:
+            return False
+            
+        self.refresh_in_progress = True
+        logger.info("Refreshing market data")
+        start_time = time.time()
+        
+        try:
+            # Refresh ticker data
+            if await self.ticker_scanner.refresh_all_tickers():
+                logger.info("Ticker data refreshed")
+            
+            # Refresh SPY data
+            self.spy_data = await self.async_get_polygon_data("SPY")
+            if self.spy_data is not None:
+                self.spy_3mo_return = self.calculate_3mo_return(self.spy_data)
+                if len(self.spy_data) >= 200:
+                    self.spy_sma_50 = self.spy_data['Close'].rolling(50).mean().iloc[-1]
+                    self.spy_sma_200 = self.spy_data['Close'].rolling(200).mean().iloc[-1]
+                logger.info("SPY data refreshed")
+            
+            # Update refresh state
+            self.last_refresh_date = datetime.now(self.calendar.ny_tz).date()
+            self.daily_refresh_done = True
+            elapsed = time.time() - start_time
+            logger.info(f"Market data refresh completed in {elapsed:.2f}s")
+            return True
+        except Exception as e:
+            logger.error(f"Market data refresh failed: {e}")
+            return False
+        finally:
+            self.refresh_in_progress = False
+            self.last_data_refresh = time.time()
 
     async def async_get_polygon_data(self, ticker):
         """Fixed data fetching method with proper URL encoding and error handling"""
@@ -1020,24 +806,11 @@ class QuantTradingSystem:
             
             # Calculate risk metrics
             risk_per_share = indicators['Close'] - current_stop
-            
-            # Calculate position size using position manager
-            position_size = await self.position_manager.calculate_position_size(
-                ticker,
-                indicators['Close'],
-                current_stop,
-                indicators['ATR'],
-                indicators['ADX']
-            )
-            
-            # Adjust for account size
-            max_position_value = self.account_value * 0.05  # Max 5% per position
-            position_value = indicators['Close'] * position_size
-            if position_value > max_position_value:
-                position_size = int(max_position_value / indicators['Close'])
-            
             profit_target = indicators['Close'] + (config.REWARD_RISK_MULTIPLIER * indicators['ATR'])
             reward_risk_ratio = (profit_target - indicators['Close']) / risk_per_share
+            
+            # Position sizing per $10,000 capital
+            position_size = (config.ACCOUNT_VALUE * config.MAX_RISK_PERCENT) / risk_per_share if risk_per_share > 0 else 0
             
             return {
                 'Ticker': ticker,
@@ -1091,19 +864,20 @@ class QuantTradingSystem:
     async def scan_tickers_async(self):
         scan_start_time = datetime.now()
         self.failure_logger = self.setup_failure_logger(scan_start_time)
+        self.failure_summary = {}
         
         # Market regime filter - skip bear markets
         if self.spy_sma_50 and self.spy_sma_200 and self.spy_sma_50 < self.spy_sma_200:
             logger.warning("Bear market detected (SPY 50d < 200d), skipping scan")
             self.log_failure_details("MARKET", ["Bear market detected"])
-            return pd.DataFrame()
+            return pd.DataFrame(), self.failure_summary
         
         results = []
         failure_summary = {}
         tickers = self.ticker_scanner.get_current_tickers_list()
         if not tickers:
             logger.warning("No tickers available for scanning")
-            return pd.DataFrame()
+            return pd.DataFrame(), self.failure_summary
         
         scan_tickers = tickers[:config.MAX_TICKERS]
         total_tickers = len(scan_tickers)
@@ -1123,11 +897,9 @@ class QuantTradingSystem:
         
         # Create tasks properly
         tasks = [asyncio.create_task(process_with_semaphore(t)) for t in scan_tickers]
-        total_tasks = len(tasks)
-        completed = 0
         
-        # Emit initial progress
-        self.scanner_thread.progress_update.emit(0, total_tasks)
+        # Process with progress bar
+        pbar = tqdm(total=len(tasks), desc="Scanning stocks", disable=True)
         
         try:
             for future in asyncio.as_completed(tasks):
@@ -1158,28 +930,19 @@ class QuantTradingSystem:
                         logger.error(f"Error in scan task: {e}")
                 
                 # Update progress
-                completed += 1
-                self.scanner_thread.progress_update.emit(completed, total_tasks)
+                pbar.update(1)
         
         finally:
-            # Emit final progress
-            self.scanner_thread.progress_update.emit(total_tasks, total_tasks)
+            pbar.close()
         
-        # Log failure statistics
-        if failure_summary:
-            logger.info("Breakout condition failure summary:")
-            total_failures = sum(failure_summary.values())
-            for reason, count in sorted(failure_summary.items(), key=lambda x: x[1], reverse=True):
-                percentage = (count / total_failures) * 100
-                logger.info(f"  {reason}: {count} stocks ({percentage:.1f}%)")
-        else:
-            logger.info("No stocks failed conditions (all passed or data errors)")
+        # Store failure summary for UI
+        self.failure_summary = failure_summary
         
         if results:
             df = pd.DataFrame(results)
             df['Rank'] = df['Upside_Score'].rank(ascending=False).astype(int)
-            return df.sort_values('Upside_Score', ascending=False)
-        return pd.DataFrame()
+            return df.sort_values('Upside_Score', ascending=False), self.failure_summary
+        return pd.DataFrame(), self.failure_summary
     
     def save_results(self, df):
         filename = f"{config.RESULTS_FILE_PREFIX}{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
@@ -1192,18 +955,10 @@ class QuantTradingSystem:
         return config.SCAN_INTERVALS.get(market_phase, 7200)
     
     def is_time_for_daily_refresh(self):
-        now = datetime.now(self.calendar.ny_tz)
-        return (
-            now.time() >= config.DAILY_TICKER_REFRESH_TIME and
-            (now - timedelta(days=1)).date() != now.date()
-        )
+        return self.calendar.is_time_for_daily_refresh()
     
     async def monitor_positions(self):
-        """Enhanced position monitoring"""
-        # 1. Monitor open orders
-        await self.position_manager.monitor_orders()
-        
-        # 2. Monitor existing positions
+        """Monitor open positions and execute stop-loss/take-profit"""
         if not self.open_positions:
             return
             
@@ -1214,70 +969,35 @@ class QuantTradingSystem:
         for position in self.open_positions:
             try:
                 # Fetch current price - in reality from real-time API
-                current_price = await self.position_manager.get_realtime_price(position['symbol'])
+                current_price = await self.get_realtime_price(position['symbol'])
                 
                 # Check stop loss
                 if current_price <= position['stop_loss']:
                     logger.info(f"Stop loss triggered for {position['symbol']} at {current_price}")
-                    await self.position_manager.execute_trade(
-                        position['symbol'], 
-                        "SELL", 
-                        position['quantity'],
-                        current_price,
-                        position['stop_loss'],
-                        position['profit_target']
-                    )
+                    await self.execute_trade(position['symbol'], "SELL", position['quantity'])
                     self.open_positions.remove(position)
                     
                 # Check profit target
                 elif current_price >= position['profit_target']:
                     logger.info(f"Profit target hit for {position['symbol']} at {current_price}")
-                    await self.position_manager.execute_trade(
-                        position['symbol'], 
-                        "SELL", 
-                        position['quantity'],
-                        current_price,
-                        position['stop_loss'],
-                        position['profit_target']
-                    )
+                    await self.execute_trade(position['symbol'], "SELL", position['quantity'])
                     self.open_positions.remove(position)
                     
             except Exception as e:
                 logger.error(f"Position monitoring error for {position['symbol']}: {e}")
     
-    async def place_trade(self, signal):
-        """Place trade based on breakout signal"""
-        if self.shutting_down:
-            return False
-            
-        # Calculate position size
-        position_size = signal['Position_Size']
-        if position_size < 1:
-            logger.warning(f"Position size too small for {signal['Ticker']}: {position_size}")
-            return False
-            
-        # Execute trade
-        success = await self.position_manager.execute_trade(
-            signal['Ticker'],
-            "BUY",
-            position_size,
-            signal['Price'],
-            signal['Stop_Loss'],
-            signal['Profit_Target']
-        )
-        
-        if success:
-            # Add to open positions
-            self.open_positions.append({
-                'symbol': signal['Ticker'],
-                'entry_price': signal['Price'],
-                'quantity': position_size,
-                'stop_loss': signal['Stop_Loss'],
-                'profit_target': signal['Profit_Target']
-            })
-            
-        return success
-
+    async def get_realtime_price(self, symbol):
+        """Placeholder for real-time price feed"""
+        # In production, connect to Polygon websocket or broker API
+        return 150.0  # Dummy value
+    
+    async def execute_trade(self, symbol, side, quantity):
+        """Placeholder for trade execution"""
+        # In production, integrate with broker API
+        logger.info(f"Executing {side} order for {quantity} shares of {symbol}")
+        # Placeholder: Implement actual order placement
+        return True
+    
     def run_health_check(self):
         """Perform system health diagnostics"""
         now = time.time()
@@ -1298,14 +1018,14 @@ class QuantTradingSystem:
         # Error tracking
         error_status = "OK" if self.consecutive_errors == 0 else f"WARNING: {self.consecutive_errors} consecutive errors"
         
-        logger.info(f"""
-        System Health Report:
-        - Polygon API: {'OK' if api_ok else 'FAILED'}
-        - CPU Usage: {cpu_percent}%
-        - Memory Usage: {mem.percent}% ({mem.used/1e6:.1f}MB / {mem.total/1e6:.1f}MB)
-        - Disk Usage: {disk.percent}% ({disk.used/1e9:.1f}GB / {disk.total/1e9:.1f}GB)
-        - Error Status: {error_status}
-        """)
+        # Consolidated health report
+        health_report = (
+            f"System Health: API: {'OK' if api_ok else 'FAILED'}, "
+            f"CPU: {cpu_percent}%, Mem: {mem.percent}% ({mem.used/1e6:.1f}MB/{mem.total/1e6:.1f}MB), "
+            f"Disk: {disk.percent}% ({disk.used/1e9:.1f}GB/{disk.total/1e9:.1f}GB), "
+            f"Errors: {error_status}"
+        )
+        logger.info(health_report)
         
         # Circuit breaker
         if self.consecutive_errors > 5:
@@ -1315,11 +1035,12 @@ class QuantTradingSystem:
         return api_ok and cpu_percent < 90 and mem.percent < 90 and disk.percent < 90
     
     def check_polygon_api(self):
-        """Check Polygon API connectivity using a more reliable endpoint"""
+        """Check Polygon API connectivity"""
         try:
-            # Use the same endpoint as our actual data requests
-            url = f"https://api.polygon.io/v2/aggs/ticker/AAPL/range/1/day/2023-01-01/2023-01-02?apiKey={config.POLYGON_API_KEY}"
-            response = requests.get(url, timeout=5)
+            response = requests.get(
+                f"https://api.polygon.io/v1/marketstatus?apiKey={config.POLYGON_API_KEY}",
+                timeout=5
+            )
             return response.status_code == 200
         except Exception:
             return False
@@ -1336,8 +1057,8 @@ class QuantTradingSystem:
             'account_value': self.account_value,
             'last_scan_time': self.last_scan_time if hasattr(self, 'last_scan_time') else 0,
             'consecutive_errors': self.consecutive_errors,
-            'position_risk': self.position_manager.position_risk,
-            'sector_exposure': self.position_manager.sector_exposure
+            'last_refresh_date': self.last_refresh_date,
+            'daily_refresh_done': self.daily_refresh_done
         }
         
         try:
@@ -1349,6 +1070,9 @@ class QuantTradingSystem:
     
     def load_system_state(self):
         """Load persisted system state"""
+        if self.state_loaded:  # Prevent duplicate loading
+            return
+            
         if not os.path.exists(config.STATE_FILE):
             return
             
@@ -1360,13 +1084,16 @@ class QuantTradingSystem:
                 if hasattr(self, 'last_scan_time'):
                     self.last_scan_time = state.get('last_scan_time', 0)
                 self.consecutive_errors = state.get('consecutive_errors', 0)
-                
-                # Load position manager state
-                if self.position_manager:
-                    self.position_manager.position_risk = state.get('position_risk', {})
-                    self.position_manager.sector_exposure = state.get('sector_exposure', {})
-                    
+                self.last_refresh_date = state.get('last_refresh_date', None)
+                self.daily_refresh_done = state.get('daily_refresh_done', False)
             logger.info("System state loaded")
+            self.state_loaded = True
+            
+            # Reset daily refresh if it's a new day
+            current_date = datetime.now(self.calendar.ny_tz).date()
+            if self.last_refresh_date != current_date:
+                self.daily_refresh_done = False
+                logger.info("New trading day detected, resetting refresh flag")
         except Exception as e:
             logger.error(f"State load failed: {e}")
 
@@ -1379,7 +1106,8 @@ class ScannerThread(QThread):
     log_message = pyqtSignal(str)
     thread_finished = pyqtSignal()
     position_update = pyqtSignal(list)
-    progress_update = pyqtSignal(int, int)  # current, total
+    failure_summary = pyqtSignal(dict)
+    data_refreshed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1417,83 +1145,67 @@ class ScannerThread(QThread):
             # Initialize trading system
             self.trading_system = QuantTradingSystem(self.ticker_scanner)
             loop.run_until_complete(self.trading_system.async_init())
-            self.trading_system.load_system_state()
-            self.status_update.emit("Trading system initialized")
-            
-            # Set scanner thread reference
-            self.trading_system.scanner_thread = self
+            self.log_message.emit("System initialized")
             
             # Main trading loop
             while self.is_running:
-                try:
-                    current_time = time.time()
-                    
-                    # 1. Position monitoring (highest priority)
-                    if current_time - self.last_position_check > config.POSITION_MONITOR_INTERVAL:
-                        loop.run_until_complete(self.trading_system.monitor_positions())
-                        self.last_position_check = current_time
-                        self.position_update.emit(self.trading_system.open_positions)
-                    
-                    # 2. Scheduled scanning
-                    scan_interval = self.trading_system.get_scan_interval()
-                    if current_time - self.last_scan_time > scan_interval:
-                        self.status_update.emit("Starting scan...")
-                        self.log_message.emit(f"Scanning for opportunities (interval: {scan_interval}s)...")
-                        results = loop.run_until_complete(self.trading_system.scan_tickers_async())
-                        
-                        if results is not None and not results.empty:
-                            self.scan_completed.emit(results)
-                            self.status_update.emit(f"Found {len(results)} opportunities")
-                            filename = self.trading_system.save_results(results)
-                            if filename:
-                                self.results_saved.emit(filename)
-                        else:
-                            self.status_update.emit("No opportunities found")
-                        
-                        self.last_scan_time = current_time
-                        next_scan = datetime.fromtimestamp(
-                            self.last_scan_time + scan_interval).strftime('%H:%M:%S')
-                        self.status_update.emit(f"Next scan at {next_scan}")
-                        self.scan_finished.emit()
-                    
-                    # 3. Daily ticker refresh
-                    if self.trading_system.is_time_for_daily_refresh():
-                        self.log_message.emit("Starting daily ticker refresh")
-                        self.ticker_scanner._refresh_all_tickers()
-                    
-                    # 4. Health checks
-                    if current_time - self.last_health_check > config.HEALTH_CHECK_INTERVAL:
-                        self.trading_system.run_health_check()
-                        self.last_health_check = current_time
-                    
-                    # 5. State persistence
-                    self.trading_system.save_system_state()
-                    
-                    # Adaptive sleep
-                    sleep_time = min(
-                        config.POSITION_MONITOR_INTERVAL,
-                        scan_interval - (time.time() - self.last_scan_time)
-                    )
-                    time.sleep(max(0.1, sleep_time))
+                current_time = time.time()
                 
-                except KeyboardInterrupt:
-                    logger.info("Keyboard interrupt detected, initiating shutdown")
-                    self.is_running = False
-                except Exception as e:
-                    logger.error(f"Unexpected error in main loop: {str(e)}")
-                    self.log_message.emit(f"ERROR in main loop: {str(e)}")
-                    self.consecutive_errors += 1
-                    if self.consecutive_errors > 5:
-                        logger.critical("Too many consecutive errors, shutting down")
-                        self.is_running = False
-                    # Wait a bit before retrying
-                    time.sleep(5)
+                # 1. Position monitoring (highest priority)
+                if current_time - self.last_position_check > config.POSITION_MONITOR_INTERVAL:
+                    loop.run_until_complete(self.trading_system.monitor_positions())
+                    self.last_position_check = current_time
+                    self.position_update.emit(self.trading_system.open_positions)
+                
+                # 2. Data refresh BEFORE scanning - only if needed
+                if self.trading_system.should_refresh_market_data():
+                    self.log_message.emit("Starting pre-scan data refresh")
+                    loop.run_until_complete(self.trading_system.refresh_market_data())
+                    self.data_refreshed.emit()
+                
+                # 3. Scheduled scanning
+                scan_interval = self.trading_system.get_scan_interval()
+                if current_time - self.last_scan_time > scan_interval:
+                    self.status_update.emit("Starting scan...")
+                    self.log_message.emit(f"Scanning for opportunities (interval: {scan_interval}s)...")
+                    results, failure_summary = loop.run_until_complete(self.trading_system.scan_tickers_async())
+                    
+                    # Emit failure summary for UI
+                    self.failure_summary.emit(failure_summary)
+                    
+                    if results is not None and not results.empty:
+                        self.scan_completed.emit(results)
+                        self.status_update.emit(f"Found {len(results)} opportunities")
+                        filename = self.trading_system.save_results(results)
+                        if filename:
+                            self.results_saved.emit(filename)
+                    else:
+                        self.status_update.emit("No opportunities found")
+                    
+                    self.last_scan_time = current_time
+                    next_scan = datetime.fromtimestamp(
+                        self.last_scan_time + scan_interval).strftime('%H:%M:%S')
+                    self.status_update.emit(f"Next scan at {next_scan}")
+                    self.scan_finished.emit()
+                
+                # 4. Health checks
+                if current_time - self.last_health_check > config.HEALTH_CHECK_INTERVAL:
+                    self.trading_system.run_health_check()
+                    self.last_health_check = current_time
+                
+                # 5. State persistence
+                self.trading_system.save_system_state()
+                
+                # Adaptive sleep
+                sleep_time = min(
+                    config.POSITION_MONITOR_INTERVAL,
+                    scan_interval - (time.time() - self.last_scan_time)
+                )
+                time.sleep(max(0.1, sleep_time))
             
-        except KeyboardInterrupt:
-            logger.info("Keyboard interrupt detected at outer level, shutting down")
         except Exception as e:
             self.log_message.emit(f"CRITICAL ERROR: {str(e)}\n{traceback.format_exc()}")
-            self.consecutive_errors += 1
+            self.trading_system.consecutive_errors += 1
         finally:
             self.status_update.emit("Shutting down...")
             self.log_message.emit("Cleaning up resources...")
@@ -1508,10 +1220,7 @@ class ScannerThread(QThread):
             self.ticker_scanner.stop()
             
             # Save final state
-            try:
-                self.trading_system.save_system_state()
-            except Exception as e:
-                logger.error(f"Error saving final state: {e}")
+            self.trading_system.save_system_state()
             
             # Cancel all pending tasks
             tasks = [t for t in asyncio.all_tasks(loop) if not t.done()]
@@ -1519,16 +1228,9 @@ class ScannerThread(QThread):
                 for task in tasks:
                     task.cancel()
                 # Wait for tasks to handle cancellation
-                try:
-                    loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
-                except:
-                    pass
+                loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
             
-            try:
-                loop.close()
-            except:
-                pass
-            
+            loop.close()
             self.is_running = False
             self.status_update.emit("Trading system stopped")
             self.log_timer.stop()
@@ -1698,19 +1400,11 @@ class ScannerUI(QMainWindow):
         self.status_label = QLabel("Status: Not running")
         self.status_label.setStyleSheet("font-weight: bold; font-size: 12pt;")
         
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFixedHeight(25)
-        self.progress_bar.setVisible(False)
-        
         control_layout.addWidget(self.start_btn)
         control_layout.addWidget(self.stop_btn)
         control_layout.addWidget(self.refresh_btn)
         control_layout.addSpacing(20)
         control_layout.addWidget(self.status_label)
-        control_layout.addWidget(self.progress_bar)
         control_layout.addStretch()
         
         # Stats panel
@@ -1737,8 +1431,12 @@ class ScannerUI(QMainWindow):
         dashboard_tab = QWidget()
         dashboard_layout = QVBoxLayout(dashboard_tab)
         
+        # Create a splitter for dashboard sections
+        splitter = QSplitter(Qt.Vertical)
+        
         # Positions panel
-        positions_layout = QVBoxLayout()
+        positions_widget = QWidget()
+        positions_layout = QVBoxLayout(positions_widget)
         positions_layout.addWidget(QLabel("Current Positions:"))
         
         self.positions_table = QTableView()
@@ -1746,9 +1444,11 @@ class ScannerUI(QMainWindow):
         self.positions_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.positions_table.setAlternatingRowColors(True)
         positions_layout.addWidget(self.positions_table)
+        splitter.addWidget(positions_widget)
         
         # Results panel
-        results_layout = QVBoxLayout()
+        results_widget = QWidget()
+        results_layout = QVBoxLayout(results_widget)
         results_layout.addWidget(QLabel("Latest Opportunities:"))
         
         self.results_table = QTableView()
@@ -1759,10 +1459,25 @@ class ScannerUI(QMainWindow):
         self.results_table.setSelectionBehavior(QTableView.SelectRows)
         self.results_table.setSelectionMode(QTableView.SingleSelection)
         results_layout.addWidget(self.results_table)
+        splitter.addWidget(results_widget)
         
-        # Add to dashboard
-        dashboard_layout.addLayout(positions_layout, 40)
-        dashboard_layout.addLayout(results_layout, 60)
+        # Failure summary panel
+        failure_widget = QWidget()
+        failure_layout = QVBoxLayout(failure_widget)
+        failure_layout.addWidget(QLabel("Breakout Failure Summary:"))
+        
+        self.failure_table = QTableWidget()
+        self.failure_table.setColumnCount(2)
+        self.failure_table.setHorizontalHeaderLabels(["Failure Reason", "Count"])
+        self.failure_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.failure_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.failure_table.setSelectionMode(QAbstractItemView.NoSelection)
+        failure_layout.addWidget(self.failure_table)
+        splitter.addWidget(failure_widget)
+        
+        # Set initial sizes
+        splitter.setSizes([300, 400, 200])
+        dashboard_layout.addWidget(splitter)
         
         # Logs tab
         logs_tab = QWidget()
@@ -1775,9 +1490,6 @@ class ScannerUI(QMainWindow):
         
         logs_layout.addWidget(QLabel("Trading Logs:"))
         logs_layout.addWidget(self.log_view)
-        
-        # Risk Management Dashboard
-        self.create_risk_dashboard()
         
         # Add tabs
         self.tab_widget.addTab(dashboard_tab, "Dashboard")
@@ -1802,11 +1514,6 @@ class ScannerUI(QMainWindow):
         self.market_timer = QTimer()
         self.market_timer.timeout.connect(self.update_market_status)
         self.market_timer.start(60000)  # Update every minute
-        
-        # Risk dashboard update timer
-        self.risk_timer = QTimer()
-        self.risk_timer.timeout.connect(self.update_risk_dashboard)
-        self.risk_timer.start(10000)  # Update every 10 seconds
         
         # Initial log message
         self.update_log("Trading system started. Click 'Start Trading' to begin.")
@@ -1836,76 +1543,6 @@ class ScannerUI(QMainWindow):
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
         
-    def create_risk_dashboard(self):
-        """Add risk management dashboard"""
-        risk_tab = QWidget()
-        risk_layout = QVBoxLayout(risk_tab)
-        
-        # Risk metrics
-        metrics_layout = QGridLayout()
-        
-        self.portfolio_risk_label = QLabel("Portfolio Risk: 0.0%")
-        self.sector_exposure_label = QLabel("Sector Exposure: Not loaded")
-        self.vix_label = QLabel("VIX: 0.0")
-        self.volatility_factor_label = QLabel("Volatility Factor: 1.0x")
-        
-        metrics_layout.addWidget(QLabel("Portfolio Risk:"), 0, 0)
-        metrics_layout.addWidget(self.portfolio_risk_label, 0, 1)
-        metrics_layout.addWidget(QLabel("Sector Exposure:"), 1, 0)
-        metrics_layout.addWidget(self.sector_exposure_label, 1, 1)
-        metrics_layout.addWidget(QLabel("VIX:"), 2, 0)
-        metrics_layout.addWidget(self.vix_label, 2, 1)
-        metrics_layout.addWidget(QLabel("Volatility Factor:"), 3, 0)
-        metrics_layout.addWidget(self.volatility_factor_label, 3, 1)
-        
-        # Position risk table
-        risk_layout.addLayout(metrics_layout)
-        risk_layout.addWidget(QLabel("Position Risk Details:"))
-        
-        self.risk_table = QTableView()
-        self.risk_table.setSortingEnabled(True)
-        self.risk_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        risk_layout.addWidget(self.risk_table)
-        
-        self.tab_widget.addTab(risk_tab, "Risk Management")
-    
-    def update_risk_dashboard(self):
-        """Update risk management dashboard"""
-        if not self.scanner_thread or not self.scanner_thread.trading_system:
-            return
-            
-        pm = self.scanner_thread.trading_system.position_manager
-        
-        # Portfolio risk
-        portfolio_risk = pm.calculate_portfolio_risk()
-        portfolio_risk_pct = (portfolio_risk / self.scanner_thread.trading_system.account_value) * 100
-        self.portfolio_risk_label.setText(f"Portfolio Risk: {portfolio_risk_pct:.1f}%")
-        
-        # Sector exposure
-        sector_text = "\n".join([f"{s}: {v/self.scanner_thread.trading_system.account_value:.1%}" 
-                               for s, v in pm.sector_exposure.items()])
-        self.sector_exposure_label.setText(sector_text)
-        
-        # Volatility metrics
-        self.vix_label.setText(f"VIX: {pm.last_vix:.1f}")
-        self.volatility_factor_label.setText(f"Volatility Factor: {pm.volatility_factor:.2f}x")
-        
-        # Position risk details
-        risk_data = []
-        for symbol, risk in pm.position_risk.items():
-            risk_data.append({
-                'Symbol': symbol,
-                'Sector': risk.get('sector', 'Unknown'),
-                'Position Value': f"${risk['position_value']:,.2f}",
-                'Risk Amount': f"${risk['risk_amount']:,.2f}",
-                'Risk %': f"{risk['risk_amount']/self.scanner_thread.trading_system.account_value:.2%}"
-            })
-            
-        if risk_data:
-            df = pd.DataFrame(risk_data)
-            model = PandasModel(df)
-            self.risk_table.setModel(model)
-
     def start_scanner(self):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -1920,7 +1557,8 @@ class ScannerUI(QMainWindow):
         self.scanner_thread.log_message.connect(self.update_log)
         self.scanner_thread.thread_finished.connect(self.thread_finished)
         self.scanner_thread.position_update.connect(self.update_positions)
-        self.scanner_thread.progress_update.connect(self.update_progress)
+        self.scanner_thread.failure_summary.connect(self.update_failure_summary)
+        self.scanner_thread.data_refreshed.connect(self.data_refreshed)
         
         self.scanner_thread.start()
         self.status_bar.showMessage("Trading system started")
@@ -1960,26 +1598,43 @@ class ScannerUI(QMainWindow):
         model = PositionModel(positions)
         self.positions_table.setModel(model)
 
+    def update_failure_summary(self, failure_data):
+        """Update the failure summary table with scan statistics"""
+        self.failure_table.setRowCount(0)  # Clear existing rows
+        
+        if not failure_data:
+            return
+            
+        # Sort by count descending
+        sorted_failures = sorted(failure_data.items(), key=lambda x: x[1], reverse=True)
+        
+        for reason, count in sorted_failures:
+            row = self.failure_table.rowCount()
+            self.failure_table.insertRow(row)
+            
+            reason_item = QTableWidgetItem(reason)
+            count_item = QTableWidgetItem(str(count))
+            
+            # Apply formatting
+            reason_item.setFlags(reason_item.flags() ^ Qt.ItemIsEditable)
+            count_item.setFlags(count_item.flags() ^ Qt.ItemIsEditable)
+            count_item.setTextAlignment(Qt.AlignCenter)
+            
+            # Add to table
+            self.failure_table.setItem(row, 0, reason_item)
+            self.failure_table.setItem(row, 1, count_item)
+
+    def data_refreshed(self):
+        """Handle data refresh completion"""
+        self.status_bar.showMessage("Market data refreshed")
+        self.update_log("Market data refresh completed")
+
     def update_status(self, message):
         self.status_label.setText(f"Status: {message}")
-
-    def update_progress(self, current, total):
-        """Update progress bar during scans"""
-        if total > 0:
-            self.progress_bar.setVisible(True)
-            percentage = int((current / total) * 100)
-            self.progress_bar.setValue(percentage)
-            self.progress_bar.setFormat(f"Scanning: {current}/{total} ({percentage}%)")
-            self.status_bar.showMessage(f"Scanning stocks: {current}/{total} ({percentage}%)")
-            
-            # Hide when complete
-            if current >= total:
-                self.progress_bar.setVisible(False)
 
     def scan_finished(self):
         self.refresh_btn.setEnabled(True)
         self.status_bar.showMessage("Scan completed")
-        self.progress_bar.setVisible(False)
 
     def results_saved(self, filename):
         self.status_bar.showMessage(f"Results saved to {filename}")
@@ -1989,7 +1644,6 @@ class ScannerUI(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.status_bar.showMessage("Trading system stopped")
-        self.progress_bar.setVisible(False)
 
     def export_results(self):
         if self.current_results is None or self.current_results.empty:
