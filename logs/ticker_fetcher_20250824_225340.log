@@ -1,0 +1,19 @@
+2025-08-24 22:53:40,398 - TickerFetcher - INFO - Using Windows event loop policy
+2025-08-24 22:53:40,412 - TickerFetcher - INFO - Using local timezone: America/Chicago
+2025-08-24 22:53:40,818 - TickerFetcher - INFO - Loaded ticker cache with 5210 symbols
+2025-08-24 22:53:40,819 - TickerFetcher - INFO - Ticker scanner started
+2025-08-24 22:53:40,820 - TickerFetcher - INFO - Starting immediate scan on startup
+2025-08-24 22:53:40,820 - TickerFetcher - INFO - Starting full ticker refresh
+2025-08-24 22:53:40,820 - TickerFetcher - INFO - Fetching tickers for XNAS
+2025-08-24 22:53:40,821 - TickerFetcher - INFO - Fetching tickers for XNYS
+2025-08-24 22:53:40,821 - TickerFetcher - INFO - Fetching tickers for XASE
+2025-08-24 22:53:41,242 - TickerFetcher - INFO - Completed XASE: 222 stocks
+2025-08-24 22:53:41,590 - TickerFetcher - INFO - Completed XNYS: 1741 stocks
+2025-08-24 22:53:42,156 - TickerFetcher - INFO - Completed XNAS: 3248 stocks
+2025-08-24 22:53:42,185 - TickerFetcher - INFO - Ticker refresh completed in 1.37s
+2025-08-24 22:53:42,186 - TickerFetcher - INFO - Total: 5211 | Added: 1 | Removed: 0
+2025-08-24 22:53:42,187 - TickerFetcher - INFO - Initial scan completed successfully
+2025-08-24 22:53:42,188 - TickerFetcher - INFO - Next refresh scheduled at 2025-08-25 08:30:00-05:00 (34578 seconds from now)
+2025-08-24 22:53:52,216 - TickerFetcher - INFO - Main task cancelled
+2025-08-24 22:53:52,216 - TickerFetcher - INFO - Ticker scanner stopped
+2025-08-24 22:53:52,216 - TickerFetcher - INFO - Ticker scanner shutdown complete

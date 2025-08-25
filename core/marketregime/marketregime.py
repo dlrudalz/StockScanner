@@ -39,11 +39,12 @@ class Config:
     REGIME_MODEL_FILE = "regime_model.pkl"
     LIQUIDITY_CACHE_FILE = "liquidity_cache.pkl"
     DATA_VALIDATION_LOG = "data_validation.log"
+    DATA_QUALITY_FILE = "data_quality_report.json"
     
     # Strategy Parameters
     MARKET_INDEX_COMPONENTS = 100  # Top N stocks for market index
     SECTOR_STOCKS_PER_GROUP = 30   # Stocks per sector group
-    REGIME_LOOKBACK = 252           # 1 year of trading days for market regime
+    REGIME_LOOKBACK = 365           # 1 year + buffer for trading days
     MIN_STOCKS_FOR_SECTOR = 10      # Minimum stocks to form a sector group
     REGIME_UPDATE_DAYS = 7          # Update regime weekly
     SECTOR_ANALYSIS_DAYS = 90       # Lookback for sector analysis
@@ -57,11 +58,12 @@ class Config:
     RECOVERY_VOLUME_SURGE = 1.5      # Min volume surge multiplier
     
     # Data Validation Parameters
-    MAX_DATA_GAP_DAYS = 3            # Max allowed gap in days in price data
-    MIN_DATA_COMPLETENESS = 0.95     # Min % of expected data points
+    MAX_DATA_GAP_DAYS = 1            # Max allowed gap in days in price data
+    MIN_DATA_COMPLETENESS = 0.98     # Min % of expected data points
     MIN_CORRELATION_THRESHOLD = 0.7  # Min correlation for sector validation
     MAX_SECTOR_OVERLAP = 0.05        # Max % of stocks overlapping between sectors
     DATA_HASH_FILE = "data_hashes.json"
+    MAX_FETCH_RETRIES = 3            # Max retries for data fetching
     
     # Logging Configuration
     LOG_LEVEL = logging.INFO
@@ -111,6 +113,64 @@ def setup_logging():
 
 # Initialize logger
 logger = setup_logging()
+
+# ======================== DATA QUALITY MONITOR ======================== #
+class DataQualityMonitor:
+    def __init__(self):
+        self.quality_metrics = {}
+        
+    def track_symbol_quality(self, symbol, df):
+        """Track data quality metrics for each symbol"""
+        if df.empty:
+            self.quality_metrics[symbol] = {
+                'status': 'FAILED',
+                'completeness': 0,
+                'last_update': datetime.now().isoformat()
+            }
+            return
+            
+        # Calculate completeness
+        days_span = (df.index.max() - df.index.min()).days
+        expected_days = int(days_span * 0.7)  # 70% of calendar days are trading days
+        actual_days = len(df.dropna())
+        completeness = actual_days / expected_days if expected_days > 0 else 0
+        
+        self.quality_metrics[symbol] = {
+            'status': 'SUCCESS' if completeness >= config.MIN_DATA_COMPLETENESS else 'WARNING',
+            'completeness': completeness,
+            'data_points': actual_days,
+            'expected_points': expected_days,
+            'last_update': datetime.now().isoformat()
+        }
+        
+    def get_quality_report(self):
+        """Generate a data quality report"""
+        successful = [s for s, m in self.quality_metrics.items() if m['status'] == 'SUCCESS']
+        warnings = [s for s, m in self.quality_metrics.items() if m['status'] == 'WARNING']
+        failed = [s for s, m in self.quality_metrics.items() if m['status'] == 'FAILED']
+        
+        successful_completeness = [m['completeness'] for s, m in self.quality_metrics.items() 
+                                  if m['status'] == 'SUCCESS']
+        avg_completeness = np.mean(successful_completeness) if successful_completeness else 0
+        
+        return {
+            'total_symbols': len(self.quality_metrics),
+            'successful': len(successful),
+            'warnings': len(warnings),
+            'failed': len(failed),
+            'avg_completeness': avg_completeness,
+            'details': self.quality_metrics
+        }
+    
+    def save_quality_report(self):
+        """Save quality report to file"""
+        try:
+            report = self.get_quality_report()
+            with open(config.DATA_QUALITY_FILE, 'w') as f:
+                json.dump(report, f, indent=2)
+            logger.info(f"Data quality report saved: {report['successful']}/{report['total_symbols']} successful")
+        except Exception as e:
+            logger.error(f"Failed to save quality report: {e}")
 
 # ======================== DATA VALIDATION UTILITIES ======================== #
 class DataValidator:
@@ -519,75 +579,102 @@ class HistoricalDataFetcher:
         self.api_key = api_key
         self.base_url = "https://api.polygon.io/v2/aggs/ticker"
         
-    async def fetch_data(self, session, symbol, start_date, end_date, timespan='day', multiplier=1):
-        """Fetch historical price data for a symbol with validation"""
-        params = {
-            "adjusted": "true",
-            "sort": "asc",
-            "limit": 50000,
-            "apiKey": self.api_key
-        }
-        url = f"{self.base_url}/{symbol}/range/{multiplier}/{timespan}/{start_date}/{end_date}?{urlencode(params)}"
+    async def fetch_data(self, session, symbol, timespan='day', multiplier=1):
+        """Fetch historical price data with multiple fallback strategies"""
+        # Try multiple date ranges to ensure completeness
+        date_ranges = [
+            (datetime.now() - timedelta(days=int(config.REGIME_LOOKBACK * 1.8)), datetime.now()),  # Primary with buffer
+            (datetime.now() - timedelta(days=int(config.REGIME_LOOKBACK * 2.5)), datetime.now()),  # Extended fallback
+        ]
         
-        try:
-            async with session.get(url, timeout=15) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data.get("resultsCount", 0) > 0:
-                        df = pd.DataFrame(data['results'])
-                        df['date'] = pd.to_datetime(df['t'], unit='ms')
-                        df.set_index('date', inplace=True)
-                        df = df[['c', 'h', 'l', 'v', 'vw', 'n']]
-                        df.columns = ['close', 'high', 'low', 'volume', 'vwap', 'transactions']
-                        
-                        # Clean and validate data
-                        df = self.clean_data(df)
-                        data_validator.validate_price_data(df, symbol)
-                        
-                        return df
-                elif response.status == 429:
-                    retry_after = int(response.headers.get('Retry-After', 5))
-                    logger.warning(f"Rate limit hit for {symbol}, retrying after {retry_after}s")
-                    await asyncio.sleep(retry_after)
-                    return await self.fetch_data(session, symbol, start_date, end_date, timespan, multiplier)
-                else:
-                    logger.error(f"Failed to fetch data for {symbol}: {response.status}")
-        except Exception as e:
-            logger.error(f"Error fetching data for {symbol}: {str(e)}")
+        for start_date, end_date in date_ranges:
+            params = {
+                "adjusted": "true",
+                "sort": "asc",
+                "limit": 50000,
+                "apiKey": self.api_key
+            }
+            url = f"{self.base_url}/{symbol}/range/{multiplier}/{timespan}/{start_date.strftime('%Y-%m-%d')}/{end_date.strftime('%Y-%m-%d')}?{urlencode(params)}"
+            
+            try:
+                async with session.get(url, timeout=20) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data.get("resultsCount", 0) > 0:
+                            df = pd.DataFrame(data['results'])
+                            df['date'] = pd.to_datetime(df['t'], unit='ms')
+                            df.set_index('date', inplace=True)
+                            df = df[['c', 'h', 'l', 'v', 'vw', 'n']]
+                            df.columns = ['close', 'high', 'low', 'volume', 'vwap', 'transactions']
+                            
+                            # Validate we have enough data
+                            if self.validate_data_completeness(df, symbol):
+                                return self.clean_data(df, symbol)
+            except Exception as e:
+                logger.warning(f"Attempt failed for {symbol}: {e}")
+                continue
+        
+        logger.error(f"All attempts failed for {symbol}")
         return pd.DataFrame()
     
-    def clean_data(self, df):
-        """Clean and normalize price data"""
+    def validate_data_completeness(self, df, symbol):
+        """Validate if we have sufficient trading days"""
+        if df.empty:
+            return False
+            
+        # Calculate expected trading days (approx 252 per year)
+        days_span = (df.index.max() - df.index.min()).days
+        expected_days = int(days_span * 0.7)  # 70% of calendar days are trading days
+        
+        # Count actual trading days with data
+        actual_days = len(df.dropna())
+        
+        completeness = actual_days / expected_days
+        if completeness < config.MIN_DATA_COMPLETENESS:
+            logger.warning(f"Incomplete data for {symbol}: {completeness:.2%}")
+            return False
+            
+        return True
+
+    def clean_data(self, df, symbol):
+        """Clean and normalize price data with enhanced gap handling"""
         if df.empty:
             return df
             
         # 1. Remove duplicate dates (keep last)
         df = df[~df.index.duplicated(keep='last')]
         
-        # 2. Sort by date
-        df = df.sort_index()
+        # 2. Create complete date index for trading days
+        full_index = pd.date_range(start=df.index.min(), end=df.index.max(), freq='D')
+        df = df.reindex(full_index)
         
-        # 3. Handle missing values
+        # 3. Handle missing values - forward fill then backfill
         df = df.ffill().bfill()
         
-        # 4. Handle outliers using IQR method
-        for col in ['close', 'high', 'low', 'volume']:
-            q1 = df[col].quantile(0.25)
-            q3 = df[col].quantile(0.75)
-            iqr = q3 - q1
-            lower_bound = q1 - 1.5 * iqr
-            upper_bound = q3 + 1.5 * iqr
-            
-            # Cap outliers
-            df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
+        # 4. Validate data quality
+        data_validator.validate_price_data(df, symbol)
         
         return df
 
-    async def fetch_bulk_data(self, session, symbols, start_date, end_date):
-        """Fetch historical data for multiple symbols efficiently"""
+    async def fetch_with_retry(self, session, symbol, max_retries=3):
+        """Fetch data with retry mechanism"""
+        for attempt in range(max_retries):
+            try:
+                df = await self.fetch_data(session, symbol)
+                if not df.empty and self.validate_data_completeness(df, symbol):
+                    return df
+            except Exception as e:
+                logger.warning(f"Attempt {attempt+1} failed for {symbol}: {e}")
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                
+        logger.error(f"All {max_retries} attempts failed for {symbol}")
+        return pd.DataFrame()
+
+    async def fetch_bulk_data(self, session, symbols):
+        """Fetch historical data for multiple symbols efficiently with retries"""
         tasks = []
         for symbol in symbols:
-            tasks.append(self.fetch_data(session, symbol, start_date, end_date))
+            tasks.append(self.fetch_with_retry(session, symbol, config.MAX_FETCH_RETRIES))
         return await asyncio.gather(*tasks)
 
 # ======================== QUANT STRATEGY ENGINE ======================== #
@@ -595,6 +682,7 @@ class MarketRegimeEngine:
     def __init__(self, scanner):
         self.scanner = scanner
         self.data_fetcher = HistoricalDataFetcher(config.POLYGON_API_KEY)
+        self.quality_monitor = DataQualityMonitor()
         self.market_regime = "UNKNOWN"
         self.sector_regimes = {}
         self.regime_model = None
@@ -670,9 +758,7 @@ class MarketRegimeEngine:
             start_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
             
             async with aiohttp.ClientSession() as session:
-                all_data = await self.data_fetcher.fetch_bulk_data(
-                    session, new_symbols, start_date, end_date
-                )
+                all_data = await self.data_fetcher.fetch_bulk_data(session, new_symbols)
             
             # Process results
             new_results = {}
@@ -696,7 +782,7 @@ class MarketRegimeEngine:
         return cached_results
         
     async def build_market_index(self):
-        """Create a market index from most liquid scanner stocks"""
+        """Create market index from most liquid scanner stocks with quality filtering"""
         logger.info("Building market index from most liquid stocks")
         
         # Get current tickers with metadata
@@ -737,7 +823,30 @@ class MarketRegimeEngine:
             logger.error("No liquid stocks found for market index")
             return []
             
-        # Step 6: Select top N by liquidity
+        # Step 6: Check data quality for all candidates
+        async with aiohttp.ClientSession() as session:
+            all_data = await self.data_fetcher.fetch_bulk_data(session, merged_df['ticker'].tolist())
+        
+        # Track quality and filter
+        high_quality_symbols = []
+        for symbol, data in zip(merged_df['ticker'].tolist(), all_data):
+            self.quality_monitor.track_symbol_quality(symbol, data)
+            
+            if not data.empty and self.quality_monitor.quality_metrics[symbol]['status'] == 'SUCCESS':
+                high_quality_symbols.append(symbol)
+                self.valid_price_data[symbol] = data  # Cache valid data
+        
+        # Prioritize high-quality symbols
+        merged_df = merged_df[merged_df['ticker'].isin(high_quality_symbols)]
+        
+        # Generate quality report
+        self.quality_monitor.save_quality_report()
+        
+        if len(merged_df) == 0:
+            logger.error("No high-quality data stocks found for market index")
+            return []
+            
+        # Step 7: Select top N by liquidity
         merged_df = merged_df.sort_values('adv', ascending=False)
         components = merged_df.head(config.MARKET_INDEX_COMPONENTS)['ticker'].tolist()
         
@@ -855,15 +964,9 @@ class MarketRegimeEngine:
         if not self.market_index_components:
             await self.build_market_index()
             
-        # Calculate date range
-        end_date = datetime.now().strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=config.REGIME_LOOKBACK)).strftime("%Y-%m-%d")
-        
         # Fetch data for all components
         async with aiohttp.ClientSession() as session:
-            all_data = await self.data_fetcher.fetch_bulk_data(
-                session, self.market_index_components, start_date, end_date
-            )
+            all_data = await self.data_fetcher.fetch_bulk_data(session, self.market_index_components)
         
         # Create data dictionary and cache valid price data
         data_dict = dict(zip(self.market_index_components, all_data))
@@ -954,10 +1057,6 @@ class MarketRegimeEngine:
         if not self.sector_mapping:
             await self.create_sector_groups()
             
-        # Calculate date range
-        end_date = datetime.now().strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=config.SECTOR_ANALYSIS_DAYS)).strftime("%Y-%m-%d")
-        
         sector_regimes = {}
         returns_dict = {}  # For sector correlation validation
         
@@ -966,7 +1065,7 @@ class MarketRegimeEngine:
             
             # Fetch data for all symbols in sector
             async with aiohttp.ClientSession() as session:
-                all_data = await self.data_fetcher.fetch_bulk_data(session, symbols, start_date, end_date)
+                all_data = await self.data_fetcher.fetch_bulk_data(session, symbols)
             
             # Create data dictionary
             data_dict = dict(zip(symbols, all_data))
@@ -1157,7 +1256,7 @@ class MarketRegimeEngine:
                 for stock in valid_stocks[:2]:
                     signals[stock] = {
                         "action": "BUY",
-                        "weight": weight_per_sector / 2,
+                        "weight": weight_per_stock / 2,
                         "reason": f"Recovery candidate in {sector} sector",
                         "holding_period": "short"  # 5-15 day horizon
                     }
