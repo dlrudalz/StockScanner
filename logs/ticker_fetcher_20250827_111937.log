@@ -1,0 +1,23 @@
+2025-08-27 11:19:37,369 - TickerFetcher - INFO - Using local timezone: America/Chicago
+2025-08-27 11:19:37,369 - TickerFetcher - INFO - Database path: C:\Users\kyung\StockScanner\core\ticker_data.db
+2025-08-27 11:19:37,369 - TickerFetcher - INFO - Using composite indices: ^IXIC, ^NYA, ^XAX
+2025-08-27 11:19:37,372 - TickerFetcher - INFO - No tickers found in database
+2025-08-27 11:19:37,373 - TickerFetcher - INFO - Ticker scanner started
+2025-08-27 11:19:37,374 - TickerFetcher - INFO - Starting immediate scan on startup
+2025-08-27 11:19:37,375 - TickerFetcher - INFO - Starting full ticker refresh
+2025-08-27 11:19:37,379 - TickerFetcher - INFO - Fetching tickers for composite index ^IXIC
+2025-08-27 11:19:37,379 - TickerFetcher - INFO - Fetching tickers for composite index ^NYA
+2025-08-27 11:19:37,380 - TickerFetcher - INFO - Fetching tickers for composite index ^XAX
+2025-08-27 11:19:37,698 - TickerFetcher - INFO - Completed ^XAX: 222 stocks across 1 pages
+2025-08-27 11:19:38,218 - TickerFetcher - INFO - Completed ^NYA: 1741 stocks across 3 pages
+2025-08-27 11:19:38,909 - TickerFetcher - INFO - Completed ^IXIC: 3248 stocks across 6 pages
+2025-08-27 11:19:38,999 - TickerFetcher - INFO - Ticker refresh completed in 1.62s
+2025-08-27 11:19:38,999 - TickerFetcher - INFO - Total: 5211 | Added: 5211 | Removed: 0
+2025-08-27 11:19:39,000 - TickerFetcher - INFO - Database: 5211 inserted, 0 updated
+2025-08-27 11:19:39,001 - TickerFetcher - INFO - Initial scan completed successfully
+2025-08-27 11:19:39,001 - TickerFetcher - INFO - Next refresh scheduled at 2025-08-28 08:30:00-05:00 (21.0 hours and 10.0 minutes from now)
+2025-08-27 11:19:45,054 - TickerFetcher - INFO - Ticker scanner stopped
+2025-08-27 11:19:45,054 - TickerFetcher - INFO - Sleep interrupted by shutdown
+2025-08-27 11:19:45,054 - TickerFetcher - INFO - Main task cancelled
+2025-08-27 11:19:45,054 - TickerFetcher - INFO - Ticker scanner stopped
+2025-08-27 11:19:45,054 - TickerFetcher - INFO - Ticker scanner shutdown complete
