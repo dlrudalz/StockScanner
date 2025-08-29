@@ -8,21 +8,20 @@ import logging
 import json
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
-import pytz
 from threading import Lock, Event, RLock
 import sys
 import signal
-import requests
 from tzlocal import get_localzone
-from collections import defaultdict
 import sqlite3
 import contextlib
-from typing import List, Dict, Set, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple
 import argparse
-from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from hmmlearn import hmm
 from sklearn.mixture import GaussianMixture
+from sklearn.ensemble import RandomForestClassifier, IsolationForest
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -31,8 +30,8 @@ class Config:
     # API Configuration
     POLYGON_API_KEY = "ld1Poa63U6t4Y2MwOCA2JeKQyHVrmyg8"
     
-    # Scanner Configuration - Using composite indices instead of exchanges
-    COMPOSITE_INDICES = ["^IXIC", "^NYA", "^XAX"]  # NASDAQ Composite, NYSE Composite, NYSE AMEX Composite
+    # Scanner Configuration - Using ONLY Nasdaq Composite
+    COMPOSITE_INDICES = ["^IXIC"]  # NASDAQ Composite only
     MAX_CONCURRENT_REQUESTS = 100
     RATE_LIMIT_DELAY = 0.02
     SCAN_TIME = "08:30"
@@ -50,7 +49,11 @@ class Config:
     
     # Enhanced Model Configuration
     USE_ENSEMBLE_MODEL = True  # Use ensemble of HMM and GMM
-    MODEL_VERSION = "enhanced_v2.0"  # Model version identifier
+    MODEL_VERSION = "enhanced_v3.0"  # Model version identifier
+    USE_ANOMALY_DETECTION = True  # Detect anomalous market conditions
+    N_CLUSTERS = 4  # Allow for more nuanced regime detection
+    PCA_COMPONENTS = 10  # Reduce dimensionality for better clustering
+    ROLLING_TRAINING_WINDOW = 252  # Use 1 year of data for training (approx 252 trading days)
     
     # Logging Configuration
     LOG_LEVEL = logging.INFO
@@ -506,7 +509,7 @@ class PolygonTickerScanner:
     def __init__(self):
         self.api_key = config.POLYGON_API_KEY
         self.base_url = "https://api.polygon.io/v3/reference/tickers"
-        # Use composite indices instead of exchanges
+        # Use ONLY Nasdaq Composite
         self.composite_indices = config.COMPOSITE_INDICES
         self.active = False
         self.cache_lock = RLock()
@@ -590,10 +593,6 @@ class PolygonTickerScanner:
         # Different API endpoint for composite indices
         if composite_index == "^IXIC":  # NASDAQ Composite
             exchange = "XNAS"
-        elif composite_index == "^NYA":  # NYSE Composite
-            exchange = "XNYS"
-        elif composite_index == "^XAX":  # NYSE AMEX Composite
-            exchange = "XASE"
         else:
             logger.error(f"Unknown composite index: {composite_index}")
             return []
@@ -767,15 +766,17 @@ class MarketRegimeScanner:
         self.regime_db = MarketRegimeDatabase(config.DATABASE_PATH_REGIME)
         self.hmm_model = None
         self.gmm_model = None
+        self.rf_model = None
+        self.anomaly_detector = None
+        self.pca = None
+        self.kmeans = None
+        self.training_data = None
         self.scaler = StandardScaler()
         self.model_version = config.MODEL_VERSION
         
-        # Update the market_indices mapping to use more reliable symbols
+        # Focus on Nasdaq Composite for regime analysis
         self.market_indices = {
-            "^IXIC": "COMP",    # NASDAQ Composite
-            "^GSPC": "SPY",     # S&P 500 ETF (more reliable than index)
-            "^DJI": "DIA",      # Dow Jones ETF
-            "^RUT": "IWM"       # Russell 2000 ETF
+            "^IXIC": "COMP",    # NASDAQ Composite (primary focus)
         }
         
         logger.info(f"Market regime database path: {config.DATABASE_PATH_REGIME}")
@@ -886,6 +887,27 @@ class MarketRegimeScanner:
             features[f'{ticker}_jumps'] = returns.rolling(window=20).apply(
                 lambda x: np.sum(np.abs(x) > 2 * np.std(x)), raw=False
             )
+            
+            # Add RSI (Relative Strength Index)
+            delta = data[ticker].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            features[f'{ticker}_rsi'] = 100 - (100 / (1 + rs))
+            
+            # Add MACD
+            exp12 = data[ticker].ewm(span=12, adjust=False).mean()
+            exp26 = data[ticker].ewm(span=26, adjust=False).mean()
+            features[f'{ticker}_macd'] = exp12 - exp26
+            features[f'{ticker}_macd_signal'] = features[f'{ticker}_macd'].ewm(span=9, adjust=False).mean()
+            
+            # Add Bollinger Bands
+            rolling_mean = data[ticker].rolling(window=20).mean()
+            rolling_std = data[ticker].rolling(window=20).std()
+            features[f'{ticker}_bollinger_upper'] = rolling_mean + (rolling_std * 2)
+            features[f'{ticker}_bollinger_lower'] = rolling_mean - (rolling_std * 2)
+            features[f'{ticker}_bollinger_pct'] = (data[ticker] - features[f'{ticker}_bollinger_lower']) / (
+                features[f'{ticker}_bollinger_upper'] - features[f'{ticker}_bollinger_lower'])
         
         # Cross-asset correlations (rolling)
         returns_matrix = data.pct_change().dropna()
@@ -902,15 +924,25 @@ class MarketRegimeScanner:
         advancers = (returns_matrix > 0).rolling(window=5).mean()
         features['market_breadth'] = advancers.mean(axis=1)
         
+        # Economic regime indicators
+        features['term_structure'] = data.get('^TNX', data.get('^IRX', pd.Series(0, index=data.index))) / 100  # Default to 0 if not available
+        
         # Drop rows with NaN values
         features.dropna(inplace=True)
         
         logger.info(f"Calculated advanced features with shape: {features.shape}")
         return features
         
-    def train_ensemble(self, features: pd.DataFrame):
-        """Train an ensemble of models for better regime detection"""
+    def train_enhanced_ensemble(self, features: pd.DataFrame):
+        """Train an enhanced ensemble of models for regime detection"""
         scaled_features = self.scaler.fit_transform(features)
+        
+        # Store training data for rolling updates
+        self.training_data = scaled_features
+        
+        # Dimensionality reduction
+        self.pca = PCA(n_components=config.PCA_COMPONENTS)
+        pca_features = self.pca.fit_transform(scaled_features)
         
         # HMM Model
         self.hmm_model = hmm.GaussianHMM(
@@ -919,110 +951,151 @@ class MarketRegimeScanner:
             n_iter=config.HMM_N_ITER,
             random_state=42
         )
-        self.hmm_model.fit(scaled_features)
+        self.hmm_model.fit(pca_features)
         
-        # GMM Model for comparison
+        # GMM Model
         self.gmm_model = GaussianMixture(
             n_components=config.HMM_N_COMPONENTS,
             covariance_type=config.HMM_COVARIANCE_TYPE,
             max_iter=config.HMM_N_ITER,
             random_state=42
         )
-        self.gmm_model.fit(scaled_features)
+        self.gmm_model.fit(pca_features)
         
-        logger.info("Ensemble model training completed")
+        # K-means clustering for additional perspective
+        self.kmeans = KMeans(n_clusters=config.N_CLUSTERS, random_state=42)
+        self.kmeans.fit(pca_features)
         
-    def predict_regime_ensemble(self, features: pd.DataFrame) -> Tuple[int, float, Dict]:
-        """Predict using ensemble approach with model confidence"""
+        # Random Forest classifier for feature importance
+        # Create labels from consensus of models
+        hmm_labels = self.hmm_model.predict(pca_features)
+        gmm_labels = self.gmm_model.predict(pca_features)
+        
+        # Create consensus labels (mode of all models)
+        consensus_labels = []
+        for i in range(len(hmm_labels)):
+            votes = [hmm_labels[i], gmm_labels[i], self.kmeans.labels_[i]]
+            consensus_labels.append(max(set(votes), key=votes.count))
+        
+        self.rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+        self.rf_model.fit(scaled_features, consensus_labels)
+        
+        # Anomaly detection for unusual market conditions
+        self.anomaly_detector = IsolationForest(contamination=0.05, random_state=42)
+        self.anomaly_detector.fit(scaled_features)
+        
+        logger.info("Enhanced ensemble model training completed")
+        logger.info(f"PCA explained variance ratio: {self.pca.explained_variance_ratio_.sum():.3f}")
+        
+    def predict_enhanced_regime(self, features: pd.DataFrame) -> Tuple[int, float, Dict]:
+        """Predict using enhanced ensemble approach"""
         scaled_features = self.scaler.transform(features)
+        pca_features = self.pca.transform(scaled_features)
         
-        # Get predictions from both models
-        hmm_predictions = self.hmm_model.predict(scaled_features)
-        gmm_predictions = self.gmm_model.predict(scaled_features)
+        # Get predictions from all models
+        hmm_pred = self.hmm_model.predict(pca_features[-5:])  # Use last 5 days
+        gmm_pred = self.gmm_model.predict(pca_features[-5:])
+        kmeans_pred = self.kmeans.predict(pca_features[-5:])
+        rf_pred = self.rf_model.predict(scaled_features[-5:])
+        anomaly_score = self.anomaly_detector.score_samples(scaled_features[-5:])
+        
+        # Get probabilities for confidence calculation
+        hmm_probs = self.hmm_model.predict_proba(pca_features[-5:])
+        gmm_probs = self.gmm_model.predict_proba(pca_features[-5:])
+        rf_probs = self.rf_model.predict_proba(scaled_features[-5:])
         
         # Use the most recent predictions
-        hmm_regime = hmm_predictions[-1]
-        gmm_regime = gmm_predictions[-1]
+        recent_hmm = hmm_pred[-1]
+        recent_gmm = gmm_pred[-1]
+        recent_kmeans = kmeans_pred[-1]
+        recent_rf = rf_pred[-1]
         
-        # Calculate model agreement
-        agreement = np.mean(hmm_predictions == gmm_predictions)
+        # Calculate confidence based on model agreement and probabilities
+        model_agreement = np.mean([
+            recent_hmm == recent_gmm,
+            recent_hmm == recent_kmeans,
+            recent_hmm == recent_rf,
+            recent_gmm == recent_kmeans,
+            recent_gmm == recent_rf,
+            recent_kmeans == recent_rf
+        ])
         
-        # If models agree, use that regime
-        if hmm_regime == gmm_regime:
-            regime = hmm_regime
-            confidence = agreement * 0.8 + 0.2  # Boost confidence when models agree
-        else:
-            # Use the model with higher confidence in its prediction
-            hmm_probs = self.hmm_model.predict_proba(scaled_features)
-            gmm_probs = self.gmm_model.predict_proba(scaled_features)
-            
-            hmm_confidence = np.max(hmm_probs, axis=1)[-1]
-            gmm_confidence = np.max(gmm_probs, axis=1)[-1]
-            
-            if hmm_confidence > gmm_confidence:
-                regime = hmm_regime
-                confidence = hmm_confidence * agreement
-            else:
-                regime = gmm_regime
-                confidence = gmm_confidence * agreement
+        # Average the probabilities from models that support the final decision
+        final_regime = recent_hmm  # Start with HMM as base
+        regime_votes = [recent_hmm, recent_gmm, recent_kmeans, recent_rf]
+        final_regime = max(set(regime_votes), key=regime_votes.count)
+        
+        supporting_probs = []
+        if recent_hmm == final_regime:
+            supporting_probs.append(np.max(hmm_probs, axis=1)[-1])
+        if recent_gmm == final_regime:
+            supporting_probs.append(np.max(gmm_probs, axis=1)[-1])
+        if recent_rf == final_regime:
+            supporting_probs.append(np.max(rf_probs, axis=1)[-1])
+        
+        confidence = np.mean(supporting_probs) if supporting_probs else 0.5
+        confidence = confidence * (0.7 + 0.3 * model_agreement)  # Scale by agreement
+        
+        # Adjust confidence for anomalies
+        anomaly_factor = 1.0 - min(1.0, max(0.0, (1.0 - np.mean(anomaly_score)) * 2))  # Map [-1, 1] to [0, 1]
+        confidence = confidence * (0.8 + 0.2 * anomaly_factor)  # Reduce confidence in anomalous conditions
         
         # Prepare feature values for storage
         feature_values = {
             col: features[col].iloc[-1] for col in features.columns
         }
+        feature_values['anomaly_score'] = np.mean(anomaly_score)
+        feature_values['model_agreement'] = model_agreement
         
-        return regime, confidence, feature_values
+        return final_regime, confidence, feature_values
         
-    def predict_regime_single(self, features: pd.DataFrame) -> Tuple[int, float, Dict]:
-        """Predict current market regime using trained HMM only"""
-        if self.hmm_model is None:
-            logger.error("HMM model not trained")
-            return -1, 0.0, {}
-            
-        # Use the most recent features
-        recent_features = features.iloc[-5:].copy()  # Use last 5 days for more robust prediction
-        
-        # Scale the features
-        scaled_features = self.scaler.transform(recent_features)
-        
-        # Predict regime for the last 5 days
-        regimes = self.hmm_model.predict(scaled_features)
-        
-        # Use the most recent regime
-        regime = regimes[-1]
-        
-        # Calculate confidence based on consistency of recent predictions
-        confidence = np.mean(regimes == regime)  # Percentage of recent predictions that match
-        
-        # Apply a confidence cap to avoid 100% certainty
-        confidence = min(confidence, 0.95)
-        
-        # Add a small uncertainty factor
-        confidence = confidence * 0.9 + 0.05  # Ensures confidence is between 0.05 and 0.90
-        
-        # Prepare feature values for storage
-        feature_values = {
-            col: recent_features[col].iloc[-1] for col in recent_features.columns
+    def interpret_regime(self, regime: int, features: Dict) -> Dict:
+        """Enhanced regime interpretation with contextual information"""
+        base_interpretation = {
+            0: {"label": "Bear Market", "color": "red", "description": "Declining prices, high volatility"},
+            1: {"label": "Sideways Market", "color": "gray", "description": "Range-bound prices, moderate volatility"},
+            2: {"label": "Bull Market", "color": "green", "description": "Rising prices, low to moderate volatility"},
+            3: {"label": "High Volatility", "color": "orange", "description": "Extreme price movements in both directions"}
         }
         
-        # Log the confidence calculation details
-        logger.debug(f"Recent regime predictions: {regimes}")
-        logger.debug(f"Confidence calculation: {np.mean(regimes == regime):.2f} -> {confidence:.2f}")
+        # Default to unknown if regime not in interpretation
+        interpretation = base_interpretation.get(regime, {
+            "label": f"Unknown Regime {regime}",
+            "color": "purple",
+            "description": "Unclassified market regime"
+        })
         
-        return regime, confidence, feature_values
+        # Add contextual details based on features
+        volatility = features.get('^IXIC_volatility_ratio', 1.0)
+        momentum = features.get('^IXIC_momentum_ratio', 1.0)
+        rsi = features.get('^IXIC_rsi', 50)
+        anomaly_score = features.get('anomaly_score', 0)
         
-    def interpret_regime(self, regime: int) -> str:
-        """Interpret the numerical regime value"""
-        # This is a simple interpretation - you might want to enhance this
-        # based on your specific market analysis
-        if regime == 0:
-            return "Bear Market"
-        elif regime == 1:
-            return "Sideways Market"
-        elif regime == 2:
-            return "Bull Market"
-        else:
-            return f"Unknown Regime {regime}"
+        # Enhance description based on market conditions
+        details = []
+        
+        if volatility > 1.5:
+            details.append("High volatility environment")
+        elif volatility < 0.8:
+            details.append("Low volatility environment")
+            
+        if momentum > 1.05:
+            details.append("Strong upward momentum")
+        elif momentum < 0.95:
+            details.append("Strong downward momentum")
+            
+        if rsi > 70:
+            details.append("Overbought conditions")
+        elif rsi < 30:
+            details.append("Oversold conditions")
+            
+        if anomaly_score < -0.5:
+            details.append("Anomalous market behavior detected")
+            
+        if details:
+            interpretation["details"] = ", ".join(details)
+        
+        return interpretation
             
     async def scan_market_regime(self):
         """Perform a complete market regime scan"""
@@ -1047,25 +1120,13 @@ class MarketRegimeScanner:
                 
             # Train models if not already trained
             if self.hmm_model is None:
-                if config.USE_ENSEMBLE_MODEL:
-                    self.train_ensemble(features)
-                else:
-                    scaled_features = self.scaler.fit_transform(features)
-                    self.hmm_model = hmm.GaussianHMM(
-                        n_components=config.HMM_N_COMPONENTS,
-                        covariance_type=config.HMM_COVARIANCE_TYPE,
-                        n_iter=config.HMM_N_ITER,
-                        random_state=42
-                    )
-                    self.hmm_model.fit(scaled_features)
+                self.train_enhanced_ensemble(features)
                 
             # Predict current regime
-            if config.USE_ENSEMBLE_MODEL:
-                regime, confidence, feature_values = self.predict_regime_ensemble(features)
-            else:
-                regime, confidence, feature_values = self.predict_regime_single(features)
+            regime, confidence, feature_values = self.predict_enhanced_regime(features)
                 
-            regime_label = self.interpret_regime(regime)
+            interpretation = self.interpret_regime(regime, feature_values)
+            regime_label = interpretation["label"]
             
             # Save to database
             timestamp = datetime.now()
@@ -1076,6 +1137,7 @@ class MarketRegimeScanner:
             elapsed = time.time() - start_time
             logger.info(f"Market regime scan completed in {elapsed:.2f}s")
             logger.info(f"Current market regime: {regime_label} (confidence: {confidence:.2f})")
+            logger.info(f"Details: {interpretation.get('details', 'No additional details')}")
             
             return True
             
@@ -1279,9 +1341,12 @@ async def main():
         await regime_scanner.scan_market_regime()
         latest_regime = regime_scanner.regime_db.get_latest_regime()
         if latest_regime:
-            regime_label = regime_scanner.interpret_regime(latest_regime['regime'])
-            print(f"Current market regime: {regime_label}")
+            interpretation = regime_scanner.interpret_regime(latest_regime['regime'], json.loads(latest_regime['features']))
+            print(f"Current market regime: {interpretation['label']}")
             print(f"Confidence: {latest_regime['confidence']:.2f}")
+            print(f"Description: {interpretation['description']}")
+            if 'details' in interpretation:
+                print(f"Details: {interpretation['details']}")
             print(f"Timestamp: {latest_regime['timestamp']}")
         else:
             print("No market regime data available")
@@ -1296,8 +1361,8 @@ async def main():
         if results:
             print(f"Market regime history for the past {days} days:")
             for result in results:
-                regime_label = regime_scanner.interpret_regime(result['regime'])
-                print(f"{result['timestamp']}: {regime_label} (confidence: {result['confidence']:.2f})")
+                interpretation = regime_scanner.interpret_regime(result['regime'], json.loads(result['features']))
+                print(f"{result['timestamp']}: {interpretation['label']} (confidence: {result['confidence']:.2f})")
         else:
             print("No market regime history available")
         return
