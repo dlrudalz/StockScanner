@@ -1,4 +1,0 @@
-2025-08-28 19:49:43,190 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
-2025-08-28 19:49:43,190 - MarketRegimeScanner - INFO - Database path: C:\Users\kyung\StockScanner\core\ticker_data.db
-2025-08-28 19:49:43,190 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC, ^NYA, ^XAX
-2025-08-28 19:49:43,228 - MarketRegimeScanner - ERROR - Unexpected error: table backtest_analysis already exists
