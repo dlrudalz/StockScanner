@@ -8,21 +8,21 @@ import logging
 import json
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
-import pytz
 from threading import Lock, Event, RLock
+from collections import defaultdict
 import sys
 import signal
-import requests
 from tzlocal import get_localzone
-from collections import defaultdict
 import sqlite3
 import contextlib
-from typing import List, Dict, Set, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple
 import argparse
-from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from hmmlearn import hmm
 from sklearn.mixture import GaussianMixture
+from sklearn.ensemble import RandomForestClassifier, IsolationForest
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -31,8 +31,8 @@ class Config:
     # API Configuration
     POLYGON_API_KEY = "ld1Poa63U6t4Y2MwOCA2JeKQyHVrmyg8"
     
-    # Scanner Configuration - Using composite indices instead of exchanges
-    COMPOSITE_INDICES = ["^IXIC", "^NYA", "^XAX"]  # NASDAQ Composite, NYSE Composite, NYSE AMEX Composite
+    # Scanner Configuration - Using ONLY Nasdaq Composite
+    COMPOSITE_INDICES = ["^IXIC"]  # NASDAQ Composite only
     MAX_CONCURRENT_REQUESTS = 100
     RATE_LIMIT_DELAY = 0.02
     SCAN_TIME = "08:30"
@@ -50,10 +50,14 @@ class Config:
     
     # Enhanced Model Configuration
     USE_ENSEMBLE_MODEL = True  # Use ensemble of HMM and GMM
-    MODEL_VERSION = "enhanced_v2.0"  # Model version identifier
+    MODEL_VERSION = "enhanced_v3.0"  # Model version identifier
+    USE_ANOMALY_DETECTION = True  # Detect anomalous market conditions
+    N_CLUSTERS = 4  # Allow for more nuanced regime detection
+    PCA_COMPONENTS = 10  # Reduce dimensionality for better clustering
+    ROLLING_TRAINING_WINDOW = 252  # Use 1 year of data for training (approx 252 trading days)
     
     # Backtesting Configuration
-    BACKTEST_HISTORICAL_DAYS = 30  # Default days to look back for backtesting
+    BACKTEST_HISTORICAL_DAYS = 30  # Days of historical data to use for backtesting
     
     # Logging Configuration
     LOG_LEVEL = logging.INFO
@@ -91,100 +95,22 @@ def setup_logging():
 
 logger = setup_logging()
 
-# ======================== DATABASE MIGRATION SYSTEM ======================== #
-class DatabaseMigration:
-    """Database migration system to handle schema changes"""
-    
-    def __init__(self, db_path: str, migrations: List[Tuple[int, str]]):
-        self.db_path = db_path
-        self.migrations = sorted(migrations, key=lambda x: x[0])
-        self.current_version = 0
-        
-    @contextlib.contextmanager
-    def get_connection(self):
-        """Context manager for database connections"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-        finally:
-            conn.close()
-            
-    def get_current_version(self) -> int:
-        """Get current database version"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                # Check if migrations table exists
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='migrations'")
-                if cursor.fetchone():
-                    cursor.execute("SELECT MAX(version) as version FROM migrations")
-                    result = cursor.fetchone()
-                    return result['version'] if result and result['version'] is not None else 0
-                return 0
-        except sqlite3.Error:
-            return 0
-            
-    def apply_migrations(self):
-        """Apply all pending migrations"""
-        current_version = self.get_current_version()
-        logger.info(f"Current database version: {current_version}")
-        
-        pending_migrations = [m for m in self.migrations if m[0] > current_version]
-        
-        if not pending_migrations:
-            logger.info("Database is up to date")
-            return
-            
-        logger.info(f"Applying {len(pending_migrations)} migrations")
-        
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Create migrations table if it doesn't exist
-            if current_version == 0:
-                cursor.execute('''
-                    CREATE TABLE migrations (
-                        version INTEGER PRIMARY KEY,
-                        applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        description TEXT
-                    )
-                ''')
-            
-            for version, sql in pending_migrations:
-                try:
-                    # Execute migration SQL
-                    if isinstance(sql, str):
-                        cursor.executescript(sql)
-                    elif isinstance(sql, list):
-                        for statement in sql:
-                            cursor.execute(statement)
-                    
-                    # Record migration
-                    cursor.execute(
-                        "INSERT INTO migrations (version, description) VALUES (?, ?)",
-                        (version, f"Migration to version {version}")
-                    )
-                    
-                    conn.commit()
-                    logger.info(f"Applied migration to version {version}")
-                    
-                except sqlite3.Error as e:
-                    conn.rollback()
-                    logger.error(f"Failed to apply migration {version}: {e}")
-                    raise
-
 # ======================== DATABASE MANAGER ======================== #
 class DatabaseManager:
     def __init__(self, db_path: str):
         self.db_path = db_path
         # Ensure the directory exists
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self._init_database()
         
-        # Define database migrations
-        self.migrations = [
-            (1, [
-                '''CREATE TABLE IF NOT EXISTS tickers (
+    def _init_database(self):
+        """Initialize database with required tables"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Create tickers table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS tickers (
                     ticker TEXT PRIMARY KEY,
                     name TEXT,
                     primary_exchange TEXT,
@@ -196,13 +122,21 @@ class DatabaseManager:
                     active INTEGER DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )''',
-                '''CREATE TABLE IF NOT EXISTS metadata (
+                )
+            ''')
+            
+            # Create metadata table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY,
                     value TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )''',
-                '''CREATE TABLE IF NOT EXISTS historical_tickers (
+                )
+            ''')
+            
+            # Create historical_tickers table to track changes over time
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS historical_tickers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ticker TEXT,
                     name TEXT,
@@ -213,10 +147,14 @@ class DatabaseManager:
                     locale TEXT,
                     currency_name TEXT,
                     active INTEGER,
-                    change_type TEXT,
+                    change_type TEXT,  -- 'added', 'removed', 'updated'
                     change_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )''',
-                '''CREATE TABLE IF NOT EXISTS backtest_tickers (
+                )
+            ''')
+            
+            # Create backtest_tickers table for historical data with year column
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS backtest_tickers (
                     date TEXT,
                     year INTEGER,
                     ticker TEXT,
@@ -228,18 +166,40 @@ class DatabaseManager:
                     locale TEXT,
                     currency_name TEXT,
                     PRIMARY KEY (date, ticker)
-                )''',
-                '''CREATE INDEX IF NOT EXISTS idx_tickers_exchange ON tickers(primary_exchange)''',
-                '''CREATE INDEX IF NOT EXISTS idx_tickers_active ON tickers(active)''',
-                '''CREATE INDEX IF NOT EXISTS idx_historical_tickers_date ON historical_tickers(change_date)''',
-                '''CREATE INDEX IF NOT EXISTS idx_backtest_tickers_date ON backtest_tickers(date)''',
-                '''CREATE INDEX IF NOT EXISTS idx_backtest_tickers_year ON backtest_tickers(year)'''
-            ])
-        ]
-        
-        # Apply migrations
-        migrator = DatabaseMigration(db_path, self.migrations)
-        migrator.apply_migrations()
+                )
+            ''')
+            
+            # Create backtest_final_results table for storing final backtest results
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS backtest_final_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    start_date TEXT,
+                    end_date TEXT,
+                    start_year INTEGER,
+                    end_year INTEGER,
+                    ticker TEXT,
+                    name TEXT,
+                    primary_exchange TEXT,
+                    last_updated_utc TEXT,
+                    type TEXT,
+                    market TEXT,
+                    locale TEXT,
+                    currency_name TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create indexes for better performance
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_exchange ON tickers(primary_exchange)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_active ON tickers(active)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_date ON historical_tickers(change_date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_date ON backtest_tickers(date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_year ON backtest_tickers(year)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_dates ON backtest_final_results(start_date, end_date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_years ON backtest_final_results(start_year, end_year)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_ticker ON backtest_final_results(ticker)')
+            
+            conn.commit()
             
     @contextlib.contextmanager
     def get_connection(self):
@@ -528,6 +488,69 @@ class DatabaseManager:
             "SELECT DISTINCT year FROM backtest_tickers ORDER BY year"
         )
         return [row['year'] for row in result]
+        
+    def upsert_backtest_final_results(self, tickers_data: List[Dict], start_date: str, end_date: str) -> int:
+        """Insert final backtest results into the database with year information"""
+        inserted = 0
+        start_year = int(start_date.split('-')[0])
+        end_year = int(end_date.split('-')[0])
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # First, delete any existing results for this date range
+            cursor.execute(
+                "DELETE FROM backtest_final_results WHERE start_date = ? AND end_date = ?",
+                (start_date, end_date)
+            )
+            
+            for ticker_data in tickers_data:
+                cursor.execute('''
+                    INSERT INTO backtest_final_results 
+                    (start_date, end_date, start_year, end_year, ticker, name, primary_exchange, last_updated_utc, 
+                     type, market, locale, currency_name)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    start_date,
+                    end_date,
+                    start_year,
+                    end_year,
+                    ticker_data['ticker'],
+                    ticker_data.get('name'),
+                    ticker_data.get('primary_exchange'),
+                    ticker_data.get('last_updated_utc'),
+                    ticker_data.get('type'),
+                    ticker_data.get('market'),
+                    ticker_data.get('locale'),
+                    ticker_data.get('currency_name')
+                ))
+                
+                if cursor.rowcount > 0:
+                    inserted += 1
+            
+            conn.commit()
+            
+        return inserted
+        
+    def get_backtest_final_results(self, start_date: str, end_date: str) -> List[Dict]:
+        """Get final backtest results for a specific date range"""
+        return self.execute_query(
+            "SELECT * FROM backtest_final_results WHERE start_date = ? AND end_date = ? ORDER BY ticker",
+            (start_date, end_date)
+        )
+        
+    def get_backtest_final_results_by_year(self, year: int) -> List[Dict]:
+        """Get final backtest results for a specific year"""
+        return self.execute_query(
+            "SELECT * FROM backtest_final_results WHERE start_year <= ? AND end_year >= ? ORDER BY ticker",
+            (year, year)
+        )
+        
+    def get_all_backtest_runs(self) -> List[Dict]:
+        """Get all backtest runs with their date ranges"""
+        return self.execute_query(
+            "SELECT DISTINCT start_date, end_date, start_year, end_year FROM backtest_final_results ORDER BY start_date, end_date"
+        )
 
 # ======================== MARKET REGIME DATABASE ======================== #
 class MarketRegimeDatabase:
@@ -535,11 +558,16 @@ class MarketRegimeDatabase:
         self.db_path = db_path
         # Ensure the directory exists
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self._init_database()
         
-        # Define database migrations
-        self.migrations = [
-            (1, [
-                '''CREATE TABLE IF NOT EXISTS market_regimes (
+    def _init_database(self):
+        """Initialize database with required tables for market regime data"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Create market_regimes table with confidence column
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS market_regimes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp DATETIME NOT NULL,
                     regime INTEGER NOT NULL,
@@ -547,8 +575,12 @@ class MarketRegimeDatabase:
                     features TEXT,
                     model_version TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )''',
-                '''CREATE TABLE IF NOT EXISTS regime_statistics (
+                )
+            ''')
+            
+            # Create regime_statistics table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS regime_statistics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     regime INTEGER NOT NULL,
                     start_date DATETIME NOT NULL,
@@ -557,42 +589,32 @@ class MarketRegimeDatabase:
                     return_pct REAL,
                     volatility REAL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )''',
-                '''CREATE TABLE IF NOT EXISTS backtest_results (
+                )
+            ''')
+            
+            # Create backtest_market_regimes table for historical backtesting
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS backtest_market_regimes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     backtest_date TEXT NOT NULL,
-                    backtest_year INTEGER NOT NULL,
                     timestamp DATETIME NOT NULL,
                     regime INTEGER NOT NULL,
                     confidence REAL NOT NULL,
                     features TEXT,
                     model_version TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )''',
-                '''CREATE TABLE IF NOT EXISTS backtest_analysis (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    backtest_date TEXT NOT NULL,
-                    backtest_year INTEGER NOT NULL,
-                    analysis_type TEXT NOT NULL,
-                    analysis_data TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )''',
-                '''CREATE INDEX IF NOT EXISTS idx_regimes_timestamp ON market_regimes(timestamp)''',
-                '''CREATE INDEX IF NOT EXISTS idx_regimes_regime ON market_regimes(regime)''',
-                '''CREATE INDEX IF NOT EXISTS idx_statistics_regime ON regime_statistics(regime)''',
-                '''CREATE INDEX IF NOT EXISTS idx_statistics_date ON regime_statistics(start_date)''',
-                '''CREATE INDEX IF NOT EXISTS idx_backtest_date ON backtest_results(backtest_date)''',
-                '''CREATE INDEX IF NOT EXISTS idx_backtest_year ON backtest_results(backtest_year)''',
-                '''CREATE INDEX IF NOT EXISTS idx_backtest_timestamp ON backtest_results(timestamp)''',
-                '''CREATE INDEX IF NOT EXISTS idx_analysis_date ON backtest_analysis(backtest_date)''',
-                '''CREATE INDEX IF NOT EXISTS idx_analysis_year ON backtest_analysis(backtest_year)''',
-                '''CREATE INDEX IF NOT EXISTS idx_analysis_type ON backtest_analysis(analysis_type)'''
-            ])
-        ]
-        
-        # Apply migrations
-        migrator = DatabaseMigration(db_path, self.migrations)
-        migrator.apply_migrations()
+                )
+            ''')
+            
+            # Create indexes for better performance
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_timestamp ON market_regimes(timestamp)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_regime ON market_regimes(regime)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_regime ON regime_statistics(regime)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_date ON regime_statistics(start_date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_regimes_date ON backtest_market_regimes(backtest_date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_regimes_timestamp ON backtest_market_regimes(timestamp)')
+            
+            conn.commit()
             
     @contextlib.contextmanager
     def get_connection(self):
@@ -629,6 +651,16 @@ class MarketRegimeDatabase:
             (timestamp, regime, confidence, json.dumps(features), model_version)
         )
         
+    def save_backtest_market_regime(self, backtest_date: str, timestamp: datetime, regime: int, 
+                                   confidence: float, features: Dict, model_version: str) -> int:
+        """Save backtest market regime prediction to database"""
+        return self.execute_write(
+            '''INSERT INTO backtest_market_regimes 
+               (backtest_date, timestamp, regime, confidence, features, model_version) 
+               VALUES (?, ?, ?, ?, ?, ?)''',
+            (backtest_date, timestamp, regime, confidence, json.dumps(features), model_version)
+        )
+        
     def get_latest_regime(self) -> Optional[Dict]:
         """Get the latest market regime from database"""
         result = self.execute_query(
@@ -642,6 +674,20 @@ class MarketRegimeDatabase:
             "SELECT * FROM market_regimes WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp",
             (start_date, end_date)
         )
+        
+    def get_backtest_regimes_by_date(self, backtest_date: str) -> List[Dict]:
+        """Get backtest market regimes for a specific date"""
+        return self.execute_query(
+            "SELECT * FROM backtest_market_regimes WHERE backtest_date = ? ORDER BY timestamp",
+            (backtest_date,)
+        )
+        
+    def get_backtest_dates(self) -> List[str]:
+        """Get all available backtest dates"""
+        result = self.execute_query(
+            "SELECT DISTINCT backtest_date FROM backtest_market_regimes ORDER BY backtest_date"
+        )
+        return [row['backtest_date'] for row in result]
         
     def save_regime_statistics(self, regime: int, start_date: datetime, end_date: datetime, 
                               duration_days: int, return_pct: float, volatility: float) -> int:
@@ -664,73 +710,13 @@ class MarketRegimeDatabase:
             return self.execute_query(
                 "SELECT * FROM regime_statistics ORDER BY start_date"
             )
-            
-    def save_backtest_result(self, backtest_date: str, timestamp: datetime, regime: int, 
-                           confidence: float, features: Dict, model_version: str) -> int:
-        """Save backtest result to database"""
-        backtest_year = int(backtest_date.split('-')[0])
-        return self.execute_write(
-            '''INSERT INTO backtest_results 
-               (backtest_date, backtest_year, timestamp, regime, confidence, features, model_version) 
-               VALUES (?, ?, ?, ?, ?, ?, ?)''',
-            (backtest_date, backtest_year, timestamp, regime, confidence, json.dumps(features), model_version)
-        )
-        
-    def get_backtest_results(self, backtest_date: str) -> List[Dict]:
-        """Get backtest results for a specific date"""
-        return self.execute_query(
-            "SELECT * FROM backtest_results WHERE backtest_date = ? ORDER BY timestamp",
-            (backtest_date,)
-        )
-        
-    def get_backtest_results_by_year(self, year: int) -> List[Dict]:
-        """Get backtest results for a specific year"""
-        return self.execute_query(
-            "SELECT * FROM backtest_results WHERE backtest_year = ? ORDER BY backtest_date, timestamp",
-            (year,)
-        )
-        
-    def get_backtest_dates(self) -> List[str]:
-        """Get all available backtest dates"""
-        result = self.execute_query(
-            "SELECT DISTINCT backtest_date FROM backtest_results ORDER BY backtest_date"
-        )
-        return [row['backtest_date'] for row in result]
-        
-    def get_backtest_years(self) -> List[int]:
-        """Get all available backtest years"""
-        result = self.execute_query(
-            "SELECT DISTINCT backtest_year FROM backtest_results ORDER BY backtest_year"
-        )
-        return [row['backtest_year'] for row in result]
-        
-    def save_backtest_analysis(self, backtest_date: str, analysis_type: str, analysis_data: Dict) -> int:
-        """Save backtest analysis to database"""
-        backtest_year = int(backtest_date.split('-')[0])
-        return self.execute_write(
-            '''INSERT INTO backtest_analysis 
-               (backtest_date, backtest_year, analysis_type, analysis_data) 
-               VALUES (?, ?, ?, ?)''',
-            (backtest_date, backtest_year, analysis_type, json.dumps(analysis_data))
-        )
-        
-    def get_backtest_analysis(self, backtest_date: str, analysis_type: str) -> Optional[Dict]:
-        """Get backtest analysis for a specific date and type"""
-        result = self.execute_query(
-            "SELECT * FROM backtest_analysis WHERE backtest_date = ? AND analysis_type = ? ORDER BY created_at DESC LIMIT 1",
-            (backtest_date, analysis_type)
-        )
-        if result:
-            analysis_data = result[0]['analysis_data']
-            return json.loads(analysis_data) if analysis_data else {}
-        return None
 
 # ======================== TICKER SCANNER ======================== #
 class PolygonTickerScanner:
     def __init__(self):
         self.api_key = config.POLYGON_API_KEY
         self.base_url = "https://api.polygon.io/v3/reference/tickers"
-        # Use composite indices instead of exchanges
+        # Use ONLY Nasdaq Composite
         self.composite_indices = config.COMPOSITE_INDICES
         self.active = False
         self.cache_lock = RLock()
@@ -821,10 +807,6 @@ class PolygonTickerScanner:
         # Different API endpoint for composite indices
         if composite_index == "^IXIC":  # NASDAQ Composite
             exchange = "XNAS"
-        elif composite_index == "^NYA":  # NYSE Composite
-            exchange = "XNYS"
-        elif composite_index == "^XAX":  # NYSE AMEX Composite
-            exchange = "XASE"
         else:
             logger.error(f"Unknown composite index: {composite_index}")
             return []
@@ -1014,6 +996,18 @@ class PolygonTickerScanner:
     def get_backtest_years(self) -> List[int]:
         """Get all available backtest years"""
         return self.db.get_backtest_years()
+        
+    def get_backtest_final_results(self, start_date: str, end_date: str) -> List[Dict]:
+        """Get final backtest results for a specific date range"""
+        return self.db.get_backtest_final_results(start_date, end_date)
+        
+    def get_backtest_final_results_by_year(self, year: int) -> List[Dict]:
+        """Get final backtest results for a specific year"""
+        return self.db.get_backtest_final_results_by_year(year)
+        
+    def get_all_backtest_runs(self) -> List[Dict]:
+        """Get all backtest runs with their date ranges"""
+        return self.db.get_all_backtest_runs()
 
 # ======================== MARKET REGIME SCANNER ======================== #
 class MarketRegimeScanner:
@@ -1028,23 +1022,23 @@ class MarketRegimeScanner:
         self.regime_db = MarketRegimeDatabase(config.DATABASE_PATH_REGIME)
         self.hmm_model = None
         self.gmm_model = None
+        self.rf_model = None
+        self.anomaly_detector = None
+        self.pca = None
+        self.kmeans = None
+        self.training_data = None
         self.scaler = StandardScaler()
         self.model_version = config.MODEL_VERSION
-        
         # Backtesting attributes
         self.backtest_mode = False
         self.backtest_date = None
         
-        # Use the composite indices for market regime detection
+        # Focus on Nasdaq Composite for regime analysis
         self.market_indices = {
-            "^IXIC": "COMP",    # NASDAQ Composite
-            "^GSPC": "SPY",     # S&P 500 ETF (more reliable than index)
-            "^DJI": "DIA",      # Dow Jones ETF
-            "^RUT": "IWM"       # Russell 2000 ETF
+            "^IXIC": "COMP",    # NASDAQ Composite (primary focus)
         }
         
         logger.info(f"Market regime database path: {config.DATABASE_PATH_REGIME}")
-        logger.info(f"Using composite indices for regime detection: {', '.join(self.market_indices.keys())}")
         
     async def _fetch_historical_data(self, session, ticker: str, days: int, end_date: datetime = None) -> Optional[pd.DataFrame]:
         """Fetch historical data for a ticker with optional end date for backtesting"""
@@ -1096,7 +1090,7 @@ class MarketRegimeScanner:
                 return None
                 
     async def fetch_market_data(self, days: int = config.HISTORICAL_DATA_DAYS, end_date: datetime = None) -> pd.DataFrame:
-        """Fetch historical market data for all market indices with optional end date for backtesting"""
+        """Fetch historical market data for all market indices"""
         logger.info(f"Fetching {days} days of market data for regime analysis")
         
         # Get the market indices
@@ -1152,6 +1146,27 @@ class MarketRegimeScanner:
             features[f'{ticker}_jumps'] = returns.rolling(window=20).apply(
                 lambda x: np.sum(np.abs(x) > 2 * np.std(x)), raw=False
             )
+            
+            # Add RSI (Relative Strength Index)
+            delta = data[ticker].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            features[f'{ticker}_rsi'] = 100 - (100 / (1 + rs))
+            
+            # Add MACD
+            exp12 = data[ticker].ewm(span=12, adjust=False).mean()
+            exp26 = data[ticker].ewm(span=26, adjust=False).mean()
+            features[f'{ticker}_macd'] = exp12 - exp26
+            features[f'{ticker}_macd_signal'] = features[f'{ticker}_macd'].ewm(span=9, adjust=False).mean()
+            
+            # Add Bollinger Bands
+            rolling_mean = data[ticker].rolling(window=20).mean()
+            rolling_std = data[ticker].rolling(window=20).std()
+            features[f'{ticker}_bollinger_upper'] = rolling_mean + (rolling_std * 2)
+            features[f'{ticker}_bollinger_lower'] = rolling_mean - (rolling_std * 2)
+            features[f'{ticker}_bollinger_pct'] = (data[ticker] - features[f'{ticker}_bollinger_lower']) / (
+                features[f'{ticker}_bollinger_upper'] - features[f'{ticker}_bollinger_lower'])
         
         # Cross-asset correlations (rolling)
         returns_matrix = data.pct_change().dropna()
@@ -1168,15 +1183,25 @@ class MarketRegimeScanner:
         advancers = (returns_matrix > 0).rolling(window=5).mean()
         features['market_breadth'] = advancers.mean(axis=1)
         
+        # Economic regime indicators
+        features['term_structure'] = data.get('^TNX', data.get('^IRX', pd.Series(0, index=data.index))) / 100  # Default to 0 if not available
+        
         # Drop rows with NaN values
         features.dropna(inplace=True)
         
         logger.info(f"Calculated advanced features with shape: {features.shape}")
         return features
         
-    def train_ensemble(self, features: pd.DataFrame):
-        """Train an ensemble of models for better regime detection"""
+    def train_enhanced_ensemble(self, features: pd.DataFrame):
+        """Train an enhanced ensemble of models for regime detection"""
         scaled_features = self.scaler.fit_transform(features)
+        
+        # Store training data for rolling updates
+        self.training_data = scaled_features
+        
+        # Dimensionality reduction
+        self.pca = PCA(n_components=config.PCA_COMPONENTS)
+        pca_features = self.pca.fit_transform(scaled_features)
         
         # HMM Model
         self.hmm_model = hmm.GaussianHMM(
@@ -1185,113 +1210,154 @@ class MarketRegimeScanner:
             n_iter=config.HMM_N_ITER,
             random_state=42
         )
-        self.hmm_model.fit(scaled_features)
+        self.hmm_model.fit(pca_features)
         
-        # GMM Model for comparison
+        # GMM Model
         self.gmm_model = GaussianMixture(
             n_components=config.HMM_N_COMPONENTS,
             covariance_type=config.HMM_COVARIANCE_TYPE,
             max_iter=config.HMM_N_ITER,
             random_state=42
         )
-        self.gmm_model.fit(scaled_features)
+        self.gmm_model.fit(pca_features)
         
-        logger.info("Ensemble model training completed")
+        # K-means clustering for additional perspective
+        self.kmeans = KMeans(n_clusters=config.N_CLUSTERS, random_state=42)
+        self.kmeans.fit(pca_features)
         
-    def predict_regime_ensemble(self, features: pd.DataFrame) -> Tuple[int, float, Dict]:
-        """Predict using ensemble approach with model confidence"""
+        # Random Forest classifier for feature importance
+        # Create labels from consensus of models
+        hmm_labels = self.hmm_model.predict(pca_features)
+        gmm_labels = self.gmm_model.predict(pca_features)
+        
+        # Create consensus labels (mode of all models)
+        consensus_labels = []
+        for i in range(len(hmm_labels)):
+            votes = [hmm_labels[i], gmm_labels[i], self.kmeans.labels_[i]]
+            consensus_labels.append(max(set(votes), key=votes.count))
+        
+        self.rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+        self.rf_model.fit(scaled_features, consensus_labels)
+        
+        # Anomaly detection for unusual market conditions
+        self.anomaly_detector = IsolationForest(contamination=0.05, random_state=42)
+        self.anomaly_detector.fit(scaled_features)
+        
+        logger.info("Enhanced ensemble model training completed")
+        logger.info(f"PCA explained variance ratio: {self.pca.explained_variance_ratio_.sum():.3f}")
+        
+    def predict_enhanced_regime(self, features: pd.DataFrame) -> Tuple[int, float, Dict]:
+        """Predict using enhanced ensemble approach"""
         scaled_features = self.scaler.transform(features)
+        pca_features = self.pca.transform(scaled_features)
         
-        # Get predictions from both models
-        hmm_predictions = self.hmm_model.predict(scaled_features)
-        gmm_predictions = self.gmm_model.predict(scaled_features)
+        # Get predictions from all models
+        hmm_pred = self.hmm_model.predict(pca_features[-5:])  # Use last 5 days
+        gmm_pred = self.gmm_model.predict(pca_features[-5:])
+        kmeans_pred = self.kmeans.predict(pca_features[-5:])
+        rf_pred = self.rf_model.predict(scaled_features[-5:])
+        anomaly_score = self.anomaly_detector.score_samples(scaled_features[-5:])
+        
+        # Get probabilities for confidence calculation
+        hmm_probs = self.hmm_model.predict_proba(pca_features[-5:])
+        gmm_probs = self.gmm_model.predict_proba(pca_features[-5:])
+        rf_probs = self.rf_model.predict_proba(scaled_features[-5:])
         
         # Use the most recent predictions
-        hmm_regime = hmm_predictions[-1]
-        gmm_regime = gmm_predictions[-1]
+        recent_hmm = hmm_pred[-1]
+        recent_gmm = gmm_pred[-1]
+        recent_kmeans = kmeans_pred[-1]
+        recent_rf = rf_pred[-1]
         
-        # Calculate model agreement
-        agreement = np.mean(hmm_predictions == gmm_predictions)
+        # Calculate confidence based on model agreement and probabilities
+        model_agreement = np.mean([
+            recent_hmm == recent_gmm,
+            recent_hmm == recent_kmeans,
+            recent_hmm == recent_rf,
+            recent_gmm == recent_kmeans,
+            recent_gmm == recent_rf,
+            recent_kmeans == recent_rf
+        ])
         
-        # If models agree, use that regime
-        if hmm_regime == gmm_regime:
-            regime = hmm_regime
-            confidence = agreement * 0.8 + 0.2  # Boost confidence when models agree
-        else:
-            # Use the model with higher confidence in its prediction
-            hmm_probs = self.hmm_model.predict_proba(scaled_features)
-            gmm_probs = self.gmm_model.predict_proba(scaled_features)
-            
-            hmm_confidence = np.max(hmm_probs, axis=1)[-1]
-            gmm_confidence = np.max(gmm_probs, axis=1)[-1]
-            
-            if hmm_confidence > gmm_confidence:
-                regime = hmm_regime
-                confidence = hmm_confidence * agreement
-            else:
-                regime = gmm_regime
-                confidence = gmm_confidence * agreement
+        # Average the probabilities from models that support the final decision
+        final_regime = recent_hmm  # Start with HMM as base
+        regime_votes = [recent_hmm, recent_gmm, recent_kmeans, recent_rf]
+        final_regime = max(set(regime_votes), key=regime_votes.count)
+        
+        supporting_probs = []
+        if recent_hmm == final_regime:
+            supporting_probs.append(np.max(hmm_probs, axis=1)[-1])
+        if recent_gmm == final_regime:
+            supporting_probs.append(np.max(gmm_probs, axis=1)[-1])
+        if recent_rf == final_regime:
+            supporting_probs.append(np.max(rf_probs, axis=1)[-1])
+        
+        confidence = np.mean(supporting_probs) if supporting_probs else 0.5
+        confidence = confidence * (0.7 + 0.3 * model_agreement)  # Scale by agreement
+        
+        # Adjust confidence for anomalies
+        anomaly_factor = 1.0 - min(1.0, max(0.0, (1.0 - np.mean(anomaly_score)) * 2))  # Map [-1, 1] to [0, 1]
+        confidence = confidence * (0.8 + 0.2 * anomaly_factor)  # Reduce confidence in anomalous conditions
         
         # Prepare feature values for storage
         feature_values = {
             col: features[col].iloc[-1] for col in features.columns
         }
+        feature_values['anomaly_score'] = np.mean(anomaly_score)
+        feature_values['model_agreement'] = model_agreement
         
-        return regime, confidence, feature_values
+        return final_regime, confidence, feature_values
         
-    def predict_regime_single(self, features: pd.DataFrame) -> Tuple[int, float, Dict]:
-        """Predict current market regime using trained HMM only"""
-        if self.hmm_model is None:
-            logger.error("HMM model not trained")
-            return -1, 0.0, {}
-            
-        # Use the most recent features
-        recent_features = features.iloc[-5:].copy()  # Use last 5 days for more robust prediction
-        
-        # Scale the features
-        scaled_features = self.scaler.transform(recent_features)
-        
-        # Predict regime for the last 5 days
-        regimes = self.hmm_model.predict(scaled_features)
-        
-        # Use the most recent regime
-        regime = regimes[-1]
-        
-        # Calculate confidence based on consistency of recent predictions
-        confidence = np.mean(regimes == regime)  # Percentage of recent predictions that match
-        
-        # Apply a confidence cap to avoid 100% certainty
-        confidence = min(confidence, 0.95)
-        
-        # Add a small uncertainty factor
-        confidence = confidence * 0.9 + 0.05  # Ensures confidence is between 0.05 and 0.90
-        
-        # Prepare feature values for storage
-        feature_values = {
-            col: recent_features[col].iloc[-1] for col in recent_features.columns
+    def interpret_regime(self, regime: int, features: Dict) -> Dict:
+        """Enhanced regime interpretation with contextual information"""
+        base_interpretation = {
+            0: {"label": "Bear Market", "color": "red", "description": "Declining prices, high volatility"},
+            1: {"label": "Sideways Market", "color": "gray", "description": "Range-bound prices, moderate volatility"},
+            2: {"label": "Bull Market", "color": "green", "description": "Rising prices, low to moderate volatility"},
+            3: {"label": "High Volatility", "color": "orange", "description": "Extreme price movements in both directions"}
         }
         
-        # Log the confidence calculation details
-        logger.debug(f"Recent regime predictions: {regimes}")
-        logger.debug(f"Confidence calculation: {np.mean(regimes == regime):.2f} -> {confidence:.2f}")
+        # Default to unknown if regime not in interpretation
+        interpretation = base_interpretation.get(regime, {
+            "label": f"Unknown Regime {regime}",
+            "color": "purple",
+            "description": "Unclassified market regime"
+        })
         
-        return regime, confidence, feature_values
+        # Add contextual details based on features
+        volatility = features.get('^IXIC_volatility_ratio', 1.0)
+        momentum = features.get('^IXIC_momentum_ratio', 1.0)
+        rsi = features.get('^IXIC_rsi', 50)
+        anomaly_score = features.get('anomaly_score', 0)
         
-    def interpret_regime(self, regime: int) -> str:
-        """Interpret the numerical regime value"""
-        # This is a simple interpretation - you might want to enhance this
-        # based on your specific market analysis
-        if regime == 0:
-            return "Bear Market"
-        elif regime == 1:
-            return "Sideways Market"
-        elif regime == 2:
-            return "Bull Market"
-        else:
-            return f"Unknown Regime {regime}"
+        # Enhance description based on market conditions
+        details = []
+        
+        if volatility > 1.5:
+            details.append("High volatility environment")
+        elif volatility < 0.8:
+            details.append("Low volatility environment")
             
-    async def scan_market_regime(self, backtest_date: str = None):
-        """Perform a complete market regime scan with optional backtesting"""
+        if momentum > 1.05:
+            details.append("Strong upward momentum")
+        elif momentum < 0.95:
+            details.append("Strong downward momentum")
+            
+        if rsi > 70:
+            details.append("Overbought conditions")
+        elif rsi < 30:
+            details.append("Oversold conditions")
+            
+        if anomaly_score < -0.5:
+            details.append("Anomalous market behavior detected")
+            
+        if details:
+            interpretation["details"] = ", ".join(details)
+        
+        return interpretation
+            
+    async def scan_market_regime(self):
+        """Perform a complete market regime scan"""
         if self.shutdown_requested:
             return False
             
@@ -1299,14 +1365,10 @@ class MarketRegimeScanner:
         start_time = time.time()
         
         try:
-            # Set backtest mode if date is provided
-            if backtest_date:
-                self.backtest_mode = True
-                self.backtest_date = backtest_date
-                end_date = datetime.strptime(backtest_date, "%Y-%m-%d")
-                logger.info(f"Running backtest for date: {backtest_date}")
-            else:
-                end_date = None
+            # Determine end date for data fetching
+            end_date = None
+            if self.backtest_mode and self.backtest_date:
+                end_date = datetime.strptime(self.backtest_date, "%Y-%m-%d")
             
             # Fetch market data
             market_data = await self.fetch_market_data(end_date=end_date)
@@ -1322,44 +1384,29 @@ class MarketRegimeScanner:
                 
             # Train models if not already trained
             if self.hmm_model is None:
-                if config.USE_ENSEMBLE_MODEL:
-                    self.train_ensemble(features)
-                else:
-                    scaled_features = self.scaler.fit_transform(features)
-                    self.hmm_model = hmm.GaussianHMM(
-                        n_components=config.HMM_N_COMPONENTS,
-                        covariance_type=config.HMM_COVARIANCE_TYPE,
-                        n_iter=config.HMM_N_ITER,
-                        random_state=42
-                    )
-                    self.hmm_model.fit(scaled_features)
+                self.train_enhanced_ensemble(features)
                 
             # Predict current regime
-            if config.USE_ENSEMBLE_MODEL:
-                regime, confidence, feature_values = self.predict_regime_ensemble(features)
-            else:
-                regime, confidence, feature_values = self.predict_regime_single(features)
+            regime, confidence, feature_values = self.predict_enhanced_regime(features)
                 
-            regime_label = self.interpret_regime(regime)
+            interpretation = self.interpret_regime(regime, feature_values)
+            regime_label = interpretation["label"]
             
-            # Save to appropriate database table
-            timestamp = datetime.now() if not backtest_date else datetime.strptime(backtest_date, "%Y-%m-%d")
+            # Save to database
+            timestamp = datetime.now()
             
-            if backtest_date:
-                # Save to backtest results
-                self.regime_db.save_backtest_result(
-                    backtest_date, timestamp, regime, confidence, feature_values, self.model_version
+            if self.backtest_mode and self.backtest_date:
+                # Save to backtest table
+                self.regime_db.save_backtest_market_regime(
+                    self.backtest_date, timestamp, regime, confidence, feature_values, self.model_version
                 )
-                logger.info(f"Backtest result saved for {backtest_date}: {regime_label} (confidence: {confidence:.2f})")
-                
-                # Perform backtest analysis
-                self.perform_backtest_analysis(backtest_date, regime, confidence, feature_values)
+                logger.info(f"Saved backtest regime for {self.backtest_date}: {regime_label} (confidence: {confidence:.2f})")
             else:
-                # Save to regular market regimes table
+                # Save to regular table
                 self.regime_db.save_market_regime(
                     timestamp, regime, confidence, feature_values, self.model_version
                 )
-                logger.info(f"Market regime saved: {regime_label} (confidence: {confidence:.2f})")
+                logger.info(f"Current market regime: {regime_label} (confidence: {confidence:.2f})")
             
             elapsed = time.time() - start_time
             logger.info(f"Market regime scan completed in {elapsed:.2f}s")
@@ -1371,53 +1418,7 @@ class MarketRegimeScanner:
             import traceback
             logger.error(traceback.format_exc())
             return False
-        finally:
-            # Reset backtest mode
-            self.backtest_mode = False
-            self.backtest_date = None
             
-    def perform_backtest_analysis(self, backtest_date: str, regime: int, confidence: float, features: Dict):
-        """Perform analysis on backtest results"""
-        logger.info(f"Performing backtest analysis for {backtest_date}")
-        
-        # Get historical regimes for comparison
-        start_date = (datetime.strptime(backtest_date, "%Y-%m-%d") - timedelta(days=30)).strftime("%Y-%m-%d")
-        historical_regimes = self.regime_db.get_regimes_by_date_range(
-            datetime.strptime(start_date, "%Y-%m-%d"),
-            datetime.strptime(backtest_date, "%Y-%m-%d")
-        )
-        
-        # Calculate regime persistence
-        if historical_regimes:
-            recent_regimes = [r['regime'] for r in historical_regimes[-5:]]  # Last 5 regimes
-            regime_persistence = sum(1 for r in recent_regimes if r == regime) / len(recent_regimes)
-        else:
-            regime_persistence = 0
-        
-        # Calculate feature trends
-        feature_trends = {}
-        for feature_name, feature_value in features.items():
-            # Simple trend calculation (could be enhanced)
-            if 'return' in feature_name:
-                feature_trends[f"{feature_name}_trend"] = "positive" if feature_value > 0 else "negative"
-            elif 'volatility' in feature_name:
-                feature_trends[f"{feature_name}_trend"] = "high" if feature_value > 1 else "low"
-        
-        # Prepare analysis data
-        analysis_data = {
-            "regime": regime,
-            "regime_label": self.interpret_regime(regime),
-            "confidence": confidence,
-            "regime_persistence": regime_persistence,
-            "feature_trends": feature_trends,
-            "historical_regime_count": len(historical_regimes),
-            "analysis_timestamp": datetime.now().isoformat()
-        }
-        
-        # Save analysis to database
-        self.regime_db.save_backtest_analysis(backtest_date, "basic_analysis", analysis_data)
-        logger.info(f"Backtest analysis completed for {backtest_date}")
-        
     def start(self):
         if not self.active:
             self.active = True
@@ -1433,19 +1434,29 @@ class MarketRegimeScanner:
         """Cleanup resources"""
         self.stop()
         logger.info("Market regime scanner shutdown complete")
+        
+    def get_backtest_regimes_by_date(self, backtest_date: str) -> List[Dict]:
+        """Get backtest market regimes for a specific date"""
+        return self.regime_db.get_backtest_regimes_by_date(backtest_date)
+        
+    def get_backtest_dates(self) -> List[str]:
+        """Get all available backtest dates"""
+        return self.regime_db.get_backtest_dates()
 
 # ======================== BACKTESTER ======================== #
 class Backtester:
-    def __init__(self, ticker_scanner: PolygonTickerScanner, regime_scanner: MarketRegimeScanner):
+    def __init__(self, ticker_scanner, regime_scanner=None):
         self.ticker_scanner = ticker_scanner
         self.regime_scanner = regime_scanner
         
-    async def run_backtest(self, start_date, end_date=None):
+    async def run_backtest(self, start_date, end_date=None, test_tickers=True, test_regime=True):
         """
         Run backtest for a specific date range
         Args:
             start_date: datetime object or string in YYYY-MM-DD format
             end_date: datetime object or string in YYYY-MM-DD format (optional)
+            test_tickers: Whether to test ticker fetching
+            test_regime: Whether to test market regime detection
         """
         if end_date is None:
             end_date = start_date
@@ -1457,50 +1468,149 @@ class Backtester:
             end_date = datetime.strptime(end_date, "%Y-%m-%d")
             
         logger.info(f"Starting backtest from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+        logger.info(f"Testing: Tickers={test_tickers}, Market Regime={test_regime}")
+        
+        # Dictionary to track ticker availability across all dates
+        ticker_availability = defaultdict(list)
         
         current_date = start_date
         while current_date <= end_date:
             if current_date.weekday() < 5:  # Only weekdays
                 date_str = current_date.strftime("%Y-%m-%d")
-                logger.info(f"Running backtest for {date_str}")
                 
-                # First, ensure we have ticker data for this date
-                existing_tickers = self.ticker_scanner.db.get_backtest_tickers(date_str)
-                if not existing_tickers:
-                    logger.info(f"No ticker data found for {date_str}, fetching...")
-                    self.ticker_scanner.backtest_mode = True
-                    self.ticker_scanner.backtest_date = date_str
-                    success = await self.ticker_scanner.refresh_all_tickers()
-                    if not success:
-                        logger.warning(f"Failed to fetch ticker data for {date_str}")
-                        continue
+                if test_tickers:
+                    # Check if we already have ticker data for this date
+                    existing_ticker_data = self.ticker_scanner.db.get_backtest_tickers(date_str)
+                    if not existing_ticker_data:
+                        await self.run_single_day_ticker_backtest(current_date)
                 
-                # Now run the regime scan for this date
-                success = await self.regime_scanner.scan_market_regime(date_str)
-                if success:
-                    logger.info(f"Successfully completed regime backtest for {date_str}")
-                else:
-                    logger.warning(f"Failed to complete regime backtest for {date_str}")
+                if test_regime and self.regime_scanner:
+                    # Check if we already have regime data for this date
+                    existing_regime_data = self.regime_scanner.get_backtest_regimes_by_date(date_str)
+                    if not existing_regime_data:
+                        await self.run_single_day_regime_backtest(current_date)
             
             current_date += timedelta(days=1)
+        
+        # If testing tickers, filter tickers to only those available for the entire period
+        if test_tickers:
+            # Get all dates in the range
+            all_dates = [d.strftime("%Y-%m-%d") for d in self._date_range(start_date, end_date) if d.weekday() < 5]
+            
+            # Track which tickers were available on each date
+            for date_str in all_dates:
+                ticker_data = self.ticker_scanner.db.get_backtest_tickers(date_str)
+                if ticker_data:
+                    for ticker in ticker_data:
+                        ticker_availability[ticker['ticker']].append(date_str)
+            
+            # Filter tickers to only those available for the entire period
+            full_period_tickers = []
+            for ticker, available_dates in ticker_availability.items():
+                # Check if ticker was available for all dates in the range
+                if len(available_dates) == len(all_dates):
+                    # Get the most recent data for this ticker
+                    latest_date = max(available_dates)
+                    ticker_data = self.ticker_scanner.db.execute_query(
+                        "SELECT * FROM backtest_tickers WHERE ticker = ? AND date = ?",
+                        (ticker, latest_date)
+                    )
+                    if ticker_data:
+                        full_period_tickers.append(ticker_data[0])
+            
+            # Save the filtered results to the database
+            if full_period_tickers:
+                start_str = start_date.strftime("%Y-%m-%d")
+                end_str = end_date.strftime("%Y-%m-%d")
+                inserted = self.ticker_scanner.db.upsert_backtest_final_results(full_period_tickers, start_str, end_str)
+                logger.info(f"Saved {inserted} tickers to database that were active throughout the entire period")
+            else:
+                logger.warning("No tickers were active throughout the entire period")
             
         logger.info("Backtest completed")
         
-    def get_backtest_results(self, date_str: str) -> List[Dict]:
-        """Get backtest results for a specific date"""
-        return self.regime_scanner.regime_db.get_backtest_results(date_str)
+    def _date_range(self, start_date, end_date):
+        """Generate a range of dates between start_date and end_date"""
+        for n in range(int((end_date - start_date).days) + 1):
+            yield start_date + timedelta(n)
         
-    def get_backtest_analysis(self, date_str: str) -> Optional[Dict]:
-        """Get backtest analysis for a specific date"""
-        return self.regime_scanner.regime_db.get_backtest_analysis(date_str, "basic_analysis")
+    async def run_single_day_ticker_backtest(self, target_date):
+        """
+        Run ticker backtest for a single day
+        """
+        logger.info(f"Running ticker backtest for {target_date.strftime('%Y-%m-%d')}")
         
-    def get_backtest_dates(self) -> List[str]:
-        """Get all available backtest dates"""
-        return self.regime_scanner.regime_db.get_backtest_dates()
+        # Format date for API
+        date_str = target_date.strftime("%Y-%m-%d")
         
-    def get_backtest_years(self) -> List[int]:
-        """Get all available backtest years"""
-        return self.regime_scanner.regime_db.get_backtest_years()
+        # Check if we already have data for this date
+        existing_data = self.ticker_scanner.db.get_backtest_tickers(date_str)
+        if existing_data:
+            logger.info(f"Using cached ticker data for {date_str} ({len(existing_data)} tickers)")
+            return True
+        
+        # Temporarily set scanner to backtest mode
+        original_mode = self.ticker_scanner.backtest_mode
+        self.ticker_scanner.backtest_mode = True
+        self.ticker_scanner.backtest_date = date_str
+        
+        try:
+            # Use the existing refresh method but with historical date
+            success = await self.ticker_scanner.refresh_all_tickers()
+            if success:
+                logger.info(f"Successfully fetched ticker data for {date_str}")
+                return True
+            else:
+                logger.warning(f"Failed to fetch ticker data for {date_str}")
+                return False
+        except Exception as e:
+            logger.error(f"Error during ticker backtest for {date_str}: {e}")
+            return False
+        finally:
+            # Restore original mode
+            self.ticker_scanner.backtest_mode = original_mode
+            self.ticker_scanner.backtest_date = None
+            
+    async def run_single_day_regime_backtest(self, target_date):
+        """
+        Run market regime backtest for a single day
+        """
+        if not self.regime_scanner:
+            logger.error("No regime scanner provided for backtesting")
+            return False
+            
+        logger.info(f"Running market regime backtest for {target_date.strftime('%Y-%m-%d')}")
+        
+        # Format date for API
+        date_str = target_date.strftime("%Y-%m-%d")
+        
+        # Check if we already have data for this date
+        existing_data = self.regime_scanner.get_backtest_regimes_by_date(date_str)
+        if existing_data:
+            logger.info(f"Using cached regime data for {date_str}")
+            return True
+        
+        # Temporarily set scanner to backtest mode
+        original_mode = self.regime_scanner.backtest_mode
+        self.regime_scanner.backtest_mode = True
+        self.regime_scanner.backtest_date = date_str
+        
+        try:
+            # Use the existing scan method but with historical date
+            success = await self.regime_scanner.scan_market_regime()
+            if success:
+                logger.info(f"Successfully fetched regime data for {date_str}")
+                return True
+            else:
+                logger.warning(f"Failed to fetch regime data for {date_str}")
+                return False
+        except Exception as e:
+            logger.error(f"Error during regime backtest for {date_str}: {e}")
+            return False
+        finally:
+            # Restore original mode
+            self.regime_scanner.backtest_mode = original_mode
+            self.regime_scanner.backtest_date = None
 
 # ======================== SCHEDULER ======================== #
 async def run_scheduled_ticker_refresh(scanner):
@@ -1555,7 +1665,6 @@ async def run_scheduled_ticker_refresh(scanner):
         if not scanner.active or scanner.shutdown_requested:
             break
             
-        # Run the refresh
         # Run the refresh
         logger.info("Starting scheduled ticker refresh")
         try:
@@ -1645,85 +1754,31 @@ async def main():
     parser.add_argument('--backtest', type=str, help='Run backtest for a specific date (YYYY-MM-DD)')
     parser.add_argument('--backtest-range', type=str, help='Run backtest for a date range (YYYY-MM-DD:YYYY-MM-DD)')
     parser.add_argument('--backtest-year', type=int, help='Run backtest for a specific year')
+    parser.add_argument('--backtest-tickers-only', action='store_true', help='Run backtest for tickers only')
+    parser.add_argument('--backtest-regime-only', action='store_true', help='Run backtest for market regime only')
     parser.add_argument('--list-backtests', action='store_true', help='List available backtest dates')
     parser.add_argument('--list-backtest-years', action='store_true', help='List available backtest years')
-    parser.add_argument('--show-backtest-results', type=str, help='Show results for a specific backtest date (YYYY-MM-DD)')
-    parser.add_argument('--show-backtest-analysis', type=str, help='Show analysis for a specific backtest date (YYYY-MM-DD)')
+    parser.add_argument('--list-backtest-runs', action='store_true', help='List available backtest runs')
+    parser.add_argument('--show-backtest-results', type=str, help='Show results for a specific backtest run (format: YYYY-MM-DD:YYYY-MM-DD)')
+    parser.add_argument('--show-year-results', type=int, help='Show results for a specific year')
+    parser.add_argument('--show-regime-backtest', type=str, help='Show regime backtest results for a specific date (YYYY-MM-DD)')
+    parser.add_argument('--list-regime-backtests', action='store_true', help='List available regime backtest dates')
     
     args = parser.parse_args()
     
     ticker_scanner = PolygonTickerScanner()
     regime_scanner = MarketRegimeScanner(ticker_scanner)
     
-    # Handle command line arguments
-    if args.search:
-        results = ticker_scanner.search_tickers_db(args.search)
-        if results:
-            print(f"Found {len(results)} matching tickers:")
-            for result in results:
-                print(f"{result['ticker']}: {result['name']} ({result['primary_exchange']})")
-        else:
-            print("No matching tickers found")
-        return
-    
-    if args.history:
-        results = ticker_scanner.get_ticker_history_db(args.history)
-        if results:
-            print(f"History for {args.history}:")
-            for result in results:
-                print(f"{result['change_date']}: {result['change_type']}")
-        else:
-            print(f"No history found for {args.history}")
-        return
-    
-    if args.list:
-        results = ticker_scanner.db.get_all_active_tickers()
-        if results:
-            print(f"Found {len(results)} active tickers:")
-            for result in results:
-                print(f"{result['ticker']}: {result['name']} ({result['primary_exchange']})")
-        else:
-            print("No active tickers found")
-        return
-        
-    if args.regime:
-        regime_scanner.start()
-        await regime_scanner.scan_market_regime()
-        latest_regime = regime_scanner.regime_db.get_latest_regime()
-        if latest_regime:
-            regime_label = regime_scanner.interpret_regime(latest_regime['regime'])
-            print(f"Current market regime: {regime_label}")
-            print(f"Confidence: {latest_regime['confidence']:.2f}")
-            print(f"Timestamp: {latest_regime['timestamp']}")
-        else:
-            print("No market regime data available")
-        await regime_scanner.shutdown()
-        return
-        
-    if args.regime_history is not None:
-        days = args.regime_history if args.regime_history > 0 else 7
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
-        results = regime_scanner.regime_db.get_regimes_by_date_range(start_date, end_date)
-        if results:
-            print(f"Market regime history for the past {days} days:")
-            for result in results:
-                regime_label = regime_scanner.interpret_regime(result['regime'])
-                print(f"{result['timestamp']}: {regime_label} (confidence: {result['confidence']:.2f})")
-        else:
-            print("No market regime history available")
-        return
-    
-    # Backtesting commands
+    # Check if we're running in backtest mode
     if (args.backtest or args.backtest_range or args.backtest_year or 
-        args.list_backtests or args.list_backtest_years or 
-        args.show_backtest_results or args.show_backtest_analysis):
-        
-        backtester = Backtester(ticker_scanner, regime_scanner)
+        args.list_backtests or args.list_backtest_years or args.list_backtest_runs or 
+        args.show_backtest_results or args.show_year_results or
+        args.show_regime_backtest or args.list_regime_backtests or
+        args.backtest_tickers_only or args.backtest_regime_only):
         
         if args.list_backtests:
             # List available backtest dates
-            dates = backtester.get_backtest_dates()
+            dates = ticker_scanner.get_backtest_dates()
             if dates:
                 print("Available backtest dates:")
                 for date in dates:
@@ -1731,10 +1786,10 @@ async def main():
             else:
                 print("No backtest data available")
             return
-            
+        
         if args.list_backtest_years:
             # List available backtest years
-            years = backtester.get_backtest_years()
+            years = ticker_scanner.get_backtest_years()
             if years:
                 print("Available backtest years:")
                 for year in years:
@@ -1743,47 +1798,157 @@ async def main():
                 print("No backtest data available")
             return
             
-        if args.show_backtest_results:
-            # Show results for a specific backtest date
-            results = backtester.get_backtest_results(args.show_backtest_results)
-            if results:
-                print(f"Backtest results for {args.show_backtest_results}:")
-                for result in results:
-                    regime_label = regime_scanner.interpret_regime(result['regime'])
-                    print(f"  {result['timestamp']}: {regime_label} (confidence: {result['confidence']:.2f})")
+        if args.list_backtest_runs:
+            # List available backtest runs
+            runs = ticker_scanner.get_all_backtest_runs()
+            if runs:
+                print("Available backtest runs:")
+                for run in runs:
+                    print(f"  {run['start_date']} to {run['end_date']} (Years: {run['start_year']}-{run['end_year']})")
             else:
-                print(f"No backtest results found for {args.show_backtest_results}")
+                print("No backtest runs available")
             return
             
-        if args.show_backtest_analysis:
-            # Show analysis for a specific backtest date
-            analysis = backtester.get_backtest_analysis(args.show_backtest_analysis)
-            if analysis:
-                print(f"Backtest analysis for {args.show_backtest_analysis}:")
-                print(f"  Regime: {analysis.get('regime_label', 'N/A')}")
-                print(f"  Confidence: {analysis.get('confidence', 0):.2f}")
-                print(f"  Regime Persistence: {analysis.get('regime_persistence', 0):.2f}")
-                print(f"  Historical Regime Count: {analysis.get('historical_regime_count', 0)}")
-                print("  Feature Trends:")
-                for feature, trend in analysis.get('feature_trends', {}).items():
-                    print(f"    {feature}: {trend}")
+        if args.show_backtest_results:
+            # Show results for a specific backtest run
+            start_date, end_date = args.show_backtest_results.split(':')
+            results = ticker_scanner.get_backtest_final_results(start_date, end_date)
+            if results:
+                print(f"Backtest results for {start_date} to {end_date}:")
+                print(f"Found {len(results)} tickers that were active throughout the period")
+                for result in results[:10]:  # Show first 10 results
+                    print(f"  {result['ticker']}: {result['name']}")
+                if len(results) > 10:
+                    print(f"  ... and {len(results) - 10} more")
             else:
-                print(f"No backtest analysis found for {args.show_backtest_analysis}")
+                print(f"No results found for {start_date} to {end_date}")
             return
+            
+        if args.show_year_results:
+            # Show results for a specific year
+            year = args.show_year_results
+            results = ticker_scanner.get_backtest_final_results_by_year(year)
+            if results:
+                print(f"Backtest results for year {year}:")
+                print(f"Found {len(results)} tickers that were active in this year")
+                for result in results[:10]:  # Show first 10 results
+                    print(f"  {result['ticker']}: {result['name']} (From {result['start_date']} to {result['end_date']})")
+                if len(results) > 10:
+                    print(f"  ... and {len(results) - 10} more")
+            else:
+                print(f"No results found for year {year}")
+            return
+                
+        if args.show_regime_backtest:
+            # Show regime backtest results for a specific date
+            date_str = args.show_regime_backtest
+            results = regime_scanner.get_backtest_regimes_by_date(date_str)
+            if results:
+                print(f"Regime backtest results for {date_str}:")
+                for result in results:
+                    interpretation = regime_scanner.interpret_regime(result['regime'], json.loads(result['features']))
+                    print(f"  {result['timestamp']}: {interpretation['label']} (confidence: {result['confidence']:.2f})")
+            else:
+                print(f"No regime backtest results found for {date_str}")
+            return
+                
+        if args.list_regime_backtests:
+            # List available regime backtest dates
+            dates = regime_scanner.get_backtest_dates()
+            if dates:
+                print("Available regime backtest dates:")
+                for date in dates:
+                    print(f"  {date}")
+            else:
+                print("No regime backtest data available")
+            return
+        
+        backtester = Backtester(ticker_scanner, regime_scanner)
+        
+        # Determine what to test
+        test_tickers = not args.backtest_regime_only
+        test_regime = not args.backtest_tickers_only
         
         if args.backtest:
             # Single date backtest
-            await backtester.run_backtest(args.backtest)
+            if test_tickers:
+                await backtester.run_single_day_ticker_backtest(datetime.strptime(args.backtest, "%Y-%m-%d"))
+            if test_regime:
+                await backtester.run_single_day_regime_backtest(datetime.strptime(args.backtest, "%Y-%m-%d"))
         elif args.backtest_range:
             # Date range backtest
             start_str, end_str = args.backtest_range.split(':')
-            await backtester.run_backtest(start_str, end_str)
+            start_date = datetime.strptime(start_str, "%Y-%m-%d")
+            end_date = datetime.strptime(end_str, "%Y-%m-%d")
+            await backtester.run_backtest(start_date, end_date, test_tickers, test_regime)
         elif args.backtest_year:
             # Year backtest
             start_date = datetime(args.backtest_year, 1, 1)
             end_date = datetime(args.backtest_year, 12, 31)
-            await backtester.run_backtest(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
+            await backtester.run_backtest(start_date, end_date, test_tickers, test_regime)
     else:
+        # Handle other command line arguments
+        if args.search:
+            results = ticker_scanner.search_tickers_db(args.search)
+            if results:
+                print(f"Found {len(results)} matching tickers:")
+                for result in results:
+                    print(f"{result['ticker']}: {result['name']} ({result['primary_exchange']})")
+            else:
+                print("No matching tickers found")
+            return
+        
+        if args.history:
+            results = ticker_scanner.get_ticker_history_db(args.history)
+            if results:
+                print(f"History for {args.history}:")
+                for result in results:
+                    print(f"{result['change_date']}: {result['change_type']}")
+            else:
+                print(f"No history found for {args.history}")
+            return
+        
+        if args.list:
+            results = ticker_scanner.db.get_all_active_tickers()
+            if results:
+                print(f"Found {len(results)} active tickers:")
+                for result in results:
+                    print(f"{result['ticker']}: {result['name']} ({result['primary_exchange']})")
+            else:
+                print("No active tickers found")
+            return
+            
+        if args.regime:
+            regime_scanner.start()
+            await regime_scanner.scan_market_regime()
+            latest_regime = regime_scanner.regime_db.get_latest_regime()
+            if latest_regime:
+                interpretation = regime_scanner.interpret_regime(latest_regime['regime'], json.loads(latest_regime['features']))
+                print(f"Current market regime: {interpretation['label']}")
+                print(f"Confidence: {latest_regime['confidence']:.2f}")
+                print(f"Description: {interpretation['description']}")
+                if 'details' in interpretation:
+                    print(f"Details: {interpretation['details']}")
+                print(f"Timestamp: {latest_regime['timestamp']}")
+            else:
+                print("No market regime data available")
+            await regime_scanner.shutdown()
+            return
+            
+        if args.regime_history is not None:
+            days = args.regime_history if args.regime_history > 0 else 7
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+            results = regime_scanner.regime_db.get_regimes_by_date_range(start_date, end_date)
+            if results:
+                print(f"Market regime history for the past {days} days:")
+                for result in results:
+                    interpretation = regime_scanner.interpret_regime(result['regime'], json.loads(result['features']))
+                    print(f"{result['timestamp']}: {interpretation['label']} (confidence: {result['confidence']:.2f})")
+            else:
+                print("No market regime history available")
+            return
+        
         # Normal operation - run both scanners
         ticker_scanner.start()
         regime_scanner.start()
