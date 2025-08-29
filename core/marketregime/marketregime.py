@@ -1455,4 +1455,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("Application terminated by user")
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Unexpected error: {e}")  
