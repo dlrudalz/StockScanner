@@ -1038,8 +1038,9 @@ class MarketRegimeScanner:
         # Use the composite indices for market regime detection
         self.market_indices = {
             "^IXIC": "COMP",    # NASDAQ Composite
-            "^NYA": "NYA",      # NYSE Composite
-            "^XAX": "XAX"       # NYSE AMEX Composite
+            "^GSPC": "SPY",     # S&P 500 ETF (more reliable than index)
+            "^DJI": "DIA",      # Dow Jones ETF
+            "^RUT": "IWM"       # Russell 2000 ETF
         }
         
         logger.info(f"Market regime database path: {config.DATABASE_PATH_REGIME}")

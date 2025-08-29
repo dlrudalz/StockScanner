@@ -33,7 +33,7 @@ class Config:
     SCAN_TIME = "08:30"
     
     # Database Configuration - Use the specific path you requested
-    DATABASE_PATH = r"C:\Users\kyung\StockScanner\core\ticker_data.db"
+    DATABASE_PATH_TICKER = r"C:\Users\kyung\StockScanner\core\ticker_data.db"
     
     # Logging Configuration
     LOG_LEVEL = logging.INFO
@@ -657,13 +657,13 @@ class PolygonTickerScanner:
         self.current_tickers_set = set()
         self.local_tz = get_localzone()
         self.semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
-        self.db = DatabaseManager(config.DATABASE_PATH)
+        self.db = DatabaseManager(config.DATABASE_PATH_TICKER)
         self.shutdown_requested = False
         # Backtesting attributes
         self.backtest_mode = False
         self.backtest_date = None
         logger.info(f"Using local timezone: {self.local_tz}")
-        logger.info(f"Database path: {config.DATABASE_PATH}")
+        logger.info(f"Database path: {config.DATABASE_PATH_TICKER}")
         logger.info(f"Using composite indices: {', '.join(self.composite_indices)}")
         
     def _init_cache(self):

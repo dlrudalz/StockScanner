@@ -1,7 +1,18 @@
 BACKTESTING PROMPT
-python your_script_name.py --backtest-range YYYY-MM-DD:YYYY-MM-DD
-python market_regime_scanner.py --list-backtests
-python market_regime_scanner.py --list-backtest-years
-python market_regime_scanner.py --show-backtest-results 2020-03-15
-python market_regime_scanner.py --show-backtest-analysis 2020-03-15
-python market_regime_scanner.py --backtest-year 2020
+
+    backtest with a date range that includes both ticker fetching and market regime analysis:
+        python your_script_name.py --backtest-range YYYY-MM-DD:YYYY-MM-DD
+    For example, to run a backtest for the entire year of 2020:
+        python market_regime_scanner.py --backtest-range 2020-01-01:2020-12-31
+    Or for a specific month:
+        python market_regime_scanner.py --backtest-range 2020-03-01:2020-03-31
+    List available backtest dates:
+        python market_regime_scanner.py --list-backtests
+    List available backtest years:
+        python market_regime_scanner.py --list-backtest-years
+    Show results for a specific backtest date:
+        python market_regime_scanner.py --show-backtest-results 2020-03-15
+    Show analysis for a specific backtest date:
+        python market_regime_scanner.py --show-backtest-analysis 2020-03-15
+    Run backtest for a specific year:
+        python market_regime_scanner.py --backtest-year 2020
