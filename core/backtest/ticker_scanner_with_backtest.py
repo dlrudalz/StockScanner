@@ -128,10 +128,11 @@ class DatabaseManager:
                 )
             ''')
             
-            # Create backtest_tickers table for historical data
+            # Create backtest_tickers table for historical data with year column
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS backtest_tickers (
                     date TEXT,
+                    year INTEGER,
                     ticker TEXT,
                     name TEXT,
                     primary_exchange TEXT,
@@ -150,6 +151,8 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     start_date TEXT,
                     end_date TEXT,
+                    start_year INTEGER,
+                    end_year INTEGER,
                     ticker TEXT,
                     name TEXT,
                     primary_exchange TEXT,
@@ -167,7 +170,9 @@ class DatabaseManager:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_active ON tickers(active)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_date ON historical_tickers(change_date)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_date ON backtest_tickers(date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_year ON backtest_tickers(year)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_dates ON backtest_final_results(start_date, end_date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_years ON backtest_final_results(start_year, end_year)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_ticker ON backtest_final_results(ticker)')
             
             conn.commit()
@@ -399,8 +404,9 @@ class DatabaseManager:
         return default
         
     def upsert_backtest_tickers(self, tickers: List[Dict], date_str: str) -> int:
-        """Insert or update tickers in the backtest table"""
+        """Insert or update tickers in the backtest table with year"""
         inserted = 0
+        year = int(date_str.split('-')[0])  # Extract year from date
         
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -408,11 +414,12 @@ class DatabaseManager:
             for ticker_data in tickers:
                 cursor.execute('''
                     INSERT OR REPLACE INTO backtest_tickers 
-                    (date, ticker, name, primary_exchange, last_updated_utc, 
+                    (date, year, ticker, name, primary_exchange, last_updated_utc, 
                      type, market, locale, currency_name)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     date_str,
+                    year,
                     ticker_data['ticker'],
                     ticker_data.get('name'),
                     ticker_data.get('primary_exchange'),
@@ -437,6 +444,13 @@ class DatabaseManager:
             (date_str,)
         )
         
+    def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
+        """Get tickers for a specific backtest year"""
+        return self.execute_query(
+            "SELECT * FROM backtest_tickers WHERE year = ? ORDER BY date, ticker",
+            (year,)
+        )
+        
     def get_backtest_dates(self) -> List[str]:
         """Get all available backtest dates"""
         result = self.execute_query(
@@ -444,9 +458,18 @@ class DatabaseManager:
         )
         return [row['date'] for row in result]
         
+    def get_backtest_years(self) -> List[int]:
+        """Get all available backtest years"""
+        result = self.execute_query(
+            "SELECT DISTINCT year FROM backtest_tickers ORDER BY year"
+        )
+        return [row['year'] for row in result]
+        
     def upsert_backtest_final_results(self, tickers_data: List[Dict], start_date: str, end_date: str) -> int:
-        """Insert final backtest results into the database"""
+        """Insert final backtest results into the database with year information"""
         inserted = 0
+        start_year = int(start_date.split('-')[0])
+        end_year = int(end_date.split('-')[0])
         
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -460,12 +483,14 @@ class DatabaseManager:
             for ticker_data in tickers_data:
                 cursor.execute('''
                     INSERT INTO backtest_final_results 
-                    (start_date, end_date, ticker, name, primary_exchange, last_updated_utc, 
+                    (start_date, end_date, start_year, end_year, ticker, name, primary_exchange, last_updated_utc, 
                      type, market, locale, currency_name)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     start_date,
                     end_date,
+                    start_year,
+                    end_year,
                     ticker_data['ticker'],
                     ticker_data.get('name'),
                     ticker_data.get('primary_exchange'),
@@ -490,10 +515,17 @@ class DatabaseManager:
             (start_date, end_date)
         )
         
+    def get_backtest_final_results_by_year(self, year: int) -> List[Dict]:
+        """Get final backtest results for a specific year"""
+        return self.execute_query(
+            "SELECT * FROM backtest_final_results WHERE start_year <= ? AND end_year >= ? ORDER BY ticker",
+            (year, year)
+        )
+        
     def get_all_backtest_runs(self) -> List[Dict]:
         """Get all backtest runs with their date ranges"""
         return self.execute_query(
-            "SELECT DISTINCT start_date, end_date FROM backtest_final_results ORDER BY start_date, end_date"
+            "SELECT DISTINCT start_date, end_date, start_year, end_year FROM backtest_final_results ORDER BY start_date, end_date"
         )
 
 # ======================== BACKTESTER ======================== #
@@ -884,13 +916,25 @@ class PolygonTickerScanner:
         """Get tickers for a specific backtest date"""
         return self.db.get_backtest_tickers(date_str)
         
+    def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
+        """Get tickers for a specific backtest year"""
+        return self.db.get_backtest_tickers_by_year(year)
+        
     def get_backtest_dates(self) -> List[str]:
         """Get all available backtest dates"""
         return self.db.get_backtest_dates()
         
+    def get_backtest_years(self) -> List[int]:
+        """Get all available backtest years"""
+        return self.db.get_backtest_years()
+        
     def get_backtest_final_results(self, start_date: str, end_date: str) -> List[Dict]:
         """Get final backtest results for a specific date range"""
         return self.db.get_backtest_final_results(start_date, end_date)
+        
+    def get_backtest_final_results_by_year(self, year: int) -> List[Dict]:
+        """Get final backtest results for a specific year"""
+        return self.db.get_backtest_final_results_by_year(year)
         
     def get_all_backtest_runs(self) -> List[Dict]:
         """Get all backtest runs with their date ranges"""
@@ -969,15 +1013,21 @@ async def main():
     parser = argparse.ArgumentParser(description='Stock Ticker Fetcher with Backtesting')
     parser.add_argument('--backtest', type=str, help='Run backtest for a specific date (YYYY-MM-DD)')
     parser.add_argument('--backtest-range', type=str, help='Run backtest for a date range (YYYY-MM-DD:YYYY-MM-DD)')
+    parser.add_argument('--backtest-year', type=int, help='Run backtest for a specific year')
     parser.add_argument('--list-backtests', action='store_true', help='List available backtest dates')
+    parser.add_argument('--list-backtest-years', action='store_true', help='List available backtest years')
     parser.add_argument('--list-backtest-runs', action='store_true', help='List available backtest runs')
     parser.add_argument('--show-backtest-results', type=str, help='Show results for a specific backtest run (format: YYYY-MM-DD:YYYY-MM-DD)')
+    parser.add_argument('--show-year-results', type=int, help='Show results for a specific year')
     args = parser.parse_args()
     
     scanner = PolygonTickerScanner()
     
     # Check if we're running in backtest mode
-    if args.backtest or args.backtest_range or args.list_backtests or args.list_backtest_runs or args.show_backtest_results:
+    if (args.backtest or args.backtest_range or args.backtest_year or 
+        args.list_backtests or args.list_backtest_years or args.list_backtest_runs or 
+        args.show_backtest_results or args.show_year_results):
+        
         if args.list_backtests:
             # List available backtest dates
             dates = scanner.get_backtest_dates()
@@ -989,13 +1039,24 @@ async def main():
                 print("No backtest data available")
             return
         
+        if args.list_backtest_years:
+            # List available backtest years
+            years = scanner.get_backtest_years()
+            if years:
+                print("Available backtest years:")
+                for year in years:
+                    print(f"  {year}")
+            else:
+                print("No backtest data available")
+            return
+            
         if args.list_backtest_runs:
             # List available backtest runs
             runs = scanner.get_all_backtest_runs()
             if runs:
                 print("Available backtest runs:")
                 for run in runs:
-                    print(f"  {run['start_date']} to {run['end_date']}")
+                    print(f"  {run['start_date']} to {run['end_date']} (Years: {run['start_year']}-{run['end_year']})")
             else:
                 print("No backtest runs available")
             return
@@ -1014,6 +1075,21 @@ async def main():
             else:
                 print(f"No results found for {start_date} to {end_date}")
             return
+            
+        if args.show_year_results:
+            # Show results for a specific year
+            year = args.show_year_results
+            results = scanner.get_backtest_final_results_by_year(year)
+            if results:
+                print(f"Backtest results for year {year}:")
+                print(f"Found {len(results)} tickers that were active in this year")
+                for result in results[:10]:  # Show first 10 results
+                    print(f"  {result['ticker']}: {result['name']} (From {result['start_date']} to {result['end_date']})")
+                if len(results) > 10:
+                    print(f"  ... and {len(results) - 10} more")
+            else:
+                print(f"No results found for year {year}")
+            return
         
         backtester = Backtester(scanner)
         
@@ -1025,6 +1101,11 @@ async def main():
             start_str, end_str = args.backtest_range.split(':')
             start_date = datetime.strptime(start_str, "%Y-%m-%d")
             end_date = datetime.strptime(end_str, "%Y-%m-%d")
+            await backtester.run_backtest(start_date, end_date)
+        elif args.backtest_year:
+            # Year backtest
+            start_date = datetime(args.backtest_year, 1, 1)
+            end_date = datetime(args.backtest_year, 12, 31)
             await backtester.run_backtest(start_date, end_date)
     else:
         # Normal operation

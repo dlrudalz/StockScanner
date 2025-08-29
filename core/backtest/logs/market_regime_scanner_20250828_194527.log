@@ -1,0 +1,648 @@
+2025-08-28 19:45:27,998 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-08-28 19:45:27,999 - MarketRegimeScanner - INFO - Database path: C:\Users\kyung\StockScanner\core\ticker_data.db
+2025-08-28 19:45:27,999 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC, ^NYA, ^XAX
+2025-08-28 19:45:28,101 - MarketRegimeScanner - INFO - Market regime database path: C:\Users\kyung\StockScanner\core\market_regime_data.db
+2025-08-28 19:45:28,102 - MarketRegimeScanner - INFO - Starting backtest from 2018-01-01 to 2025-06-30
+2025-08-28 19:45:28,102 - MarketRegimeScanner - INFO - Running backtest for 2018-01-01
+2025-08-28 19:45:28,132 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:28,132 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-01
+2025-08-28 19:45:28,132 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:28,332 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"db9373c6993f0157053c9eab48121a97","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,332 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"af5eeef2009919a128cc89791fe9ab80","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,333 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"d7c7cc232b94a5a1e42afab5ee6dda2a","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,334 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"ceaa248b11667dcee490d5dbb1b170c5","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,335 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:28,335 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:28,335 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-01
+2025-08-28 19:45:28,335 - MarketRegimeScanner - INFO - Running backtest for 2018-01-02
+2025-08-28 19:45:28,397 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:28,397 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-02
+2025-08-28 19:45:28,397 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:28,533 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"1660fdc41285ea9adb2bd92eeec29345","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,535 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"38bd63522344e866174a18719189d702","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,538 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"fb58cf22ddabd0d5d529e88f5115e924","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,540 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"bdc967eed3b4c354bbab801812735eec","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,541 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:28,541 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:28,542 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-02
+2025-08-28 19:45:28,542 - MarketRegimeScanner - INFO - Running backtest for 2018-01-03
+2025-08-28 19:45:28,570 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:28,571 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-03
+2025-08-28 19:45:28,571 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:28,708 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"cd22ac51bb3ba6fa3f790d104435c9f8","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,708 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"2c8881ad6ad797c5ad90f856c9430776","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,710 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"fc62bcedbb0638cdd86b9eb69edece5b","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,714 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"f39cf8103d0b827b34733cc6fb23c36e","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,715 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:28,715 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:28,716 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-03
+2025-08-28 19:45:28,716 - MarketRegimeScanner - INFO - Running backtest for 2018-01-04
+2025-08-28 19:45:28,746 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:28,746 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-04
+2025-08-28 19:45:28,746 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:28,887 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"a98e45af623b0a9b4aea221310dbb691","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,887 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"8854e7d097fd2dd056de86ccb4a11349","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,888 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"2782f54d5fd24d8257f76ab6f125c27e","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,894 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"ac72584f11ce765f02e3795412e1b598","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:28,895 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:28,895 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:28,895 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-04
+2025-08-28 19:45:28,896 - MarketRegimeScanner - INFO - Running backtest for 2018-01-05
+2025-08-28 19:45:28,924 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:28,925 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-05
+2025-08-28 19:45:28,925 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:29,060 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"dc091d8af1173549fd996da54a5eaeac","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,063 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"4c6cf7c49f6452632fe0d80fadbe9d0f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,065 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"9778663e27143d63f7d5557eae5a80f0","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,065 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"d5fd1948e9117104940850f7ee038866","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,065 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:29,066 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:29,066 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-05
+2025-08-28 19:45:29,066 - MarketRegimeScanner - INFO - Running backtest for 2018-01-08
+2025-08-28 19:45:29,096 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:29,096 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-08
+2025-08-28 19:45:29,096 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:29,230 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"ff5c755b5e1bcdb4683f6ad3ce81a7bd","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,232 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"3480d446452845039a27901c7ab462a4","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,234 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"8a3cf57c7892580b4b040f1a2fe93ceb","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,244 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"6ca03bbc8a265a2a5c0fb87a4fc48d32","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,244 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:29,244 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:29,245 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-08
+2025-08-28 19:45:29,245 - MarketRegimeScanner - INFO - Running backtest for 2018-01-09
+2025-08-28 19:45:29,275 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:29,275 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-09
+2025-08-28 19:45:29,275 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:29,412 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"e8cb49a6cb3944bce201685b4653f155","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,412 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"415b819b0a682920001d26e94c042bb0","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,414 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"33e7fa3690582a3d05fa88e893e0a942","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,417 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"f8555a6960244cdc33f700b1c2143e6f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,418 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:29,418 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:29,419 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-09
+2025-08-28 19:45:29,419 - MarketRegimeScanner - INFO - Running backtest for 2018-01-10
+2025-08-28 19:45:29,450 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:29,450 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-10
+2025-08-28 19:45:29,450 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:29,584 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"813ad8250d1d7b9fcddcbfeaa473433a","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,586 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"796e470040b00dddd78235d029781009","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,589 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"830428e948106adc1f345d12ce5b8c65","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,590 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"10d4eb6830653bb6169bfa3308a9a2b5","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,591 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:29,591 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:29,591 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-10
+2025-08-28 19:45:29,592 - MarketRegimeScanner - INFO - Running backtest for 2018-01-11
+2025-08-28 19:45:29,622 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:29,622 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-11
+2025-08-28 19:45:29,622 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:29,756 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"53419efe396bf81bd8dfaf824a8669d2","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,759 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"be5009e4661ff74337490c4ff354fc63","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,762 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"e681165aabdab22cb884377831d6584a","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,765 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"d05c0e00ad6bdf4951fe6b651a9019d3","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,766 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:29,767 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:29,767 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-11
+2025-08-28 19:45:29,767 - MarketRegimeScanner - INFO - Running backtest for 2018-01-12
+2025-08-28 19:45:29,796 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:29,796 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-12
+2025-08-28 19:45:29,796 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:29,932 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"c98871285b6d26f0146900b37810d134","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,936 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"8a61e54a5268d6b82dd332033fa3dae5","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,940 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"f38fcf96c0b18ff1d5ba6f22d10015a1","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,941 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"4f43741076e1eb740c1f58e838638d84","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:29,942 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:29,942 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:29,943 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-12
+2025-08-28 19:45:29,943 - MarketRegimeScanner - INFO - Running backtest for 2018-01-15
+2025-08-28 19:45:29,972 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:29,973 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-15
+2025-08-28 19:45:29,973 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:30,109 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"92027c75e52622f63d0c3840f2eb511f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,110 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"d5a6962e639b90d5d16511db61a4740c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,111 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"5df4a2eb0de8ddfc5a9e4b3cd7f87fca","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,113 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"1e49726b77f079638ab3c1d918a5e353","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,113 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:30,113 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:30,114 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-15
+2025-08-28 19:45:30,114 - MarketRegimeScanner - INFO - Running backtest for 2018-01-16
+2025-08-28 19:45:30,145 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:30,146 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-16
+2025-08-28 19:45:30,146 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:30,282 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"d4180624b246da4fed322dfcc0444638","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,284 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"a776db5ae3860661d03be3529ba209f1","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,291 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"497aed9ecaa4bd2bad6bf972b3ab4c58","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,292 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"72334a7563d13554a06e4f898a6b52fc","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,293 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:30,293 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:30,293 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-16
+2025-08-28 19:45:30,294 - MarketRegimeScanner - INFO - Running backtest for 2018-01-17
+2025-08-28 19:45:30,326 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:30,327 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-17
+2025-08-28 19:45:30,327 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:30,464 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"45aaadcdf219c50841876167cb4dfffd","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,467 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"52c45d295daaf15ab6b658c1a8555909","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,468 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"96c81816fe683716a64787d853832dd8","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,472 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"87377ef54bf27ad861e1740617028338","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,472 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:30,473 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:30,473 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-17
+2025-08-28 19:45:30,473 - MarketRegimeScanner - INFO - Running backtest for 2018-01-18
+2025-08-28 19:45:30,501 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:30,502 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-18
+2025-08-28 19:45:30,502 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:30,642 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"b3ae34e3bdbea8162552e383b721335c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,648 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"1ced74766b397ebd640a3670ea06f7bb","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,648 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"73f3daf935a366c5fc2d1f72540d0926","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,650 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"4c81413b39ad02fc36d6aa8d319619f8","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,651 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:30,651 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:30,652 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-18
+2025-08-28 19:45:30,652 - MarketRegimeScanner - INFO - Running backtest for 2018-01-19
+2025-08-28 19:45:30,687 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:30,688 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-19
+2025-08-28 19:45:30,688 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:30,824 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"e71a545dc379dfb6957620624e7c89d4","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,825 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"65826877f18d95c1c15c140324e39351","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,826 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"87f9b5fdb57a513f9e874be5ebce6199","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,829 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"645f4538043447b8998ee19a266571f1","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,830 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:30,830 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:30,830 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-19
+2025-08-28 19:45:30,831 - MarketRegimeScanner - INFO - Running backtest for 2018-01-22
+2025-08-28 19:45:30,862 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:30,862 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-22
+2025-08-28 19:45:30,863 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:30,999 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"0c8fd6cd16d98e1e561d7f9e4ce3a4de","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:30,999 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"6b8ccd1b43dafc9515a34c2e2653ec10","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,005 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"e882f0bedca8c8b1b9cba5a8d73dde42","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,009 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"a7fe2be9740024ebf5f044d4feadabf3","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,009 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:31,009 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:31,009 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-22
+2025-08-28 19:45:31,010 - MarketRegimeScanner - INFO - Running backtest for 2018-01-23
+2025-08-28 19:45:31,041 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:31,041 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-23
+2025-08-28 19:45:31,041 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:31,179 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"3cfbb372b8a3c58391ee536556e7e3a5","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,180 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"99298c13e238797e7de8bb8f96f28766","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,182 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"182e7faf92afff05009627c03eb4d3f1","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,186 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"d52fec05f56393294d5f11394882b1bb","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,187 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:31,187 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:31,187 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-23
+2025-08-28 19:45:31,188 - MarketRegimeScanner - INFO - Running backtest for 2018-01-24
+2025-08-28 19:45:31,220 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:31,221 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-24
+2025-08-28 19:45:31,221 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:31,356 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"99e6db81b9155b4f33a808c72c86e2a6","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,361 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"7cc3f8b64487c63a05f9a7b30f978057","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,365 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"9bf82f4eae190cc64c3da051320df705","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,368 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"563734aed79f11fa439058d6777c4e6c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,368 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:31,368 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:31,368 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-24
+2025-08-28 19:45:31,369 - MarketRegimeScanner - INFO - Running backtest for 2018-01-25
+2025-08-28 19:45:31,400 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:31,400 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-25
+2025-08-28 19:45:31,400 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:31,537 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"984c9f4ceab1580bd7a5c2b7bc054cd9","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,539 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"b0da823e7a4bacae615ab378b4895735","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,539 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"d5d142c629848dff8680a2ac7b82e870","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,544 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"bfb3971067c3a6a30e9e00faf5e3517a","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,544 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:31,545 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:31,545 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-25
+2025-08-28 19:45:31,545 - MarketRegimeScanner - INFO - Running backtest for 2018-01-26
+2025-08-28 19:45:31,577 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:31,577 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-26
+2025-08-28 19:45:31,577 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:31,713 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"64608784e0840a60f72a4e1d988d8278","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,714 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"cac96fb94be2926714bba3108a733ed2","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,716 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"2b1568c2acd4fb8d6be867a4f56b5bf7","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,717 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"15827667597f1311c67c99b6ef0beedb","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,718 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:31,718 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:31,719 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-26
+2025-08-28 19:45:31,719 - MarketRegimeScanner - INFO - Running backtest for 2018-01-29
+2025-08-28 19:45:31,750 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:31,750 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-29
+2025-08-28 19:45:31,750 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:31,888 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"448b71e4767fa6d1c5377fd4d7e1a85a","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,889 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"de9dc877162b186a801c93a64529c61d","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,890 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"cb340f34348b8a574a76a481c82e0507","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,895 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"c5490505cbdf718c68676df4721e2e9d","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:31,895 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:31,895 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:31,896 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-29
+2025-08-28 19:45:31,896 - MarketRegimeScanner - INFO - Running backtest for 2018-01-30
+2025-08-28 19:45:31,929 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:31,929 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-30
+2025-08-28 19:45:31,929 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:32,064 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"004e02bacfacc869e642bb89b90cb748","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,065 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"43d9b0fa931a2b9bee9d62aad7733e6c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,070 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"33bea6a794e1dc992fc4bab732d76e12","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,075 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"eba08f3dfb34ed68e95ec164c3c145ca","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,075 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:32,076 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:32,076 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-30
+2025-08-28 19:45:32,076 - MarketRegimeScanner - INFO - Running backtest for 2018-01-31
+2025-08-28 19:45:32,109 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:32,110 - MarketRegimeScanner - INFO - Running backtest for date: 2018-01-31
+2025-08-28 19:45:32,110 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:32,247 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"3477f3a5fc9307bc24b256f537d74f61","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,249 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"1034b849a2db1ec676484567311c5c09","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,249 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"a99573eef63988d292eead025cef5230","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,252 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"647b60d8275bd1b170d10c1d2c6dc522","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,252 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:32,252 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:32,253 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-01-31
+2025-08-28 19:45:32,253 - MarketRegimeScanner - INFO - Running backtest for 2018-02-01
+2025-08-28 19:45:32,284 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:32,284 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-01
+2025-08-28 19:45:32,284 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:32,420 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"d1ac85705e7cce9f15eb67fce22309c6","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,422 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"6c5e8694cc10c71104a63055f8184032","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,423 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"1d3677f67c281f2d8746e27c3a0f9c9f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,430 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"31e43721e669e68ee978116f4cd7e8ca","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,430 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:32,430 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:32,431 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-01
+2025-08-28 19:45:32,431 - MarketRegimeScanner - INFO - Running backtest for 2018-02-02
+2025-08-28 19:45:32,462 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:32,463 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-02
+2025-08-28 19:45:32,463 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:32,609 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"7c542a4e09a92aa50a24d2912150e62a","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,612 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"d541fd15f242c33ac37dd924f27a2f66","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,613 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"5110cf5a4ffb257d24323afb357dadef","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,618 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"69426c93c4b2facb93d13e12893f85cf","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,618 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:32,618 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:32,618 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-02
+2025-08-28 19:45:32,619 - MarketRegimeScanner - INFO - Running backtest for 2018-02-05
+2025-08-28 19:45:32,649 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:32,649 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-05
+2025-08-28 19:45:32,649 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:32,783 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"641aa1e994718c249921c33315a2e937","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,787 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"be8d3378b4465f64f7a6a75746aa5b4c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,790 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"bac5281e19b0afc342b4e257985c27fa","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,791 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"cc0d4c6527b6b2e7a87e962dfa9d8d98","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,791 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:32,791 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:32,792 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-05
+2025-08-28 19:45:32,792 - MarketRegimeScanner - INFO - Running backtest for 2018-02-06
+2025-08-28 19:45:32,824 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:32,824 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-06
+2025-08-28 19:45:32,824 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:32,963 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"ba47cc6431fdde01f6d2ee032e96526d","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,963 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"b58e0fa06d6585f514563c725b01353f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,963 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"2f5d403966e705646267d5ca0106bc94","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,970 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"1e419f9e229eb4869174b690ad1c6b31","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:32,970 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:32,971 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:32,971 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-06
+2025-08-28 19:45:32,971 - MarketRegimeScanner - INFO - Running backtest for 2018-02-07
+2025-08-28 19:45:33,001 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:33,001 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-07
+2025-08-28 19:45:33,001 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:33,136 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"0c7a1724247f8581c2df36c9bee43677","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,137 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"b75eb3d710b01f8a91ea2ff85866a0b7","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,142 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"ae462ffdefcdc00bd3758860b14b1658","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,143 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"3b18d81bcda8c3637a0a2d7e7ab064a4","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,144 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:33,144 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:33,144 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-07
+2025-08-28 19:45:33,144 - MarketRegimeScanner - INFO - Running backtest for 2018-02-08
+2025-08-28 19:45:33,176 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:33,176 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-08
+2025-08-28 19:45:33,176 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:33,314 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"2e798ac5565f33b84f3ab886f37bff09","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,316 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"d0ec3012ee33055fde70cdee71faab03","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,316 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"15bed6a3dc6db5e84fbd9d0018ac13cf","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,323 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"895d9d93750edd246e9aef329a104ba6","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,323 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:33,323 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:33,324 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-08
+2025-08-28 19:45:33,324 - MarketRegimeScanner - INFO - Running backtest for 2018-02-09
+2025-08-28 19:45:33,353 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:33,354 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-09
+2025-08-28 19:45:33,354 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:33,488 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"5775a42d831b4dbb501e31ea247f7514","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,491 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"82957aed572c2ffbf0f0a0645beb0926","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,491 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"d6024b8563802384ec1b4ac70264cdcd","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,493 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"f784a08e08d5b4a0901e3ef1cabd010f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,494 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:33,494 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:33,494 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-09
+2025-08-28 19:45:33,495 - MarketRegimeScanner - INFO - Running backtest for 2018-02-12
+2025-08-28 19:45:33,525 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:33,525 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-12
+2025-08-28 19:45:33,525 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:33,662 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"8d27f1fe7844fa5c1a1f3ce4ab81f12b","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,666 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"43bfed924f160127ac40d5d4ad8d33e0","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,667 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"bf44aa5698241a77f24b8b7f48f5bc8d","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,669 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"c3ef062a0cd82a9f99d243db0f040980","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,669 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:33,670 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:33,670 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-12
+2025-08-28 19:45:33,670 - MarketRegimeScanner - INFO - Running backtest for 2018-02-13
+2025-08-28 19:45:33,700 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:33,700 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-13
+2025-08-28 19:45:33,700 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:33,836 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"58e288d1dab5856fe5bf304284d196e4","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,838 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"ed2bf47aa002806d9bda29dafab8bb42","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,841 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"470ded523e54f8ba26e0bedbd76b2a49","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,842 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"2a296364f89b066721825fb4fd9eea4c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:33,842 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:33,843 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:33,843 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-13
+2025-08-28 19:45:33,843 - MarketRegimeScanner - INFO - Running backtest for 2018-02-14
+2025-08-28 19:45:33,874 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:33,874 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-14
+2025-08-28 19:45:33,874 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:34,011 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"bf835463fe04d17a8266b529df364cb2","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,011 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"06ccb5ebbc0a6d8ebdc696d401675039","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,012 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"be215d50694896659a24ce934681af67","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,021 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"bd325ac51805b60b9f4bd95320f7027b","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,021 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:34,022 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:34,022 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-14
+2025-08-28 19:45:34,022 - MarketRegimeScanner - INFO - Running backtest for 2018-02-15
+2025-08-28 19:45:34,053 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:34,054 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-15
+2025-08-28 19:45:34,054 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:34,188 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"df606a184032e6b3efd4c22d5526dc0c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,192 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"883580181ac1bf74a207688b1095a792","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,194 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"551a2451f044d8d03c4b52359adf507c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,197 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"2b508bc464ee38e0890e0f9701d235a1","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,197 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:34,197 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:34,197 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-15
+2025-08-28 19:45:34,198 - MarketRegimeScanner - INFO - Running backtest for 2018-02-16
+2025-08-28 19:45:34,227 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:34,228 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-16
+2025-08-28 19:45:34,228 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:34,365 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"60e98030177bee6527835b9280c3d42f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,367 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"a1205724d195d7ad4fc9463ae09d97f5","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,367 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"1d317e4bf0571b2ff8ebc36137351488","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,373 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"1df41f69f5c06970600ff1b02a2ce186","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,373 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:34,374 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:34,374 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-16
+2025-08-28 19:45:34,374 - MarketRegimeScanner - INFO - Running backtest for 2018-02-19
+2025-08-28 19:45:34,404 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:34,404 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-19
+2025-08-28 19:45:34,404 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:34,543 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"854edb4ceb8b00500f6741cd330ef9e1","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,544 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"fc6194b5ed64fb4021116cc2906503df","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,545 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"53ba4460b7ba532545cdf1cc2882a8e5","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,552 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"aee58799418aa79c8b30f5966aa71bee","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,552 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:34,553 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:34,553 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-19
+2025-08-28 19:45:34,553 - MarketRegimeScanner - INFO - Running backtest for 2018-02-20
+2025-08-28 19:45:34,583 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:34,584 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-20
+2025-08-28 19:45:34,584 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:34,720 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"b7d7e2e5510f855c1bd5046483d6b27b","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,721 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"d465058853d9dc30e197911b2ff40967","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,722 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"d47cb0d02e54ed6bce1a94b5d507e726","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,727 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"ac75b887585085e9dc18001f89935a76","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,727 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:34,728 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:34,728 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-20
+2025-08-28 19:45:34,728 - MarketRegimeScanner - INFO - Running backtest for 2018-02-21
+2025-08-28 19:45:34,758 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:34,758 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-21
+2025-08-28 19:45:34,758 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:34,893 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"7701130d16bdaeecb3827c188f16804c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,895 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"312e433ae458be215795b31bf06113ce","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,898 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"2bbe6622e69673b1c8cfa349ea593868","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,906 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"be54b9ee197d172ff597a4070d54ae91","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:34,906 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:34,907 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:34,907 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-21
+2025-08-28 19:45:34,907 - MarketRegimeScanner - INFO - Running backtest for 2018-02-22
+2025-08-28 19:45:34,940 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:34,940 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-22
+2025-08-28 19:45:34,940 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:35,075 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"09c5324e16d417156c10c3895da1f266","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,078 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"1e20cc8bcb5b804cce68d05db545cced","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,079 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"45d7dbd9e8c5932e747ffb895673a787","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,080 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"89824a3e0b5384637bb5f8f8cc96a915","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,080 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:35,080 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:35,080 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-22
+2025-08-28 19:45:35,081 - MarketRegimeScanner - INFO - Running backtest for 2018-02-23
+2025-08-28 19:45:35,112 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:35,112 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-23
+2025-08-28 19:45:35,113 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:35,251 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"105ae2b4872f211729659be29c0e1316","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,253 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"d8936a6b6a82c97e730ffefca8bc275f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,258 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"e294a7823bf9ec33181806fa337d21a5","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,262 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"1b544a9bf2d9d9a48964eb0eb5dfb6a9","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,262 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:35,263 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:35,263 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-23
+2025-08-28 19:45:35,263 - MarketRegimeScanner - INFO - Running backtest for 2018-02-26
+2025-08-28 19:45:35,293 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:35,293 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-26
+2025-08-28 19:45:35,293 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:35,429 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"1e5f4a051893b9e943aa816db7a3da61","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,433 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"abf2c4d0b97d9933754d91dc4567cf6b","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,434 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"92fe9056de53553d67bf832398b0d3c1","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,434 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"b431d01deccd014ce35cf174a27748d3","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,434 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:35,435 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:35,435 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-26
+2025-08-28 19:45:35,435 - MarketRegimeScanner - INFO - Running backtest for 2018-02-27
+2025-08-28 19:45:35,467 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:35,467 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-27
+2025-08-28 19:45:35,467 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:35,601 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"a60781ca8342159ddd752e729bffbed0","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,604 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"b3519c5dfc9a7b16dbc09a9c0203c45e","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,606 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"3095ef81182e7e0cc9f7283f85926b6b","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,609 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"0e1922d3aba916a0a489e756ef6a947c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,609 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:35,610 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:35,610 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-27
+2025-08-28 19:45:35,610 - MarketRegimeScanner - INFO - Running backtest for 2018-02-28
+2025-08-28 19:45:35,642 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:35,642 - MarketRegimeScanner - INFO - Running backtest for date: 2018-02-28
+2025-08-28 19:45:35,642 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:35,777 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"d296e1284d7e5907359fc3beb4b736b5","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,780 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"30d470bbc2d7a1cef2c6c97b2cee0c68","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,782 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"56797932bcf5484a28639292d3e1f206","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,788 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"842284e455edda1be725fff803deb434","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,788 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:35,789 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:35,789 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-02-28
+2025-08-28 19:45:35,789 - MarketRegimeScanner - INFO - Running backtest for 2018-03-01
+2025-08-28 19:45:35,819 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:35,819 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-01
+2025-08-28 19:45:35,819 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:35,955 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"33d3a327bcd4f670ac261d89b1c8d5c2","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,957 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"56aaaf00a8df20eda1ccf21136e223f4","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,957 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"a0f68b832879e77909d3018775d9755f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,968 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"02f31df485ee7fab11d7a5e1cdb4a177","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:35,968 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:35,968 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:35,968 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-01
+2025-08-28 19:45:35,969 - MarketRegimeScanner - INFO - Running backtest for 2018-03-02
+2025-08-28 19:45:35,999 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:36,000 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-02
+2025-08-28 19:45:36,000 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:36,136 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"3b6f920fc9049ce0f2915d2b0e65c3fe","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,136 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"aae9380599b0fb1f4093c5d7533e2d5b","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,140 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"f29a5fa33ef844e039ad5b4a3da71502","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,145 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"f453b3b96fa0552334f417b5aa02a18a","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,145 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:36,146 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:36,146 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-02
+2025-08-28 19:45:36,146 - MarketRegimeScanner - INFO - Running backtest for 2018-03-05
+2025-08-28 19:45:36,209 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:36,209 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-05
+2025-08-28 19:45:36,209 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:36,343 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"ea843f0ecd93329caba02cf1541e785f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,348 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"1a09f8220559ab0cbb4e51e3033d48d6","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,349 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"e9477add4d9fb6d8f6113b7dcb7a7e02","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,355 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"64ca8ef3bed1c874705ebf386db71dd1","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,355 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:36,355 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:36,356 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-05
+2025-08-28 19:45:36,356 - MarketRegimeScanner - INFO - Running backtest for 2018-03-06
+2025-08-28 19:45:36,388 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:36,388 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-06
+2025-08-28 19:45:36,388 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:36,524 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"f817c8b688387228a19120c724e0afef","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,527 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"43c73819840cf443a5857aff97366310","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,528 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"14226645039e7575b7d843a083cee004","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,532 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"dde591e4623f5f9b6b1b196f6644312e","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,532 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:36,533 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:36,533 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-06
+2025-08-28 19:45:36,533 - MarketRegimeScanner - INFO - Running backtest for 2018-03-07
+2025-08-28 19:45:36,566 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:36,566 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-07
+2025-08-28 19:45:36,566 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:36,702 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"07ea8fcafbbcb9a3d28023542993964a","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,703 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"e669feaab4576065e758400ede3b208c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,705 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"a246073ce0ba3311e1878df7e4ff80b6","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,705 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"ac8ace8a3d0b02a12a70a31ea75e335e","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,705 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:36,706 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:36,706 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-07
+2025-08-28 19:45:36,706 - MarketRegimeScanner - INFO - Running backtest for 2018-03-08
+2025-08-28 19:45:36,738 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:36,738 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-08
+2025-08-28 19:45:36,738 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:36,876 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"3f98ae92737553c13fa4906033047e62","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,878 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"49acf468775fc875df5862cc3d97503f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,878 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"04225b18df4f1c37d0c271ea8f762cea","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,880 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"d72571346e7cc6647d63e25c3e963687","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:36,880 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:36,881 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:36,881 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-08
+2025-08-28 19:45:36,881 - MarketRegimeScanner - INFO - Running backtest for 2018-03-09
+2025-08-28 19:45:36,913 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:36,913 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-09
+2025-08-28 19:45:36,913 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:37,049 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"0b2a2c85095fd8d4f28b07ea2b2bcb2b","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,052 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"5ecf83ab4650ca82a5ae8071dc54a755","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,056 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"a5f49997ff752ffb3b14de21cf708fec","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,057 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"2ae7fd42eaf84a462aa66da7099dfb8c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,057 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:37,057 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:37,058 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-09
+2025-08-28 19:45:37,058 - MarketRegimeScanner - INFO - Running backtest for 2018-03-12
+2025-08-28 19:45:37,093 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:37,094 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-12
+2025-08-28 19:45:37,094 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:37,231 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"cb3358ff850c23d2ea2ac87272a6f7a6","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,234 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"f539632ecbcda3f4bc2364b18cd048e1","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,235 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"69b6c483d25e9274639d88d67cd4afbd","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,235 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"504141b5dcffa1d6969861ec704dab6c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,235 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:37,236 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:37,236 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-12
+2025-08-28 19:45:37,236 - MarketRegimeScanner - INFO - Running backtest for 2018-03-13
+2025-08-28 19:45:37,268 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:37,268 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-13
+2025-08-28 19:45:37,268 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:37,403 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"1e0561e2ec45638572edc5685f3ef10f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,404 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"663bae79c82fcbd86c6b4419c8bba386","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,408 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"aba86cdd7ecce406150525fd7a6da961","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,408 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"e7eec1777cae49f9ae660a7aa1ca6779","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,408 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:37,409 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:37,409 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-13
+2025-08-28 19:45:37,409 - MarketRegimeScanner - INFO - Running backtest for 2018-03-14
+2025-08-28 19:45:37,441 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:37,441 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-14
+2025-08-28 19:45:37,441 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:37,593 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"1ed806cd471c386df4720774dcd145d2","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,595 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"5c786ed968e400d34b57132bae6bec98","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,599 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"b9ff8ae8a8ff3b4e9be92ad9139effee","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,604 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"3d6de8b0940b72bf8ab0dd63ce37440a","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,605 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:37,605 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:37,605 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-14
+2025-08-28 19:45:37,605 - MarketRegimeScanner - INFO - Running backtest for 2018-03-15
+2025-08-28 19:45:37,638 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:37,638 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-15
+2025-08-28 19:45:37,638 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:37,776 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"7bd2bc397ad28b5443799b3291c6ebea","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,776 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"b79c5152913fcbb681f146759f72d849","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,778 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"62fe036c1166500e5e0807cfeddbb08b","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,779 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"7587d7c09a2fe8caa773d914c67e7e4a","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,779 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:37,780 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:37,780 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-15
+2025-08-28 19:45:37,780 - MarketRegimeScanner - INFO - Running backtest for 2018-03-16
+2025-08-28 19:45:37,811 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:37,811 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-16
+2025-08-28 19:45:37,811 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:37,945 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"62691930588d05e212bfb8e8d4567485","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,948 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"edf4df769c2490c89e598a7a64d0610e","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,949 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"faefc5d8289d50094324b2d606625091","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,950 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"bf45024638bea74f83ab62e5d0749452","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:37,950 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:37,950 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:37,951 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-16
+2025-08-28 19:45:37,951 - MarketRegimeScanner - INFO - Running backtest for 2018-03-19
+2025-08-28 19:45:37,983 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:37,983 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-19
+2025-08-28 19:45:37,983 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:38,121 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"59b071c8eccb15143489eb2c24e20265","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,121 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"81fcef9ab1d40da7a7af088128114f8b","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,124 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"5d12819ccc54b26742c34e120f24f79a","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,131 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"7ac34f201d023eb0e69de8df89586cbe","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,131 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:38,131 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:38,132 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-19
+2025-08-28 19:45:38,132 - MarketRegimeScanner - INFO - Running backtest for 2018-03-20
+2025-08-28 19:45:38,168 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:38,168 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-20
+2025-08-28 19:45:38,168 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:38,306 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"7c6a50ed4b077b9d63f57fd3525514fd","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,306 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"c4cf0446a8402be5741d03aad5938cad","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,308 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"e7b457ff8dcf1340f5a7df77a79ed5aa","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,313 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"298c8e0a840a184f47ed2c887bdfe4f6","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,313 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:38,313 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:38,314 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-20
+2025-08-28 19:45:38,314 - MarketRegimeScanner - INFO - Running backtest for 2018-03-21
+2025-08-28 19:45:38,344 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:38,345 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-21
+2025-08-28 19:45:38,345 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:38,482 - MarketRegimeScanner - WARNING - Failed to fetch data for ^RUT (Polygon: IWM): 403 - {"status":"NOT_AUTHORIZED","request_id":"8c7d7fa99841c02aa5ed0569a604327e","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,484 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"8f2a9f5a2e1a56fa81eb610093c370f6","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,485 - MarketRegimeScanner - WARNING - Failed to fetch data for ^DJI (Polygon: DIA): 403 - {"status":"NOT_AUTHORIZED","request_id":"c3ee1ac2244fd01ff83c936ed32ce38c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,490 - MarketRegimeScanner - WARNING - Failed to fetch data for ^GSPC (Polygon: SPY): 403 - {"status":"NOT_AUTHORIZED","request_id":"be63969b89fe8c862bd91d763cc378c9","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-28 19:45:38,490 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-28 19:45:38,491 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-28 19:45:38,491 - MarketRegimeScanner - WARNING - Failed to complete regime backtest for 2018-03-21
+2025-08-28 19:45:38,491 - MarketRegimeScanner - INFO - Running backtest for 2018-03-22
+2025-08-28 19:45:38,523 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-28 19:45:38,523 - MarketRegimeScanner - INFO - Running backtest for date: 2018-03-22
+2025-08-28 19:45:38,523 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-28 19:45:38,524 - MarketRegimeScanner - INFO - Application terminated by user

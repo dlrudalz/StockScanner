@@ -1,0 +1,7 @@
+BACKTESTING PROMPT
+python your_script_name.py --backtest-range YYYY-MM-DD:YYYY-MM-DD
+python market_regime_scanner.py --list-backtests
+python market_regime_scanner.py --list-backtest-years
+python market_regime_scanner.py --show-backtest-results 2020-03-15
+python market_regime_scanner.py --show-backtest-analysis 2020-03-15
+python market_regime_scanner.py --backtest-year 2020

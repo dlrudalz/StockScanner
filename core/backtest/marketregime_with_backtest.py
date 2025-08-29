@@ -52,6 +52,9 @@ class Config:
     USE_ENSEMBLE_MODEL = True  # Use ensemble of HMM and GMM
     MODEL_VERSION = "enhanced_v2.0"  # Model version identifier
     
+    # Backtesting Configuration
+    BACKTEST_HISTORICAL_DAYS = 30  # Default days to look back for backtesting
+    
     # Logging Configuration
     LOG_LEVEL = logging.INFO
     LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -88,22 +91,100 @@ def setup_logging():
 
 logger = setup_logging()
 
+# ======================== DATABASE MIGRATION SYSTEM ======================== #
+class DatabaseMigration:
+    """Database migration system to handle schema changes"""
+    
+    def __init__(self, db_path: str, migrations: List[Tuple[int, str]]):
+        self.db_path = db_path
+        self.migrations = sorted(migrations, key=lambda x: x[0])
+        self.current_version = 0
+        
+    @contextlib.contextmanager
+    def get_connection(self):
+        """Context manager for database connections"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
+            
+    def get_current_version(self) -> int:
+        """Get current database version"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                # Check if migrations table exists
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='migrations'")
+                if cursor.fetchone():
+                    cursor.execute("SELECT MAX(version) as version FROM migrations")
+                    result = cursor.fetchone()
+                    return result['version'] if result and result['version'] is not None else 0
+                return 0
+        except sqlite3.Error:
+            return 0
+            
+    def apply_migrations(self):
+        """Apply all pending migrations"""
+        current_version = self.get_current_version()
+        logger.info(f"Current database version: {current_version}")
+        
+        pending_migrations = [m for m in self.migrations if m[0] > current_version]
+        
+        if not pending_migrations:
+            logger.info("Database is up to date")
+            return
+            
+        logger.info(f"Applying {len(pending_migrations)} migrations")
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Create migrations table if it doesn't exist
+            if current_version == 0:
+                cursor.execute('''
+                    CREATE TABLE migrations (
+                        version INTEGER PRIMARY KEY,
+                        applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        description TEXT
+                    )
+                ''')
+            
+            for version, sql in pending_migrations:
+                try:
+                    # Execute migration SQL
+                    if isinstance(sql, str):
+                        cursor.executescript(sql)
+                    elif isinstance(sql, list):
+                        for statement in sql:
+                            cursor.execute(statement)
+                    
+                    # Record migration
+                    cursor.execute(
+                        "INSERT INTO migrations (version, description) VALUES (?, ?)",
+                        (version, f"Migration to version {version}")
+                    )
+                    
+                    conn.commit()
+                    logger.info(f"Applied migration to version {version}")
+                    
+                except sqlite3.Error as e:
+                    conn.rollback()
+                    logger.error(f"Failed to apply migration {version}: {e}")
+                    raise
+
 # ======================== DATABASE MANAGER ======================== #
 class DatabaseManager:
     def __init__(self, db_path: str):
         self.db_path = db_path
         # Ensure the directory exists
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self._init_database()
         
-    def _init_database(self):
-        """Initialize database with required tables"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Create tickers table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS tickers (
+        # Define database migrations
+        self.migrations = [
+            (1, [
+                '''CREATE TABLE IF NOT EXISTS tickers (
                     ticker TEXT PRIMARY KEY,
                     name TEXT,
                     primary_exchange TEXT,
@@ -115,21 +196,13 @@ class DatabaseManager:
                     active INTEGER DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Create metadata table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS metadata (
+                )''',
+                '''CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY,
                     value TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Create historical_tickers table to track changes over time
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS historical_tickers (
+                )''',
+                '''CREATE TABLE IF NOT EXISTS historical_tickers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ticker TEXT,
                     name TEXT,
@@ -140,17 +213,33 @@ class DatabaseManager:
                     locale TEXT,
                     currency_name TEXT,
                     active INTEGER,
-                    change_type TEXT,  -- 'added', 'removed', 'updated'
+                    change_type TEXT,
                     change_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Create indexes for better performance
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_exchange ON tickers(primary_exchange)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_active ON tickers(active)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_date ON historical_tickers(change_date)')
-            
-            conn.commit()
+                )''',
+                '''CREATE TABLE IF NOT EXISTS backtest_tickers (
+                    date TEXT,
+                    year INTEGER,
+                    ticker TEXT,
+                    name TEXT,
+                    primary_exchange TEXT,
+                    last_updated_utc TEXT,
+                    type TEXT,
+                    market TEXT,
+                    locale TEXT,
+                    currency_name TEXT,
+                    PRIMARY KEY (date, ticker)
+                )''',
+                '''CREATE INDEX IF NOT EXISTS idx_tickers_exchange ON tickers(primary_exchange)''',
+                '''CREATE INDEX IF NOT EXISTS idx_tickers_active ON tickers(active)''',
+                '''CREATE INDEX IF NOT EXISTS idx_historical_tickers_date ON historical_tickers(change_date)''',
+                '''CREATE INDEX IF NOT EXISTS idx_backtest_tickers_date ON backtest_tickers(date)''',
+                '''CREATE INDEX IF NOT EXISTS idx_backtest_tickers_year ON backtest_tickers(year)'''
+            ])
+        ]
+        
+        # Apply migrations
+        migrator = DatabaseMigration(db_path, self.migrations)
+        migrator.apply_migrations()
             
     @contextlib.contextmanager
     def get_connection(self):
@@ -377,6 +466,68 @@ class DatabaseManager:
             except (json.JSONDecodeError, TypeError):
                 return value
         return default
+        
+    def upsert_backtest_tickers(self, tickers: List[Dict], date_str: str) -> int:
+        """Insert or update tickers in the backtest table with year"""
+        inserted = 0
+        year = int(date_str.split('-')[0])  # Extract year from date
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            for ticker_data in tickers:
+                cursor.execute('''
+                    INSERT OR REPLACE INTO backtest_tickers 
+                    (date, year, ticker, name, primary_exchange, last_updated_utc, 
+                     type, market, locale, currency_name)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    date_str,
+                    year,
+                    ticker_data['ticker'],
+                    ticker_data.get('name'),
+                    ticker_data.get('primary_exchange'),
+                    ticker_data.get('last_updated_utc'),
+                    ticker_data.get('type'),
+                    ticker_data.get('market'),
+                    ticker_data.get('locale'),
+                    ticker_data.get('currency_name')
+                ))
+                
+                if cursor.rowcount > 0:
+                    inserted += 1
+            
+            conn.commit()
+            
+        return inserted
+        
+    def get_backtest_tickers(self, date_str: str) -> List[Dict]:
+        """Get tickers for a specific backtest date"""
+        return self.execute_query(
+            "SELECT * FROM backtest_tickers WHERE date = ? ORDER BY ticker",
+            (date_str,)
+        )
+        
+    def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
+        """Get tickers for a specific backtest year"""
+        return self.execute_query(
+            "SELECT * FROM backtest_tickers WHERE year = ? ORDER BY date, ticker",
+            (year,)
+        )
+        
+    def get_backtest_dates(self) -> List[str]:
+        """Get all available backtest dates"""
+        result = self.execute_query(
+            "SELECT DISTINCT date FROM backtest_tickers ORDER BY date"
+        )
+        return [row['date'] for row in result]
+        
+    def get_backtest_years(self) -> List[int]:
+        """Get all available backtest years"""
+        result = self.execute_query(
+            "SELECT DISTINCT year FROM backtest_tickers ORDER BY year"
+        )
+        return [row['year'] for row in result]
 
 # ======================== MARKET REGIME DATABASE ======================== #
 class MarketRegimeDatabase:
@@ -384,20 +535,11 @@ class MarketRegimeDatabase:
         self.db_path = db_path
         # Ensure the directory exists
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self._init_database()
         
-    def _init_database(self):
-        """Initialize database with required tables for market regime data"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Drop existing tables if they exist (for development)
-            cursor.execute('DROP TABLE IF EXISTS market_regimes')
-            cursor.execute('DROP TABLE IF EXISTS regime_statistics')
-            
-            # Create market_regimes table with confidence column
-            cursor.execute('''
-                CREATE TABLE market_regimes (
+        # Define database migrations
+        self.migrations = [
+            (1, [
+                '''CREATE TABLE IF NOT EXISTS market_regimes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp DATETIME NOT NULL,
                     regime INTEGER NOT NULL,
@@ -405,12 +547,8 @@ class MarketRegimeDatabase:
                     features TEXT,
                     model_version TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Create regime_statistics table
-            cursor.execute('''
-                CREATE TABLE regime_statistics (
+                )''',
+                '''CREATE TABLE IF NOT EXISTS regime_statistics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     regime INTEGER NOT NULL,
                     start_date DATETIME NOT NULL,
@@ -419,16 +557,42 @@ class MarketRegimeDatabase:
                     return_pct REAL,
                     volatility REAL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Create indexes for better performance
-            cursor.execute('CREATE INDEX idx_regimes_timestamp ON market_regimes(timestamp)')
-            cursor.execute('CREATE INDEX idx_regimes_regime ON market_regimes(regime)')
-            cursor.execute('CREATE INDEX idx_statistics_regime ON regime_statistics(regime)')
-            cursor.execute('CREATE INDEX idx_statistics_date ON regime_statistics(start_date)')
-            
-            conn.commit()
+                )''',
+                '''CREATE TABLE IF NOT EXISTS backtest_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    backtest_date TEXT NOT NULL,
+                    backtest_year INTEGER NOT NULL,
+                    timestamp DATETIME NOT NULL,
+                    regime INTEGER NOT NULL,
+                    confidence REAL NOT NULL,
+                    features TEXT,
+                    model_version TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )''',
+                '''CREATE TABLE IF NOT EXISTS backtest_analysis (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    backtest_date TEXT NOT NULL,
+                    backtest_year INTEGER NOT NULL,
+                    analysis_type TEXT NOT NULL,
+                    analysis_data TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )''',
+                '''CREATE INDEX IF NOT EXISTS idx_regimes_timestamp ON market_regimes(timestamp)''',
+                '''CREATE INDEX IF NOT EXISTS idx_regimes_regime ON market_regimes(regime)''',
+                '''CREATE INDEX IF NOT EXISTS idx_statistics_regime ON regime_statistics(regime)''',
+                '''CREATE INDEX IF NOT EXISTS idx_statistics_date ON regime_statistics(start_date)''',
+                '''CREATE INDEX IF NOT EXISTS idx_backtest_date ON backtest_results(backtest_date)''',
+                '''CREATE INDEX IF NOT EXISTS idx_backtest_year ON backtest_results(backtest_year)''',
+                '''CREATE INDEX IF NOT EXISTS idx_backtest_timestamp ON backtest_results(timestamp)''',
+                '''CREATE INDEX IF NOT EXISTS idx_analysis_date ON backtest_analysis(backtest_date)''',
+                '''CREATE INDEX IF NOT EXISTS idx_analysis_year ON backtest_analysis(backtest_year)''',
+                '''CREATE INDEX IF NOT EXISTS idx_analysis_type ON backtest_analysis(analysis_type)'''
+            ])
+        ]
+        
+        # Apply migrations
+        migrator = DatabaseMigration(db_path, self.migrations)
+        migrator.apply_migrations()
             
     @contextlib.contextmanager
     def get_connection(self):
@@ -500,6 +664,66 @@ class MarketRegimeDatabase:
             return self.execute_query(
                 "SELECT * FROM regime_statistics ORDER BY start_date"
             )
+            
+    def save_backtest_result(self, backtest_date: str, timestamp: datetime, regime: int, 
+                           confidence: float, features: Dict, model_version: str) -> int:
+        """Save backtest result to database"""
+        backtest_year = int(backtest_date.split('-')[0])
+        return self.execute_write(
+            '''INSERT INTO backtest_results 
+               (backtest_date, backtest_year, timestamp, regime, confidence, features, model_version) 
+               VALUES (?, ?, ?, ?, ?, ?, ?)''',
+            (backtest_date, backtest_year, timestamp, regime, confidence, json.dumps(features), model_version)
+        )
+        
+    def get_backtest_results(self, backtest_date: str) -> List[Dict]:
+        """Get backtest results for a specific date"""
+        return self.execute_query(
+            "SELECT * FROM backtest_results WHERE backtest_date = ? ORDER BY timestamp",
+            (backtest_date,)
+        )
+        
+    def get_backtest_results_by_year(self, year: int) -> List[Dict]:
+        """Get backtest results for a specific year"""
+        return self.execute_query(
+            "SELECT * FROM backtest_results WHERE backtest_year = ? ORDER BY backtest_date, timestamp",
+            (year,)
+        )
+        
+    def get_backtest_dates(self) -> List[str]:
+        """Get all available backtest dates"""
+        result = self.execute_query(
+            "SELECT DISTINCT backtest_date FROM backtest_results ORDER BY backtest_date"
+        )
+        return [row['backtest_date'] for row in result]
+        
+    def get_backtest_years(self) -> List[int]:
+        """Get all available backtest years"""
+        result = self.execute_query(
+            "SELECT DISTINCT backtest_year FROM backtest_results ORDER BY backtest_year"
+        )
+        return [row['backtest_year'] for row in result]
+        
+    def save_backtest_analysis(self, backtest_date: str, analysis_type: str, analysis_data: Dict) -> int:
+        """Save backtest analysis to database"""
+        backtest_year = int(backtest_date.split('-')[0])
+        return self.execute_write(
+            '''INSERT INTO backtest_analysis 
+               (backtest_date, backtest_year, analysis_type, analysis_data) 
+               VALUES (?, ?, ?, ?)''',
+            (backtest_date, backtest_year, analysis_type, json.dumps(analysis_data))
+        )
+        
+    def get_backtest_analysis(self, backtest_date: str, analysis_type: str) -> Optional[Dict]:
+        """Get backtest analysis for a specific date and type"""
+        result = self.execute_query(
+            "SELECT * FROM backtest_analysis WHERE backtest_date = ? AND analysis_type = ? ORDER BY created_at DESC LIMIT 1",
+            (backtest_date, analysis_type)
+        )
+        if result:
+            analysis_data = result[0]['analysis_data']
+            return json.loads(analysis_data) if analysis_data else {}
+        return None
 
 # ======================== TICKER SCANNER ======================== #
 class PolygonTickerScanner:
@@ -522,6 +746,9 @@ class PolygonTickerScanner:
         self.semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
         self.db = DatabaseManager(config.DATABASE_PATH_TICKER)
         self.shutdown_requested = False
+        # Backtesting attributes
+        self.backtest_mode = False
+        self.backtest_date = None
         logger.info(f"Using local timezone: {self.local_tz}")
         logger.info(f"Database path: {config.DATABASE_PATH_TICKER}")
         logger.info(f"Using composite indices: {', '.join(self.composite_indices)}")
@@ -584,8 +811,12 @@ class PolygonTickerScanner:
         all_results = []
         next_url = None
         
-        # Use current date
-        date_param = datetime.now().strftime("%Y-%m-%d")
+        # Use current date or backtest date
+        if self.backtest_mode and self.backtest_date:
+            date_param = self.backtest_date
+            logger.info(f"Using historical date: {date_param}")
+        else:
+            date_param = datetime.now().strftime("%Y-%m-%d")
             
         # Different API endpoint for composite indices
         if composite_index == "^IXIC":  # NASDAQ Composite
@@ -604,7 +835,7 @@ class PolygonTickerScanner:
             "active": "true",
             "limit": 1000,  # Maximum allowed by Polygon
             "apiKey": self.api_key,
-            "date": date_param
+            "date": date_param  # Add date parameter for historical data
         }
         
         # Initial URL construction
@@ -643,7 +874,10 @@ class PolygonTickerScanner:
         """Refresh all tickers with parallel composite index processing"""
         start_time = time.time()
         
-        logger.info("Starting full ticker refresh")
+        if self.backtest_mode and self.backtest_date:
+            logger.info(f"Starting historical ticker refresh for {self.backtest_date}")
+        else:
+            logger.info("Starting full ticker refresh")
         
         # Check for shutdown before starting
         if self.shutdown_requested:
@@ -675,41 +909,52 @@ class PolygonTickerScanner:
         new_tickers = set(new_df['ticker'].tolist())
         
         with self.cache_lock:
-            # Original logic for live mode
-            old_tickers = set(self.current_tickers_set)
-            added = new_tickers - old_tickers
-            removed = old_tickers - new_tickers
-            
-            # Convert DataFrame to list of dictionaries for database storage
-            tickers_data = new_df.to_dict('records')
-            
-            # Update database
-            inserted, updated = self.db.upsert_tickers(tickers_data)
-            
-            # Mark removed tickers as inactive
-            if removed:
-                marked_inactive = self.db.mark_tickers_inactive(list(removed))
-                logger.info(f"Marked {marked_inactive} tickers as inactive")
-            
-            # Update in-memory cache
-            self.ticker_cache = new_df
-            self.current_tickers_set = new_tickers
-            
-            # Update known missing tickers
-            rediscovered = added & self.known_missing_tickers
-            if rediscovered:
-                self.known_missing_tickers -= rediscovered
-                self.db.update_metadata('known_missing_tickers', list(self.known_missing_tickers))
+            # For backtest mode, we don't update the main database
+            if self.backtest_mode and self.backtest_date:
+                # Store backtest results
+                tickers_data = new_df.to_dict('records')
+                inserted = self.db.upsert_backtest_tickers(tickers_data, self.backtest_date)
+                logger.info(f"Stored {inserted} tickers in backtest database for {self.backtest_date}")
+            else:
+                # Original logic for live mode
+                old_tickers = set(self.current_tickers_set)
+                added = new_tickers - old_tickers
+                removed = old_tickers - new_tickers
+                
+                # Convert DataFrame to list of dictionaries for database storage
+                tickers_data = new_df.to_dict('records')
+                
+                # Update database
+                inserted, updated = self.db.upsert_tickers(tickers_data)
+                
+                # Mark removed tickers as inactive
+                if removed:
+                    marked_inactive = self.db.mark_tickers_inactive(list(removed))
+                    logger.info(f"Marked {marked_inactive} tickers as inactive")
+                
+                # Update in-memory cache
+                self.ticker_cache = new_df
+                self.current_tickers_set = new_tickers
+                
+                # Update known missing tickers
+                rediscovered = added & self.known_missing_tickers
+                if rediscovered:
+                    self.known_missing_tickers -= rediscovered
+                    self.db.update_metadata('known_missing_tickers', list(self.known_missing_tickers))
             
         self.last_refresh_time = time.time()
         
-        self.db.update_metadata('last_refresh_time', self.last_refresh_time)
+        if not self.backtest_mode:
+            self.db.update_metadata('last_refresh_time', self.last_refresh_time)
         
         elapsed = time.time() - start_time
         logger.info(f"Ticker refresh completed in {elapsed:.2f}s")
         
-        logger.info(f"Total: {len(new_df)} | Added: {len(added)} | Removed: {len(removed)}")
-        logger.info(f"Database: {inserted} inserted, {updated} updated")
+        if not self.backtest_mode:
+            logger.info(f"Total: {len(new_df)} | Added: {len(added)} | Removed: {len(removed)}")
+            logger.info(f"Database: {inserted} inserted, {updated} updated")
+        else:
+            logger.info(f"Historical data: {len(new_df)} tickers for {self.backtest_date}")
             
         return True
 
@@ -753,6 +998,22 @@ class PolygonTickerScanner:
     def get_ticker_history_db(self, ticker: str, limit: int = 10) -> List[Dict]:
         """Get historical changes for a ticker from database"""
         return self.db.get_ticker_history(ticker, limit)
+        
+    def get_backtest_tickers(self, date_str: str) -> List[Dict]:
+        """Get tickers for a specific backtest date"""
+        return self.db.get_backtest_tickers(date_str)
+        
+    def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
+        """Get tickers for a specific backtest year"""
+        return self.db.get_backtest_tickers_by_year(year)
+        
+    def get_backtest_dates(self) -> List[str]:
+        """Get all available backtest dates"""
+        return self.db.get_backtest_dates()
+        
+    def get_backtest_years(self) -> List[int]:
+        """Get all available backtest years"""
+        return self.db.get_backtest_years()
 
 # ======================== MARKET REGIME SCANNER ======================== #
 class MarketRegimeScanner:
@@ -770,7 +1031,11 @@ class MarketRegimeScanner:
         self.scaler = StandardScaler()
         self.model_version = config.MODEL_VERSION
         
-        # Update the market_indices mapping to use more reliable symbols
+        # Backtesting attributes
+        self.backtest_mode = False
+        self.backtest_date = None
+        
+        # Use the composite indices for market regime detection
         self.market_indices = {
             "^IXIC": "COMP",    # NASDAQ Composite
             "^NYA": "NYA",      # NYSE Composite
@@ -778,6 +1043,7 @@ class MarketRegimeScanner:
         }
         
         logger.info(f"Market regime database path: {config.DATABASE_PATH_REGIME}")
+        logger.info(f"Using composite indices for regime detection: {', '.join(self.market_indices.keys())}")
         
     async def _fetch_historical_data(self, session, ticker: str, days: int, end_date: datetime = None) -> Optional[pd.DataFrame]:
         """Fetch historical data for a ticker with optional end date for backtesting"""
@@ -828,8 +1094,8 @@ class MarketRegimeScanner:
                 logger.error(f"Error fetching data for {ticker}: {e}")
                 return None
                 
-    async def fetch_market_data(self, days: int = config.HISTORICAL_DATA_DAYS) -> pd.DataFrame:
-        """Fetch historical market data for all market indices"""
+    async def fetch_market_data(self, days: int = config.HISTORICAL_DATA_DAYS, end_date: datetime = None) -> pd.DataFrame:
+        """Fetch historical market data for all market indices with optional end date for backtesting"""
         logger.info(f"Fetching {days} days of market data for regime analysis")
         
         # Get the market indices
@@ -837,7 +1103,7 @@ class MarketRegimeScanner:
         
         all_data = []
         async with aiohttp.ClientSession() as session:
-            tasks = [self._fetch_historical_data(session, ticker, days) for ticker in tickers]
+            tasks = [self._fetch_historical_data(session, ticker, days, end_date) for ticker in tickers]
             results = await asyncio.gather(*tasks)
             
             for result in results:
@@ -1023,8 +1289,8 @@ class MarketRegimeScanner:
         else:
             return f"Unknown Regime {regime}"
             
-    async def scan_market_regime(self):
-        """Perform a complete market regime scan"""
+    async def scan_market_regime(self, backtest_date: str = None):
+        """Perform a complete market regime scan with optional backtesting"""
         if self.shutdown_requested:
             return False
             
@@ -1032,8 +1298,17 @@ class MarketRegimeScanner:
         start_time = time.time()
         
         try:
+            # Set backtest mode if date is provided
+            if backtest_date:
+                self.backtest_mode = True
+                self.backtest_date = backtest_date
+                end_date = datetime.strptime(backtest_date, "%Y-%m-%d")
+                logger.info(f"Running backtest for date: {backtest_date}")
+            else:
+                end_date = None
+            
             # Fetch market data
-            market_data = await self.fetch_market_data()
+            market_data = await self.fetch_market_data(end_date=end_date)
             if market_data.empty:
                 logger.error("No market data available for regime analysis")
                 return False
@@ -1066,15 +1341,27 @@ class MarketRegimeScanner:
                 
             regime_label = self.interpret_regime(regime)
             
-            # Save to database
-            timestamp = datetime.now()
-            self.regime_db.save_market_regime(
-                timestamp, regime, confidence, feature_values, self.model_version
-            )
+            # Save to appropriate database table
+            timestamp = datetime.now() if not backtest_date else datetime.strptime(backtest_date, "%Y-%m-%d")
+            
+            if backtest_date:
+                # Save to backtest results
+                self.regime_db.save_backtest_result(
+                    backtest_date, timestamp, regime, confidence, feature_values, self.model_version
+                )
+                logger.info(f"Backtest result saved for {backtest_date}: {regime_label} (confidence: {confidence:.2f})")
+                
+                # Perform backtest analysis
+                self.perform_backtest_analysis(backtest_date, regime, confidence, feature_values)
+            else:
+                # Save to regular market regimes table
+                self.regime_db.save_market_regime(
+                    timestamp, regime, confidence, feature_values, self.model_version
+                )
+                logger.info(f"Market regime saved: {regime_label} (confidence: {confidence:.2f})")
             
             elapsed = time.time() - start_time
             logger.info(f"Market regime scan completed in {elapsed:.2f}s")
-            logger.info(f"Current market regime: {regime_label} (confidence: {confidence:.2f})")
             
             return True
             
@@ -1083,7 +1370,53 @@ class MarketRegimeScanner:
             import traceback
             logger.error(traceback.format_exc())
             return False
+        finally:
+            # Reset backtest mode
+            self.backtest_mode = False
+            self.backtest_date = None
             
+    def perform_backtest_analysis(self, backtest_date: str, regime: int, confidence: float, features: Dict):
+        """Perform analysis on backtest results"""
+        logger.info(f"Performing backtest analysis for {backtest_date}")
+        
+        # Get historical regimes for comparison
+        start_date = (datetime.strptime(backtest_date, "%Y-%m-%d") - timedelta(days=30)).strftime("%Y-%m-%d")
+        historical_regimes = self.regime_db.get_regimes_by_date_range(
+            datetime.strptime(start_date, "%Y-%m-%d"),
+            datetime.strptime(backtest_date, "%Y-%m-%d")
+        )
+        
+        # Calculate regime persistence
+        if historical_regimes:
+            recent_regimes = [r['regime'] for r in historical_regimes[-5:]]  # Last 5 regimes
+            regime_persistence = sum(1 for r in recent_regimes if r == regime) / len(recent_regimes)
+        else:
+            regime_persistence = 0
+        
+        # Calculate feature trends
+        feature_trends = {}
+        for feature_name, feature_value in features.items():
+            # Simple trend calculation (could be enhanced)
+            if 'return' in feature_name:
+                feature_trends[f"{feature_name}_trend"] = "positive" if feature_value > 0 else "negative"
+            elif 'volatility' in feature_name:
+                feature_trends[f"{feature_name}_trend"] = "high" if feature_value > 1 else "low"
+        
+        # Prepare analysis data
+        analysis_data = {
+            "regime": regime,
+            "regime_label": self.interpret_regime(regime),
+            "confidence": confidence,
+            "regime_persistence": regime_persistence,
+            "feature_trends": feature_trends,
+            "historical_regime_count": len(historical_regimes),
+            "analysis_timestamp": datetime.now().isoformat()
+        }
+        
+        # Save analysis to database
+        self.regime_db.save_backtest_analysis(backtest_date, "basic_analysis", analysis_data)
+        logger.info(f"Backtest analysis completed for {backtest_date}")
+        
     def start(self):
         if not self.active:
             self.active = True
@@ -1099,6 +1432,74 @@ class MarketRegimeScanner:
         """Cleanup resources"""
         self.stop()
         logger.info("Market regime scanner shutdown complete")
+
+# ======================== BACKTESTER ======================== #
+class Backtester:
+    def __init__(self, ticker_scanner: PolygonTickerScanner, regime_scanner: MarketRegimeScanner):
+        self.ticker_scanner = ticker_scanner
+        self.regime_scanner = regime_scanner
+        
+    async def run_backtest(self, start_date, end_date=None):
+        """
+        Run backtest for a specific date range
+        Args:
+            start_date: datetime object or string in YYYY-MM-DD format
+            end_date: datetime object or string in YYYY-MM-DD format (optional)
+        """
+        if end_date is None:
+            end_date = start_date
+            
+        # Convert to datetime if strings are provided
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, "%Y-%m-%d")
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, "%Y-%m-%d")
+            
+        logger.info(f"Starting backtest from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+        
+        current_date = start_date
+        while current_date <= end_date:
+            if current_date.weekday() < 5:  # Only weekdays
+                date_str = current_date.strftime("%Y-%m-%d")
+                logger.info(f"Running backtest for {date_str}")
+                
+                # First, ensure we have ticker data for this date
+                existing_tickers = self.ticker_scanner.db.get_backtest_tickers(date_str)
+                if not existing_tickers:
+                    logger.info(f"No ticker data found for {date_str}, fetching...")
+                    self.ticker_scanner.backtest_mode = True
+                    self.ticker_scanner.backtest_date = date_str
+                    success = await self.ticker_scanner.refresh_all_tickers()
+                    if not success:
+                        logger.warning(f"Failed to fetch ticker data for {date_str}")
+                        continue
+                
+                # Now run the regime scan for this date
+                success = await self.regime_scanner.scan_market_regime(date_str)
+                if success:
+                    logger.info(f"Successfully completed regime backtest for {date_str}")
+                else:
+                    logger.warning(f"Failed to complete regime backtest for {date_str}")
+            
+            current_date += timedelta(days=1)
+            
+        logger.info("Backtest completed")
+        
+    def get_backtest_results(self, date_str: str) -> List[Dict]:
+        """Get backtest results for a specific date"""
+        return self.regime_scanner.regime_db.get_backtest_results(date_str)
+        
+    def get_backtest_analysis(self, date_str: str) -> Optional[Dict]:
+        """Get backtest analysis for a specific date"""
+        return self.regime_scanner.regime_db.get_backtest_analysis(date_str, "basic_analysis")
+        
+    def get_backtest_dates(self) -> List[str]:
+        """Get all available backtest dates"""
+        return self.regime_scanner.regime_db.get_backtest_dates()
+        
+    def get_backtest_years(self) -> List[int]:
+        """Get all available backtest years"""
+        return self.regime_scanner.regime_db.get_backtest_years()
 
 # ======================== SCHEDULER ======================== #
 async def run_scheduled_ticker_refresh(scanner):
@@ -1153,6 +1554,7 @@ async def run_scheduled_ticker_refresh(scanner):
         if not scanner.active or scanner.shutdown_requested:
             break
             
+        # Run the refresh
         # Run the refresh
         logger.info("Starting scheduled ticker refresh")
         try:
@@ -1231,12 +1633,22 @@ async def run_scheduled_regime_scan(regime_scanner, wait_for_ticker=True):
 # ======================== MAIN EXECUTION ======================== #
 async def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Stock Ticker Fetcher and Market Regime Scanner')
+    parser = argparse.ArgumentParser(description='Stock Ticker Fetcher and Market Regime Scanner with Backtesting')
     parser.add_argument('--search', type=str, help='Search for a ticker by name or symbol')
     parser.add_argument('--history', type=str, help='Get history for a specific ticker')
     parser.add_argument('--list', action='store_true', help='List all active tickers')
     parser.add_argument('--regime', action='store_true', help='Get current market regime')
     parser.add_argument('--regime-history', type=int, nargs='?', const=7, help='Get market regime history for past N days (default: 7)')
+    
+    # Backtesting arguments
+    parser.add_argument('--backtest', type=str, help='Run backtest for a specific date (YYYY-MM-DD)')
+    parser.add_argument('--backtest-range', type=str, help='Run backtest for a date range (YYYY-MM-DD:YYYY-MM-DD)')
+    parser.add_argument('--backtest-year', type=int, help='Run backtest for a specific year')
+    parser.add_argument('--list-backtests', action='store_true', help='List available backtest dates')
+    parser.add_argument('--list-backtest-years', action='store_true', help='List available backtest years')
+    parser.add_argument('--show-backtest-results', type=str, help='Show results for a specific backtest date (YYYY-MM-DD)')
+    parser.add_argument('--show-backtest-analysis', type=str, help='Show analysis for a specific backtest date (YYYY-MM-DD)')
+    
     args = parser.parse_args()
     
     ticker_scanner = PolygonTickerScanner()
@@ -1301,83 +1713,153 @@ async def main():
             print("No market regime history available")
         return
     
-    # Normal operation - run both scanners
-    ticker_scanner.start()
-    regime_scanner.start()
-    
-    # Wait for initial cache load
-    await asyncio.get_event_loop().run_in_executor(None, ticker_scanner.initial_refresh_complete.wait)
-    
-    # Create tasks for the schedulers - ticker first, then regime with a delay
-    ticker_scheduler_task = asyncio.create_task(run_scheduled_ticker_refresh(ticker_scanner))
-    
-    # Wait a moment for the ticker scan to start
-    await asyncio.sleep(2)
-    
-    regime_scheduler_task = asyncio.create_task(run_scheduled_regime_scan(regime_scanner))
-    
-    # Set up signal handlers
-    loop = asyncio.get_event_loop()
-    stop_event = asyncio.Event()
-    
-    def signal_handler():
-        """Handle shutdown signals immediately"""
-        print("\nReceived interrupt signal, shutting down...")
-        ticker_scanner.stop()
-        regime_scanner.stop()
-        stop_event.set()
-        # Cancel all tasks
-        for task in asyncio.all_tasks(loop):
-            if task is not asyncio.current_task():
-                task.cancel()
-    
-    # Register signal handlers
-    if sys.platform != "win32":
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, signal_handler)
+    # Backtesting commands
+    if (args.backtest or args.backtest_range or args.backtest_year or 
+        args.list_backtests or args.list_backtest_years or 
+        args.show_backtest_results or args.show_backtest_analysis):
+        
+        backtester = Backtester(ticker_scanner, regime_scanner)
+        
+        if args.list_backtests:
+            # List available backtest dates
+            dates = backtester.get_backtest_dates()
+            if dates:
+                print("Available backtest dates:")
+                for date in dates:
+                    print(f"  {date}")
+            else:
+                print("No backtest data available")
+            return
+            
+        if args.list_backtest_years:
+            # List available backtest years
+            years = backtester.get_backtest_years()
+            if years:
+                print("Available backtest years:")
+                for year in years:
+                    print(f"  {year}")
+            else:
+                print("No backtest data available")
+            return
+            
+        if args.show_backtest_results:
+            # Show results for a specific backtest date
+            results = backtester.get_backtest_results(args.show_backtest_results)
+            if results:
+                print(f"Backtest results for {args.show_backtest_results}:")
+                for result in results:
+                    regime_label = regime_scanner.interpret_regime(result['regime'])
+                    print(f"  {result['timestamp']}: {regime_label} (confidence: {result['confidence']:.2f})")
+            else:
+                print(f"No backtest results found for {args.show_backtest_results}")
+            return
+            
+        if args.show_backtest_analysis:
+            # Show analysis for a specific backtest date
+            analysis = backtester.get_backtest_analysis(args.show_backtest_analysis)
+            if analysis:
+                print(f"Backtest analysis for {args.show_backtest_analysis}:")
+                print(f"  Regime: {analysis.get('regime_label', 'N/A')}")
+                print(f"  Confidence: {analysis.get('confidence', 0):.2f}")
+                print(f"  Regime Persistence: {analysis.get('regime_persistence', 0):.2f}")
+                print(f"  Historical Regime Count: {analysis.get('historical_regime_count', 0)}")
+                print("  Feature Trends:")
+                for feature, trend in analysis.get('feature_trends', {}).items():
+                    print(f"    {feature}: {trend}")
+            else:
+                print(f"No backtest analysis found for {args.show_backtest_analysis}")
+            return
+        
+        if args.backtest:
+            # Single date backtest
+            await backtester.run_backtest(args.backtest)
+        elif args.backtest_range:
+            # Date range backtest
+            start_str, end_str = args.backtest_range.split(':')
+            await backtester.run_backtest(start_str, end_str)
+        elif args.backtest_year:
+            # Year backtest
+            start_date = datetime(args.backtest_year, 1, 1)
+            end_date = datetime(args.backtest_year, 12, 31)
+            await backtester.run_backtest(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
     else:
-        # Windows signal handling
-        signal.signal(signal.SIGINT, lambda s, f: signal_handler())
-    
-    try:
-        # Create a task for the stop_event.wait() coroutine
-        stop_task = asyncio.create_task(stop_event.wait())
+        # Normal operation - run both scanners
+        ticker_scanner.start()
+        regime_scanner.start()
         
-        # Wait for either shutdown event or task completion
-        done, pending = await asyncio.wait(
-            [ticker_scheduler_task, regime_scheduler_task, stop_task], 
-            return_when=asyncio.FIRST_COMPLETED
-        )
+        # Wait for initial cache load
+        await asyncio.get_event_loop().run_in_executor(None, ticker_scanner.initial_refresh_complete.wait)
         
-        # Cancel the scheduler tasks if they're still running
-        if not ticker_scheduler_task.done():
-            ticker_scheduler_task.cancel()
-            try:
-                await ticker_scheduler_task
-            except asyncio.CancelledError:
-                pass
-                
-        if not regime_scheduler_task.done():
-            regime_scheduler_task.cancel()
-            try:
-                await regime_scheduler_task
-            except asyncio.CancelledError:
-                pass
-                
-        # Cancel the stop task if it's still running
-        if not stop_task.done():
-            stop_task.cancel()
-            try:
-                await stop_task
-            except asyncio.CancelledError:
-                pass
-                
-    except asyncio.CancelledError:
-        logger.info("Main task cancelled")
-    finally:
-        # Shutdown the scanners
-        await ticker_scanner.shutdown()
-        await regime_scanner.shutdown()
+        # Create tasks for the schedulers - ticker first, then regime with a delay
+        ticker_scheduler_task = asyncio.create_task(run_scheduled_ticker_refresh(ticker_scanner))
+        
+        # Wait a moment for the ticker scan to start
+        await asyncio.sleep(2)
+        
+        regime_scheduler_task = asyncio.create_task(run_scheduled_regime_scan(regime_scanner))
+        
+        # Set up signal handlers
+        loop = asyncio.get_event_loop()
+        stop_event = asyncio.Event()
+        
+        def signal_handler():
+            """Handle shutdown signals immediately"""
+            print("\nReceived interrupt signal, shutting down...")
+            ticker_scanner.stop()
+            regime_scanner.stop()
+            stop_event.set()
+            # Cancel all tasks
+            for task in asyncio.all_tasks(loop):
+                if task is not asyncio.current_task():
+                    task.cancel()
+        
+        # Register signal handlers
+        if sys.platform != "win32":
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, signal_handler)
+        else:
+            # Windows signal handling
+            signal.signal(signal.SIGINT, lambda s, f: signal_handler())
+        
+        try:
+            # Create a task for the stop_event.wait() coroutine
+            stop_task = asyncio.create_task(stop_event.wait())
+            
+            # Wait for either shutdown event or task completion
+            done, pending = await asyncio.wait(
+                [ticker_scheduler_task, regime_scheduler_task, stop_task], 
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            # Cancel the scheduler tasks if they're still running
+            if not ticker_scheduler_task.done():
+                ticker_scheduler_task.cancel()
+                try:
+                    await ticker_scheduler_task
+                except asyncio.CancelledError:
+                    pass
+                    
+            if not regime_scheduler_task.done():
+                regime_scheduler_task.cancel()
+                try:
+                    await regime_scheduler_task
+                except asyncio.CancelledError:
+                    pass
+                    
+            # Cancel the stop task if it's still running
+            if not stop_task.done():
+                stop_task.cancel()
+                try:
+                    await stop_task
+                except asyncio.CancelledError:
+                    pass
+                    
+        except asyncio.CancelledError:
+            logger.info("Main task cancelled")
+        finally:
+            # Shutdown the scanners
+            await ticker_scanner.shutdown()
+            await regime_scanner.shutdown()
 
 if __name__ == "__main__":
     # Windows event loop policy

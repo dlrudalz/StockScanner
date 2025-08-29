@@ -18,20 +18,35 @@ from collections import defaultdict
 import sqlite3
 import contextlib
 from typing import List, Dict, Set, Optional, Any, Tuple
+import argparse
+from pathlib import Path
+from hmmlearn import hmm
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+import warnings
+warnings.filterwarnings("ignore")
 
 # ======================== CONFIGURATION ======================== #
 class Config:
     # API Configuration
     POLYGON_API_KEY = "ld1Poa63U6t4Y2MwOCA2JeKQyHVrmyg8"
     
-    # Scanner Configuration
-    EXCHANGES = ["XNAS", "XNYS", "XASE"]
+    # Scanner Configuration - Using composite indices instead of exchanges
+    COMPOSITE_INDICES = ["^IXIC", "^NYA", "^XAX"]  # NASDAQ Composite, NYSE Composite, NYSE AMEX Composite
     MAX_CONCURRENT_REQUESTS = 100
     RATE_LIMIT_DELAY = 0.02
     SCAN_TIME = "08:30"
     
-    # Database Configuration
-    DATABASE_PATH = "ticker_data.db"
+    # Database Configuration - Use the specific path you requested
+    DATABASE_PATH_TICKER = r"C:\Users\kyung\StockScanner\core\ticker_data.db"
+    DATABASE_PATH_MARKET_REGIME = r"C:\Users\kyung\StockScanner\core\market_regime_data.db"
+    
+    # Market Regime Configuration
+    BENCHMARK_SYMBOLS = ["SPY", "QQQ", "IWM", "DIA"]  # Broad market ETFs for regime detection
+    HISTORICAL_DAYS = 365 * 3  # 3 years of historical data
+    HMM_N_COMPONENTS = 4  # Number of market regimes to detect (Bull, Bear, Correction, Sideways)
+    HMM_N_ITER = 1000  # Maximum iterations for HMM training
+    REGIME_UPDATE_INTERVAL = 3600  # Update regime every hour (in seconds)
     
     # Logging Configuration
     LOG_LEVEL = logging.INFO
@@ -73,6 +88,8 @@ logger = setup_logging()
 class DatabaseManager:
     def __init__(self, db_path: str):
         self.db_path = db_path
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._init_database()
         
     def _init_database(self):
@@ -271,9 +288,10 @@ class DatabaseManager:
                     "SELECT * FROM tickers WHERE ticker = ?", 
                     (ticker,)
                 )
-                current_data = cursor.fetchone()
-                
-                if current_data:
+                row = cursor.fetchone()
+                if row:
+                    # Convert sqlite3.Row to dictionary
+                    current_data = dict(row)
                     # Mark as inactive
                     cursor.execute(
                         "UPDATE tickers SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE ticker = ?",
@@ -330,7 +348,7 @@ class DatabaseManager:
     def get_ticker_history(self, ticker: str, limit: int = 10) -> List[Dict]:
         """Get historical changes for a ticker"""
         return self.execute_query(
-            "SELECT * FROM historical_tickers WHERE ticker = ? ORDER BY change_date DESC LIMIT ?",
+            "SELECT * FROM historical_tickers WHERE ticker = ? ORDER by change_date DESC LIMIT ?",
             (ticker, limit)
         )
         
@@ -356,12 +374,426 @@ class DatabaseManager:
                 return value
         return default
 
+# ======================== MARKET REGIME DATABASE ======================== #
+class MarketRegimeDatabaseManager:
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self._init_database()
+        
+    def _init_database(self):
+        """Initialize market regime database with required tables"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Create market_regimes table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS market_regimes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    regime INTEGER,
+                    regime_probability REAL,
+                    volatility REAL,
+                    trend_strength REAL,
+                    market_health REAL,
+                    features TEXT,
+                    model_version TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create market_regime_history table for historical predictions
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS market_regime_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE,
+                    regime INTEGER,
+                    regime_probability REAL,
+                    volatility REAL,
+                    trend_strength REAL,
+                    market_health REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(date)
+                )
+            ''')
+            
+            # Create indexes for better performance
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_timestamp ON market_regimes(timestamp)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_history_date ON market_regime_history(date)')
+            
+            conn.commit()
+            
+    @contextlib.contextmanager
+    def get_connection(self):
+        """Context manager for database connections"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row  # Enable row factory for dict-like access
+        try:
+            yield conn
+        finally:
+            conn.close()
+            
+    def execute_query(self, query: str, params: tuple = ()) -> List[Dict]:
+        """Execute a SELECT query and return results as dictionaries"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+            
+    def execute_write(self, query: str, params: tuple = ()) -> int:
+        """Execute a write query and return number of affected rows"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            conn.commit()
+            return cursor.rowcount
+            
+    def save_market_regime(self, regime_data: Dict) -> int:
+        """Save market regime data to database"""
+        query = '''
+            INSERT INTO market_regimes 
+            (regime, regime_probability, volatility, trend_strength, market_health, features, model_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        '''
+        return self.execute_write(
+            query,
+            (
+                regime_data['regime'],
+                regime_data['regime_probability'],
+                regime_data['volatility'],
+                regime_data['trend_strength'],
+                regime_data['market_health'],
+                json.dumps(regime_data['features']),
+                regime_data.get('model_version', 'v1.0')
+            )
+        )
+        
+    def save_daily_regime(self, regime_data: Dict) -> int:
+        """Save daily market regime data to history table"""
+        query = '''
+            INSERT OR REPLACE INTO market_regime_history 
+            (date, regime, regime_probability, volatility, trend_strength, market_health)
+            VALUES (?, ?, ?, ?, ?, ?)
+        '''
+        return self.execute_write(
+            query,
+            (
+                regime_data['date'],
+                regime_data['regime'],
+                regime_data['regime_probability'],
+                regime_data['volatility'],
+                regime_data['trend_strength'],
+                regime_data['market_health']
+            )
+        )
+        
+    def get_latest_regime(self) -> Optional[Dict]:
+        """Get the latest market regime data"""
+        result = self.execute_query(
+            "SELECT * FROM market_regimes ORDER BY timestamp DESC LIMIT 1"
+        )
+        return result[0] if result else None
+        
+    def get_regime_history(self, days: int = 30) -> List[Dict]:
+        """Get market regime history for the specified number of days"""
+        return self.execute_query(
+            "SELECT * FROM market_regime_history ORDER BY date DESC LIMIT ?",
+            (days,)
+        )
+
+# ======================== HMM MARKET REGIME DETECTION ======================== #
+class HMMMarketRegimeDetector:
+    def __init__(self, n_components=4, n_iter=1000):
+        self.n_components = n_components
+        self.n_iter = n_iter
+        self.model = None
+        self.scaler = StandardScaler()
+        self.feature_columns = ['returns', 'volatility', 'momentum', 'atr']
+        self.regime_names = {
+            0: "High Volatility Bear",
+            1: "Low Volatility Bull",
+            2: "Correction",
+            3: "Sideways"
+        }
+        
+    def calculate_features(self, df):
+        """Calculate technical features for regime detection"""
+        # Calculate returns
+        df['returns'] = df['close'].pct_change()
+        
+        # Calculate volatility (rolling standard deviation of returns)
+        df['volatility'] = df['returns'].rolling(window=20).std()
+        
+        # Calculate momentum (12-day rate of change)
+        df['momentum'] = df['close'].pct_change(periods=12)
+        
+        # Calculate Average True Range (ATR)
+        df['high_low'] = df['high'] - df['low']
+        df['high_close'] = np.abs(df['high'] - df['close'].shift())
+        df['low_close'] = np.abs(df['low'] - df['close'].shift())
+        df['tr'] = df[['high_low', 'high_close', 'low_close']].max(axis=1)
+        df['atr'] = df['tr'].rolling(window=14).mean()
+        
+        # Drop NaN values
+        df = df.dropna()
+        
+        return df
+        
+    def prepare_features(self, df):
+        """Prepare features for HMM training"""
+        feature_df = self.calculate_features(df.copy())
+        features = feature_df[self.feature_columns].values
+        
+        # Scale features
+        if len(features) > 0:
+            features_scaled = self.scaler.fit_transform(features)
+            return features_scaled, feature_df
+        return np.array([]), feature_df
+        
+    def fit(self, features):
+        """Train the HMM model"""
+        if len(features) == 0:
+            raise ValueError("No features available for training")
+            
+        self.model = hmm.GaussianHMM(
+            n_components=self.n_components,
+            covariance_type="full",
+            n_iter=self.n_iter,
+            random_state=42
+        )
+        self.model.fit(features)
+        return self.model
+        
+    def predict(self, features):
+        """Predict market regime using trained HMM"""
+        if self.model is None:
+            raise ValueError("Model must be trained before prediction")
+            
+        if len(features) == 0:
+            raise ValueError("No features available for prediction")
+            
+        # Predict regime
+        regime = self.model.predict(features[-1].reshape(1, -1))[0]
+        
+        # Calculate regime probability
+        log_prob = self.model.score(features[-1].reshape(1, -1))
+        regime_probability = np.exp(log_prob) if log_prob < 0 else 1 / (1 + np.exp(-log_prob))
+        
+        return regime, regime_probability
+        
+    def get_regime_characteristics(self, features_df, regime):
+        """Calculate characteristics of the detected regime"""
+        recent_data = features_df.tail(20)
+        
+        # Calculate volatility (recent average)
+        volatility = recent_data['volatility'].mean() if 'volatility' in recent_data.columns else 0
+        
+        # Calculate trend strength (absolute momentum)
+        trend_strength = abs(recent_data['returns'].mean()) if 'returns' in recent_data.columns else 0
+        
+        # Calculate market health (combination of factors)
+        market_health = 0.5  # Default neutral
+        
+        if not recent_data.empty:
+            positive_returns = (recent_data['returns'] > 0).mean()
+            volatility_factor = 1 - min(volatility * 10, 1)  # Normalize volatility
+            market_health = (positive_returns * 0.7 + volatility_factor * 0.3)
+        
+        return {
+            'regime': int(regime),
+            'regime_name': self.regime_names.get(regime, "Unknown"),
+            'volatility': float(volatility),
+            'trend_strength': float(trend_strength),
+            'market_health': float(market_health)
+        }
+
+# ======================== MARKET REGIME SCANNER ======================== #
+class MarketRegimeScanner:
+    def __init__(self):
+        self.api_key = config.POLYGON_API_KEY
+        self.base_url = "https://api.polygon.io/v2/aggs/ticker"
+        self.benchmark_symbols = config.BENCHMARK_SYMBOLS
+        self.historical_days = config.HISTORICAL_DAYS
+        self.regime_db = MarketRegimeDatabaseManager(config.DATABASE_PATH_MARKET_REGIME)
+        self.detector = HMMMarketRegimeDetector(
+            n_components=config.HMM_N_COMPONENTS,
+            n_iter=config.HMM_N_ITER
+        )
+        self.active = False
+        self.shutdown_requested = False
+        self.last_scan_time = 0
+        self.local_tz = get_localzone()
+        self.semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
+        
+    async def _fetch_historical_data(self, session, symbol):
+        """Fetch historical data for a symbol"""
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=self.historical_days)
+        
+        # Format dates for API
+        start_str = start_date.strftime("%Y-%m-%d")
+        end_str = end_date.strftime("%Y-%m-%d")
+        
+        url = f"{self.base_url}/{symbol}/range/1/day/{start_str}/{end_str}?apiKey={self.api_key}&adjusted=true&sort=asc"
+        
+        async with self.semaphore:
+            try:
+                async with session.get(url, timeout=30) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data.get('status') == 'OK' and data.get('resultsCount', 0) > 0:
+                            df = pd.DataFrame(data['results'])
+                            df['date'] = pd.to_datetime(df['t'], unit='ms')
+                            df.set_index('date', inplace=True)
+                            df.rename(columns={
+                                'o': 'open',
+                                'h': 'high',
+                                'l': 'low',
+                                'c': 'close',
+                                'v': 'volume'
+                            }, inplace=True)
+                            return df[['open', 'high', 'low', 'close', 'volume']]
+                    return None
+            except Exception as e:
+                logger.error(f"Error fetching data for {symbol}: {e}")
+                return None
+                
+    async def fetch_all_historical_data(self):
+        """Fetch historical data for all benchmark symbols"""
+        async with aiohttp.ClientSession() as session:
+            tasks = [self._fetch_historical_data(session, symbol) for symbol in self.benchmark_symbols]
+            results = await asyncio.gather(*tasks)
+            
+            # Combine data from all symbols
+            combined_data = {}
+            for i, symbol in enumerate(self.benchmark_symbols):
+                if results[i] is not None:
+                    combined_data[symbol] = results[i]
+            
+            return combined_data
+            
+    def prepare_training_data(self, historical_data):
+        """Prepare training data from historical prices"""
+        if not historical_data:
+            return None
+            
+        # Use SPY as primary benchmark, fallback to others
+        primary_symbol = "SPY"
+        if primary_symbol not in historical_data:
+            primary_symbol = list(historical_data.keys())[0]
+            
+        df = historical_data[primary_symbol].copy()
+        features, feature_df = self.detector.prepare_features(df)
+        
+        return features, feature_df
+        
+    def detect_regime(self, historical_data):
+        """Detect current market regime using HMM"""
+        try:
+            # Prepare training data
+            features, feature_df = self.prepare_training_data(historical_data)
+            
+            if features is None or len(features) == 0:
+                logger.error("No features available for regime detection")
+                return None
+                
+            # Train HMM model
+            self.detector.fit(features)
+            
+            # Predict current regime
+            current_regime, regime_probability = self.detector.predict(features)
+            
+            # Get regime characteristics
+            regime_info = self.detector.get_regime_characteristics(feature_df, current_regime)
+            regime_info['regime_probability'] = float(regime_probability)
+            
+            # Add feature information
+            latest_features = feature_df[self.detector.feature_columns].iloc[-1].to_dict()
+            regime_info['features'] = latest_features
+            
+            logger.info(f"Detected market regime: {regime_info['regime_name']} "
+                       f"(Probability: {regime_probability:.2f}, "
+                       f"Volatility: {regime_info['volatility']:.4f}, "
+                       f"Health: {regime_info['market_health']:.2f})")
+            
+            return regime_info
+            
+        except Exception as e:
+            logger.error(f"Error detecting market regime: {e}")
+            return None
+            
+    async def scan_market_regime(self):
+        """Perform a complete market regime scan"""
+        if self.shutdown_requested:
+            return None
+            
+        logger.info("Starting market regime scan")
+        start_time = time.time()
+        
+        try:
+            # Fetch historical data
+            historical_data = await self.fetch_all_historical_data()
+            
+            if not historical_data:
+                logger.error("No historical data fetched for regime detection")
+                return None
+                
+            # Detect market regime
+            regime_info = self.detect_regime(historical_data)
+            
+            if regime_info:
+                # Save to database
+                self.regime_db.save_market_regime(regime_info)
+                
+                # Also save daily record
+                today = datetime.now().date().isoformat()
+                self.regime_db.save_daily_regime({
+                    'date': today,
+                    'regime': regime_info['regime'],
+                    'regime_probability': regime_info['regime_probability'],
+                    'volatility': regime_info['volatility'],
+                    'trend_strength': regime_info['trend_strength'],
+                    'market_health': regime_info['market_health']
+                })
+                
+                elapsed = time.time() - start_time
+                logger.info(f"Market regime scan completed in {elapsed:.2f}s")
+                
+            return regime_info
+            
+        except Exception as e:
+            logger.error(f"Error in market regime scan: {e}")
+            return None
+            
+    def start(self):
+        """Start the market regime scanner"""
+        self.active = True
+        self.shutdown_requested = False
+        logger.info("Market regime scanner started")
+        
+    def stop(self):
+        """Stop the market regime scanner"""
+        self.active = False
+        self.shutdown_requested = True
+        logger.info("Market regime scanner stopped")
+        
+    def get_latest_regime(self):
+        """Get the latest market regime from database"""
+        return self.regime_db.get_latest_regime()
+        
+    def get_regime_history(self, days=30):
+        """Get market regime history"""
+        return self.regime_db.get_regime_history(days)
+
 # ======================== TICKER SCANNER ======================== #
 class PolygonTickerScanner:
     def __init__(self):
         self.api_key = config.POLYGON_API_KEY
         self.base_url = "https://api.polygon.io/v3/reference/tickers"
-        self.exchanges = config.EXCHANGES
+        # Use composite indices instead of exchanges
+        self.composite_indices = config.COMPOSITE_INDICES
         self.active = False
         self.cache_lock = RLock()
         self.refresh_lock = Lock()
@@ -374,9 +806,12 @@ class PolygonTickerScanner:
         self.current_tickers_set = set()
         self.local_tz = get_localzone()
         self.semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
-        self.db = DatabaseManager(config.DATABASE_PATH)
+        self.db = DatabaseManager(config.DATABASE_PATH_TICKER)
         self.shutdown_requested = False
+        self.regime_scanner = MarketRegimeScanner()  # Add regime scanner
         logger.info(f"Using local timezone: {self.local_tz}")
+        logger.info(f"Database path: {config.DATABASE_PATH_TICKER}")
+        logger.info(f"Using composite indices: {', '.join(self.composite_indices)}")
         
     def _init_cache(self):
         """Initialize or load ticker cache from database"""
@@ -430,17 +865,33 @@ class PolygonTickerScanner:
                 logger.error(f"API request exception: {e}")
                 return None
 
-    async def _fetch_exchange_tickers(self, session, exchange):
-        """Fetch all tickers for a specific exchange with optimized pagination"""
-        logger.info(f"Fetching tickers for {exchange}")
+    async def _fetch_composite_tickers(self, session, composite_index):
+        """Fetch all tickers for a specific composite index"""
+        logger.info(f"Fetching tickers for composite index {composite_index}")
         all_results = []
         next_url = None
+        
+        # Use current date
+        date_param = datetime.now().strftime("%Y-%m-%d")
+            
+        # Different API endpoint for composite indices
+        if composite_index == "^IXIC":  # NASDAQ Composite
+            exchange = "XNAS"
+        elif composite_index == "^NYA":  # NYSE Composite
+            exchange = "XNYS"
+        elif composite_index == "^XAX":  # NYSE AMEX Composite
+            exchange = "XASE"
+        else:
+            logger.error(f"Unknown composite index: {composite_index}")
+            return []
+            
         params = {
             "market": "stocks",
             "exchange": exchange,
             "active": "true",
             "limit": 1000,  # Maximum allowed by Polygon
-            "apiKey": self.api_key
+            "apiKey": self.api_key,
+            "date": date_param
         }
         
         # Initial URL construction
@@ -453,9 +904,9 @@ class PolygonTickerScanner:
                 break
                 
             results = data.get("results", [])
-            # Filter for common stocks only and add exchange info
+            # Filter for common stocks only and add composite index info
             stock_results = [
-                {**r, "primary_exchange": exchange} 
+                {**r, "composite_index": composite_index} 
                 for r in results 
                 if r.get('type', '').upper() == 'CS'
             ]
@@ -469,15 +920,16 @@ class PolygonTickerScanner:
             await asyncio.sleep(config.RATE_LIMIT_DELAY)
         
         if self.shutdown_requested:
-            logger.info(f"Shutdown requested, aborting {exchange} fetch")
+            logger.info(f"Shutdown requested, aborting {composite_index} fetch")
             return []
             
-        logger.info(f"Completed {exchange}: {len(all_results)} stocks across {page_count} pages")
+        logger.info(f"Completed {composite_index}: {len(all_results)} stocks across {page_count} pages")
         return all_results
 
     async def _refresh_all_tickers_async(self):
-        """Refresh all tickers with parallel exchange processing"""
+        """Refresh all tickers with parallel composite index processing"""
         start_time = time.time()
+        
         logger.info("Starting full ticker refresh")
         
         # Check for shutdown before starting
@@ -486,9 +938,9 @@ class PolygonTickerScanner:
             return False
             
         async with aiohttp.ClientSession() as session:
-            # Fetch all exchanges in parallel
-            tasks = [self._fetch_exchange_tickers(session, exch) for exch in self.exchanges]
-            exchange_results = await asyncio.gather(*tasks)
+            # Fetch all composite indices in parallel
+            tasks = [self._fetch_composite_tickers(session, idx) for idx in self.composite_indices]
+            composite_results = await asyncio.gather(*tasks)
             
             # Check for shutdown after fetching
             if self.shutdown_requested:
@@ -497,7 +949,7 @@ class PolygonTickerScanner:
                 
             # Flatten results
             all_results = []
-            for results in exchange_results:
+            for results in composite_results:
                 if results:
                     all_results.extend(results)
         
@@ -506,10 +958,11 @@ class PolygonTickerScanner:
             return False
             
         # Create DataFrame with only necessary columns
-        new_df = pd.DataFrame(all_results)[["ticker", "name", "primary_exchange", "last_updated_utc", "type", "market", "locale"]]
+        new_df = pd.DataFrame(all_results)[["ticker", "name", "primary_exchange", "last_updated_utc", "type", "market", "locale", "currency_name"]]
         new_tickers = set(new_df['ticker'].tolist())
         
         with self.cache_lock:
+            # Original logic for live mode
             old_tickers = set(self.current_tickers_set)
             added = new_tickers - old_tickers
             removed = old_tickers - new_tickers
@@ -534,14 +987,17 @@ class PolygonTickerScanner:
             if rediscovered:
                 self.known_missing_tickers -= rediscovered
                 self.db.update_metadata('known_missing_tickers', list(self.known_missing_tickers))
-        
+            
         self.last_refresh_time = time.time()
+        
         self.db.update_metadata('last_refresh_time', self.last_refresh_time)
         
         elapsed = time.time() - start_time
         logger.info(f"Ticker refresh completed in {elapsed:.2f}s")
+        
         logger.info(f"Total: {len(new_df)} | Added: {len(added)} | Removed: {len(removed)}")
         logger.info(f"Database: {inserted} inserted, {updated} updated")
+            
         return True
 
     async def refresh_all_tickers(self):
@@ -555,11 +1011,13 @@ class PolygonTickerScanner:
             self.shutdown_requested = False
             self._init_cache()
             self.initial_refresh_complete.set()
+            self.regime_scanner.start()  # Start regime scanner
             logger.info("Ticker scanner started")
 
     def stop(self):
         self.active = False
         self.shutdown_requested = True
+        self.regime_scanner.stop()  # Stop regime scanner
         logger.info("Ticker scanner stopped")
         
     async def shutdown(self):
@@ -584,6 +1042,14 @@ class PolygonTickerScanner:
     def get_ticker_history_db(self, ticker: str, limit: int = 10) -> List[Dict]:
         """Get historical changes for a ticker from database"""
         return self.db.get_ticker_history(ticker, limit)
+        
+    def get_market_regime(self):
+        """Get the latest market regime"""
+        return self.regime_scanner.get_latest_regime()
+        
+    def get_regime_history(self, days=30):
+        """Get market regime history"""
+        return self.regime_scanner.get_regime_history(days)
 
 # ======================== SCHEDULER ======================== #
 async def run_scheduled_refresh(scanner):
@@ -619,8 +1085,7 @@ async def run_scheduled_refresh(scanner):
         if now > target_datetime:
             target_datetime += timedelta(days=1)
         
-        # Convert seconds to hours and minutes
-        sleep_seconds = 29785  # Example value
+        sleep_seconds = (target_datetime - now).total_seconds()
         hours = sleep_seconds // 3600
         minutes = (sleep_seconds % 3600) // 60
 
@@ -653,16 +1118,150 @@ async def run_scheduled_refresh(scanner):
         except Exception as e:
             logger.error(f"Error during scheduled refresh: {e}")
 
+async def run_market_regime_scheduler(scanner):
+    """Run market regime scans on a schedule with immediate execution"""
+    # Run immediate scan on startup
+    logger.info("Starting immediate market regime scan")
+    try:
+        regime_info = await scanner.regime_scanner.scan_market_regime()
+        if regime_info:
+            logger.info(f"Initial market regime scan completed: {regime_info['regime_name']}")
+        else:
+            logger.warning("Initial market regime scan encountered errors")
+    except asyncio.CancelledError:
+        logger.info("Initial market regime scan cancelled")
+        return
+    except Exception as e:
+        logger.error(f"Error during initial market regime scan: {e}")
+    
+    # Continue with scheduled scans
+    while scanner.active and not scanner.shutdown_requested:
+        # Calculate next run time (current time + interval)
+        next_run = time.time() + config.REGIME_UPDATE_INTERVAL
+        sleep_seconds = config.REGIME_UPDATE_INTERVAL
+        
+        logger.info(f"Next market regime scan in {sleep_seconds/3600:.1f} hours")
+        
+        # Wait until scheduled time, but check every second if we should stop
+        while sleep_seconds > 0 and scanner.active and not scanner.shutdown_requested:
+            try:
+                # Sleep in small increments to be responsive to shutdown requests
+                await asyncio.sleep(min(60, sleep_seconds))  # Check every minute
+                sleep_seconds = max(0, next_run - time.time())
+            except asyncio.CancelledError:
+                logger.info("Market regime sleep interrupted by shutdown")
+                return
+            
+        if not scanner.active or scanner.shutdown_requested:
+            break
+            
+        # Run the regime scan
+        logger.info("Starting scheduled market regime scan")
+        try:
+            regime_info = await scanner.regime_scanner.scan_market_regime()
+            if regime_info:
+                logger.info(f"Scheduled market regime scan completed: {regime_info['regime_name']}")
+            else:
+                logger.warning("Scheduled market regime scan encountered errors")
+        except asyncio.CancelledError:
+            logger.info("Market regime scan cancelled")
+            return
+        except Exception as e:
+            logger.error(f"Error during scheduled market regime scan: {e}")
+
 # ======================== MAIN EXECUTION ======================== #
 async def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Stock Ticker Fetcher')
+    parser.add_argument('--search', type=str, help='Search for a ticker by name or symbol')
+    parser.add_argument('--history', type=str, help='Get history for a specific ticker')
+    parser.add_argument('--list', action='store_true', help='List all active tickers')
+    parser.add_argument('--regime', action='store_true', help='Get current market regime')
+    parser.add_argument('--regime-history', type=int, default=30, help='Get market regime history for specified days')
+    args = parser.parse_args()
+    
+    # Handle market regime queries first (they don't need the full scanner)
+    if args.regime or args.regime_history:
+        regime_scanner = MarketRegimeScanner()
+        regime_scanner.start()
+        
+        if args.regime:
+            regime = regime_scanner.get_latest_regime()
+            if regime:
+                print(f"Current Market Regime: {regime.get('regime_name', 'Unknown')}")
+                print(f"Probability: {regime.get('regime_probability', 0):.2f}")
+                print(f"Volatility: {regime.get('volatility', 0):.4f}")
+                print(f"Trend Strength: {regime.get('trend_strength', 0):.2f}")
+                print(f"Market Health: {regime.get('market_health', 0):.2f}")
+            else:
+                print("No market regime data available. Running a scan...")
+                regime_info = await regime_scanner.scan_market_regime()
+                if regime_info:
+                    print(f"Current Market Regime: {regime_info['regime_name']}")
+                    print(f"Probability: {regime_info['regime_probability']:.2f}")
+                    print(f"Volatility: {regime_info['volatility']:.4f}")
+                    print(f"Trend Strength: {regime_info['trend_strength']:.2f}")
+                    print(f"Market Health: {regime_info['market_health']:.2f}")
+                else:
+                    print("Failed to get market regime data.")
+        
+        if args.regime_history:
+            history = regime_scanner.get_regime_history(args.regime_history)
+            if history:
+                print(f"Market Regime History (last {args.regime_history} days):")
+                for day in history:
+                    date_str = day['date'] if isinstance(day['date'], str) else day['date'].split(' ')[0]
+                    print(f"{date_str}: Regime {day['regime']} "
+                          f"(Prob: {day.get('regime_probability', 0):.2f}, "
+                          f"Vol: {day.get('volatility', 0):.4f})")
+            else:
+                print("No market regime history available.")
+        
+        regime_scanner.stop()
+        return
+    
+    # Handle other ticker-related queries
     scanner = PolygonTickerScanner()
+    
+    if args.search:
+        results = scanner.search_tickers_db(args.search)
+        if results:
+            print(f"Found {len(results)} matching tickers:")
+            for result in results:
+                print(f"{result['ticker']}: {result['name']} ({result['primary_exchange']})")
+        else:
+            print("No matching tickers found")
+        return
+    
+    if args.history:
+        results = scanner.get_ticker_history_db(args.history)
+        if results:
+            print(f"History for {args.history}:")
+            for result in results:
+                print(f"{result['change_date']}: {result['change_type']}")
+        else:
+            print(f"No history found for {args.history}")
+        return
+    
+    if args.list:
+        results = scanner.db.get_all_active_tickers()
+        if results:
+            print(f"Found {len(results)} active tickers:")
+            for result in results:
+                print(f"{result['ticker']}: {result['name']} ({result['primary_exchange']})")
+        else:
+            print("No active tickers found")
+        return
+    
+    # Normal operation
     scanner.start()
     
     # Wait for initial cache load
     await asyncio.get_event_loop().run_in_executor(None, scanner.initial_refresh_complete.wait)
     
-    # Create a task for the scheduler
-    scheduler_task = asyncio.create_task(run_scheduled_refresh(scanner))
+    # Create tasks for both schedulers
+    ticker_scheduler_task = asyncio.create_task(run_scheduled_refresh(scanner))
+    regime_scheduler_task = asyncio.create_task(run_market_regime_scheduler(scanner))
     
     # Set up signal handlers
     loop = asyncio.get_event_loop()
@@ -692,25 +1291,18 @@ async def main():
         
         # Wait for either shutdown event or task completion
         done, pending = await asyncio.wait(
-            [scheduler_task, stop_task], 
+            [ticker_scheduler_task, regime_scheduler_task, stop_task], 
             return_when=asyncio.FIRST_COMPLETED
         )
         
-        # Cancel the scheduler task if it's still running
-        if not scheduler_task.done():
-            scheduler_task.cancel()
-            try:
-                await scheduler_task
-            except asyncio.CancelledError:
-                pass
-                
-        # Cancel the stop task if it's still running
-        if not stop_task.done():
-            stop_task.cancel()
-            try:
-                await stop_task
-            except asyncio.CancelledError:
-                pass
+        # Cancel all tasks if they're still running
+        for task in [ticker_scheduler_task, regime_scheduler_task, stop_task]:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
                 
     except asyncio.CancelledError:
         logger.info("Main task cancelled")
