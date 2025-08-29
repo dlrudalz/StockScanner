@@ -1,0 +1,21 @@
+2025-08-26 13:51:11,452 - TickerFetcher - INFO - Using local timezone: America/Chicago
+2025-08-26 13:51:11,494 - TickerFetcher - INFO - Loaded 5211 tickers from database
+2025-08-26 13:51:11,496 - TickerFetcher - INFO - Ticker scanner started
+2025-08-26 13:51:11,529 - TickerFetcher - INFO - Starting immediate scan on startup
+2025-08-26 13:51:11,530 - TickerFetcher - INFO - Starting full ticker refresh
+2025-08-26 13:51:11,530 - TickerFetcher - INFO - Fetching tickers for XNAS
+2025-08-26 13:51:11,531 - TickerFetcher - INFO - Fetching tickers for XNYS
+2025-08-26 13:51:11,532 - TickerFetcher - INFO - Fetching tickers for XASE
+2025-08-26 13:51:12,308 - TickerFetcher - INFO - Completed XASE: 222 stocks across 1 pages
+2025-08-26 13:51:13,376 - TickerFetcher - INFO - Completed XNYS: 1741 stocks across 3 pages
+2025-08-26 13:51:14,826 - TickerFetcher - INFO - Completed XNAS: 3248 stocks across 6 pages
+2025-08-26 13:51:15,013 - TickerFetcher - INFO - Ticker refresh completed in 3.48s
+2025-08-26 13:51:15,013 - TickerFetcher - INFO - Total: 5211 | Added: 0 | Removed: 0
+2025-08-26 13:51:15,013 - TickerFetcher - INFO - Database: 0 inserted, 5211 updated
+2025-08-26 13:51:15,015 - TickerFetcher - INFO - Initial scan completed successfully
+2025-08-26 13:51:15,015 - TickerFetcher - INFO - Next refresh scheduled at 2025-08-27 08:30:00-05:00 (8 hours and 16 minutes from now)
+2025-08-26 13:51:19,059 - TickerFetcher - INFO - Ticker scanner stopped
+2025-08-26 13:51:19,060 - TickerFetcher - INFO - Sleep interrupted by shutdown
+2025-08-26 13:51:19,060 - TickerFetcher - INFO - Main task cancelled
+2025-08-26 13:51:19,060 - TickerFetcher - INFO - Ticker scanner stopped
+2025-08-26 13:51:19,060 - TickerFetcher - INFO - Ticker scanner shutdown complete

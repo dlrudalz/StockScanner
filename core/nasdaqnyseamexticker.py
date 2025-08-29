@@ -8,11 +8,9 @@ import logging
 import json
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
-import pytz
 from threading import Lock, Event, RLock
 import sys
 import signal
-import requests
 from tzlocal import get_localzone
 from collections import defaultdict
 import sqlite3
