@@ -1,0 +1,14 @@
+2025-08-31 01:24:57,047 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-08-31 01:24:57,047 - MarketRegimeScanner - INFO - Database path: C:\Users\kyung\StockScanner\core\ticker_data.db
+2025-08-31 01:24:57,047 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
+2025-08-31 01:24:57,114 - MarketRegimeScanner - INFO - Market regime database path: C:\Users\kyung\StockScanner\core\market_regime_data.db
+2025-08-31 01:24:57,115 - MarketRegimeScanner - INFO - Running market regime backtest for 2023-01-15
+2025-08-31 01:24:57,116 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 01:24:57,116 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 01:24:57,479 - MarketRegimeScanner - INFO - Fetched market data with shape: (250, 1)
+2025-08-31 01:24:57,556 - MarketRegimeScanner - INFO - Calculated advanced features with shape: (200, 13)
+2025-08-31 01:24:59,112 - MarketRegimeScanner - INFO - Enhanced ensemble model training completed
+2025-08-31 01:24:59,113 - MarketRegimeScanner - INFO - PCA explained variance ratio: 0.996
+2025-08-31 01:24:59,129 - MarketRegimeScanner - INFO - Saved backtest regime for 2023-01-15: Sideways Market (confidence: 0.67)
+2025-08-31 01:24:59,130 - MarketRegimeScanner - INFO - Market regime scan completed in 2.01s
+2025-08-31 01:24:59,130 - MarketRegimeScanner - INFO - Successfully fetched regime data for 2023-01-15

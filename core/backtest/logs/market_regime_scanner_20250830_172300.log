@@ -1,0 +1,78 @@
+2025-08-30 17:23:00,944 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-08-30 17:23:00,944 - MarketRegimeScanner - INFO - Database path: C:\Users\kyung\StockScanner\core\ticker_data.db
+2025-08-30 17:23:00,944 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
+2025-08-30 17:23:00,946 - MarketRegimeScanner - INFO - Market regime database path: C:\Users\kyung\StockScanner\core\market_regime_data.db
+2025-08-30 17:23:00,946 - MarketRegimeScanner - INFO - Starting backtest from 2018-01-01 to 2025-01-31
+2025-08-30 17:23:00,946 - MarketRegimeScanner - INFO - Testing: Tickers=True, Market Regime=True
+2025-08-30 17:23:00,947 - MarketRegimeScanner - INFO - Run ID: default
+2025-08-30 17:23:00,947 - MarketRegimeScanner - INFO - Running ticker backtest for 2018-01-01
+2025-08-30 17:23:00,948 - MarketRegimeScanner - INFO - Starting historical ticker refresh for 2018-01-01
+2025-08-30 17:23:00,948 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-08-30 17:23:00,948 - MarketRegimeScanner - INFO - Using historical date: 2018-01-01
+2025-08-30 17:23:05,161 - MarketRegimeScanner - INFO - Completed ^IXIC: 2482 stocks across 4 pages
+2025-08-30 17:23:05,190 - MarketRegimeScanner - INFO - Stored 2482 tickers in backtest database for 2018-01-01
+2025-08-30 17:23:05,190 - MarketRegimeScanner - INFO - Ticker refresh completed in 4.24s
+2025-08-30 17:23:05,190 - MarketRegimeScanner - INFO - Historical data: 2482 tickers for 2018-01-01
+2025-08-30 17:23:05,191 - MarketRegimeScanner - INFO - Successfully fetched ticker data for 2018-01-01
+2025-08-30 17:23:05,192 - MarketRegimeScanner - INFO - Running market regime backtest for 2018-01-01
+2025-08-30 17:23:05,192 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-30 17:23:05,192 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-30 17:23:05,329 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"d2051aba4c91802febed3b332c6ccde2","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-30 17:23:05,330 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-30 17:23:05,330 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-30 17:23:05,330 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2018-01-01
+2025-08-30 17:23:05,332 - MarketRegimeScanner - INFO - Running ticker backtest for 2018-01-02
+2025-08-30 17:23:05,332 - MarketRegimeScanner - INFO - Starting historical ticker refresh for 2018-01-02
+2025-08-30 17:23:05,332 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-08-30 17:23:05,332 - MarketRegimeScanner - INFO - Using historical date: 2018-01-02
+2025-08-30 17:23:09,248 - MarketRegimeScanner - INFO - Completed ^IXIC: 2479 stocks across 4 pages
+2025-08-30 17:23:09,311 - MarketRegimeScanner - INFO - Stored 2479 tickers in backtest database for 2018-01-02
+2025-08-30 17:23:09,311 - MarketRegimeScanner - INFO - Ticker refresh completed in 3.98s
+2025-08-30 17:23:09,311 - MarketRegimeScanner - INFO - Historical data: 2479 tickers for 2018-01-02
+2025-08-30 17:23:09,312 - MarketRegimeScanner - INFO - Successfully fetched ticker data for 2018-01-02
+2025-08-30 17:23:09,313 - MarketRegimeScanner - INFO - Running market regime backtest for 2018-01-02
+2025-08-30 17:23:09,313 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-30 17:23:09,313 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-30 17:23:09,447 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"197e1d0e4450257f2da5173d905d9598","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-30 17:23:09,448 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-30 17:23:09,448 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-30 17:23:09,448 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2018-01-02
+2025-08-30 17:23:09,450 - MarketRegimeScanner - INFO - Running ticker backtest for 2018-01-03
+2025-08-30 17:23:09,450 - MarketRegimeScanner - INFO - Starting historical ticker refresh for 2018-01-03
+2025-08-30 17:23:09,450 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-08-30 17:23:09,451 - MarketRegimeScanner - INFO - Using historical date: 2018-01-03
+2025-08-30 17:23:13,208 - MarketRegimeScanner - INFO - Completed ^IXIC: 2477 stocks across 4 pages
+2025-08-30 17:23:13,236 - MarketRegimeScanner - INFO - Stored 2477 tickers in backtest database for 2018-01-03
+2025-08-30 17:23:13,236 - MarketRegimeScanner - INFO - Ticker refresh completed in 3.79s
+2025-08-30 17:23:13,236 - MarketRegimeScanner - INFO - Historical data: 2477 tickers for 2018-01-03
+2025-08-30 17:23:13,237 - MarketRegimeScanner - INFO - Successfully fetched ticker data for 2018-01-03
+2025-08-30 17:23:13,238 - MarketRegimeScanner - INFO - Running market regime backtest for 2018-01-03
+2025-08-30 17:23:13,238 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-30 17:23:13,238 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-30 17:23:13,385 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"24e3ff03fc3a3ac1d661254407952ffa","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-30 17:23:13,386 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-30 17:23:13,386 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-30 17:23:13,386 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2018-01-03
+2025-08-30 17:23:13,388 - MarketRegimeScanner - INFO - Running ticker backtest for 2018-01-04
+2025-08-30 17:23:13,388 - MarketRegimeScanner - INFO - Starting historical ticker refresh for 2018-01-04
+2025-08-30 17:23:13,389 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-08-30 17:23:13,389 - MarketRegimeScanner - INFO - Using historical date: 2018-01-04
+2025-08-30 17:23:17,548 - MarketRegimeScanner - INFO - Completed ^IXIC: 2477 stocks across 4 pages
+2025-08-30 17:23:17,584 - MarketRegimeScanner - INFO - Stored 2477 tickers in backtest database for 2018-01-04
+2025-08-30 17:23:17,584 - MarketRegimeScanner - INFO - Ticker refresh completed in 4.20s
+2025-08-30 17:23:17,584 - MarketRegimeScanner - INFO - Historical data: 2477 tickers for 2018-01-04
+2025-08-30 17:23:17,586 - MarketRegimeScanner - INFO - Successfully fetched ticker data for 2018-01-04
+2025-08-30 17:23:17,586 - MarketRegimeScanner - INFO - Running market regime backtest for 2018-01-04
+2025-08-30 17:23:17,587 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-30 17:23:17,587 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-30 17:23:17,737 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"1d3199ae84dbe164093487d0d539fddc","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-30 17:23:17,738 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-30 17:23:17,738 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-30 17:23:17,738 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2018-01-04
+2025-08-30 17:23:17,740 - MarketRegimeScanner - INFO - Running ticker backtest for 2018-01-05
+2025-08-30 17:23:17,741 - MarketRegimeScanner - INFO - Starting historical ticker refresh for 2018-01-05
+2025-08-30 17:23:17,741 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-08-30 17:23:17,741 - MarketRegimeScanner - INFO - Using historical date: 2018-01-05
+2025-08-30 17:23:22,263 - MarketRegimeScanner - INFO - API request cancelled
+2025-08-30 17:23:22,263 - MarketRegimeScanner - INFO - Completed ^IXIC: 2302 stocks across 3 pages
+2025-08-30 17:23:22,265 - MarketRegimeScanner - INFO - Application terminated by user

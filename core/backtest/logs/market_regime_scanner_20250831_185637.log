@@ -1,0 +1,123 @@
+2025-08-31 18:56:37,335 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-08-31 18:56:37,335 - MarketRegimeScanner - INFO - Database path: C:\Users\kyung\StockScanner\core\ticker_data.db
+2025-08-31 18:56:37,335 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
+2025-08-31 18:56:37,338 - MarketRegimeScanner - INFO - Market regime database path: C:\Users\kyung\StockScanner\core\market_regime_data.db
+2025-08-31 18:56:37,338 - MarketRegimeScanner - INFO - Starting backtest from 2020-01-01 to 2024-12-31
+2025-08-31 18:56:37,339 - MarketRegimeScanner - INFO - Testing: Tickers=False, Market Regime=True
+2025-08-31 18:56:37,339 - MarketRegimeScanner - INFO - Run ID: default
+2025-08-31 18:56:37,339 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-01
+2025-08-31 18:56:37,340 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:37,340 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:37,551 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"17869b35b3d02c95a2fd783df027dfbf","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:37,552 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:37,553 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:37,553 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-01
+2025-08-31 18:56:37,554 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-02
+2025-08-31 18:56:37,554 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:37,554 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:37,693 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"41dc4d23788b907bbebf4c5fc6f0d02f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:37,694 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:37,694 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:37,694 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-02
+2025-08-31 18:56:37,695 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-03
+2025-08-31 18:56:37,696 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:37,696 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:37,829 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"0975b9b085f93fc64b5703bd1321fd08","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:37,830 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:37,830 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:37,831 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-03
+2025-08-31 18:56:37,831 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-06
+2025-08-31 18:56:37,832 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:37,832 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:37,971 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"769c42206635f5a92ab40f9f6ec19dde","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:37,972 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:37,972 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:37,972 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-06
+2025-08-31 18:56:37,973 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-07
+2025-08-31 18:56:37,974 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:37,974 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:38,108 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"1c37cc45c2f0860fcde132b2ec376693","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:38,108 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:38,109 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:38,109 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-07
+2025-08-31 18:56:38,110 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-08
+2025-08-31 18:56:38,110 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:38,110 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:38,248 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"239045f52e992038e8ecfa84dbfba006","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:38,248 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:38,249 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:38,249 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-08
+2025-08-31 18:56:38,250 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-09
+2025-08-31 18:56:38,250 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:38,250 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:38,386 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"08d3ba65734b820238a1a5c885c15f90","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:38,386 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:38,387 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:38,387 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-09
+2025-08-31 18:56:38,388 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-10
+2025-08-31 18:56:38,388 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:38,389 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:38,530 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"2f0f8e38680dec4eadc1445e606f0f6c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:38,531 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:38,531 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:38,531 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-10
+2025-08-31 18:56:38,532 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-13
+2025-08-31 18:56:38,532 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:38,532 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:38,670 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"87ee1e0dd7ce915043a459863a01ab6d","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:38,671 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:38,671 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:38,671 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-13
+2025-08-31 18:56:38,672 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-14
+2025-08-31 18:56:38,673 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:38,673 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:38,808 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"64c74b2e9102e77cace0aeac99d13291","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:38,809 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:38,810 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:38,810 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-14
+2025-08-31 18:56:38,811 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-15
+2025-08-31 18:56:38,812 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:38,813 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:38,959 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"0562c1dcbeefc5d12513015cb8c11101","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:38,960 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:38,960 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:38,960 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-15
+2025-08-31 18:56:38,961 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-16
+2025-08-31 18:56:38,962 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:38,962 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:39,098 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"2a27da65c511d614da2ad22269db614c","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:39,098 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:39,099 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:39,099 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-16
+2025-08-31 18:56:39,100 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-17
+2025-08-31 18:56:39,100 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:39,101 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:39,241 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"25efeccc155ae2bf8e20681e43665401","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:39,242 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:39,242 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:39,242 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-17
+2025-08-31 18:56:39,243 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-20
+2025-08-31 18:56:39,244 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:39,244 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:39,377 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"7f3f8bb3912075dc91610ced03e11c7f","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:39,378 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:39,378 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:39,378 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-20
+2025-08-31 18:56:39,379 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-21
+2025-08-31 18:56:39,380 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:39,380 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:39,517 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"975c92b3dcd22479a336848fc30614da","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:39,518 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:39,518 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:39,518 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-21
+2025-08-31 18:56:39,519 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-22
+2025-08-31 18:56:39,520 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:39,520 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:39,654 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"ad2c85bd4d4979460099854e76502dc9","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-31 18:56:39,655 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-31 18:56:39,655 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-31 18:56:39,655 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2020-01-22
+2025-08-31 18:56:39,656 - MarketRegimeScanner - INFO - Running market regime backtest for 2020-01-23
+2025-08-31 18:56:39,657 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-31 18:56:39,657 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-31 18:56:39,791 - MarketRegimeScanner - INFO - Application terminated by user

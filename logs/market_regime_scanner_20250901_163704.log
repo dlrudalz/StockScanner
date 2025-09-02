@@ -1,0 +1,48 @@
+2025-09-01 16:37:04,769 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-09-01 16:37:04,770 - MarketRegimeScanner - INFO - Database path: C:\Users\kyung\StockScanner\core\ticker_data.db
+2025-09-01 16:37:04,770 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
+2025-09-01 16:37:04,772 - MarketRegimeScanner - INFO - Market regime database path: C:\Users\kyung\StockScanner\core\market_regime_data.db
+2025-09-01 16:37:04,791 - MarketRegimeScanner - INFO - Loaded 3251 tickers from database
+2025-09-01 16:37:04,792 - MarketRegimeScanner - INFO - Ticker scanner started
+2025-09-01 16:37:04,793 - MarketRegimeScanner - INFO - Market regime scanner started
+2025-09-01 16:37:04,794 - MarketRegimeScanner - INFO - Starting immediate ticker scan on startup
+2025-09-01 16:37:04,794 - MarketRegimeScanner - INFO - Starting full ticker refresh
+2025-09-01 16:37:04,794 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-09-01 16:37:06,092 - MarketRegimeScanner - INFO - Completed ^IXIC: 3251 stocks across 6 pages
+2025-09-01 16:37:06,184 - MarketRegimeScanner - INFO - Ticker refresh completed in 1.39s
+2025-09-01 16:37:06,184 - MarketRegimeScanner - INFO - Total: 3251 | Added: 0 | Removed: 0
+2025-09-01 16:37:06,184 - MarketRegimeScanner - INFO - Database: 0 inserted, 3251 updated
+2025-09-01 16:37:06,188 - MarketRegimeScanner - INFO - Initial ticker scan completed successfully
+2025-09-01 16:37:06,189 - MarketRegimeScanner - INFO - Next ticker refresh scheduled at 2025-09-02 08:30:00-05:00 (15.0 hours and 52.0 minutes from now)
+2025-09-01 16:37:06,799 - MarketRegimeScanner - INFO - Waiting for initial ticker scan to complete before starting market regime scan
+2025-09-01 16:37:11,812 - MarketRegimeScanner - INFO - Starting immediate market regime scan
+2025-09-01 16:37:11,812 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-09-01 16:37:11,813 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-09-01 16:37:11,993 - MarketRegimeScanner - INFO - Fetched market data with shape: (249, 1)
+2025-09-01 16:37:12,088 - MarketRegimeScanner - INFO - Calculated advanced features with shape: (245, 13)
+2025-09-01 16:37:12,246 - MarketRegimeScanner - WARNING - Final features contain 1092 NaN values, filling with zeros
+2025-09-01 16:37:16,520 - MarketRegimeScanner - INFO - Deep learning models trained
+2025-09-01 16:37:16,521 - MarketRegimeScanner - ERROR - Error during market regime scan: too many values to unpack (expected 2)
+2025-09-01 16:37:16,522 - MarketRegimeScanner - ERROR - Traceback (most recent call last):
+  File "c:\Users\kyung\StockScanner\core\backtest\marketregime_with_backtest.py", line 1840, in scan_market_regime
+    self.train_enhanced_ensemble(features)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "c:\Users\kyung\StockScanner\core\backtest\marketregime_with_backtest.py", line 1535, in train_enhanced_ensemble
+    self.bayesian_model.fit(scaled_features)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "c:\Users\kyung\StockScanner\core\backtest\marketregime_with_backtest.py", line 178, in fit
+    X_sample, _ = resample(X)
+    ^^^^^^^^^^^
+ValueError: too many values to unpack (expected 2)
+
+2025-09-01 16:37:16,523 - MarketRegimeScanner - WARNING - Initial market regime scan encountered errors
+2025-09-01 16:37:16,523 - MarketRegimeScanner - INFO - Next market regime scan at 17:00:00 (0.0 hours and 22.0 minutes from now)
+2025-09-01 16:47:35,167 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-01 16:47:35,167 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-01 16:47:35,168 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown
+2025-09-01 16:47:35,168 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown
+2025-09-01 16:47:35,168 - MarketRegimeScanner - INFO - Main task cancelled
+2025-09-01 16:47:35,168 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-01 16:47:35,168 - MarketRegimeScanner - INFO - Ticker scanner shutdown complete
+2025-09-01 16:47:35,169 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-01 16:47:35,169 - MarketRegimeScanner - INFO - Market regime scanner shutdown complete

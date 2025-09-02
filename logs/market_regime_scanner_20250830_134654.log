@@ -1,0 +1,2 @@
+2025-08-30 13:46:54,644 - MarketRegimeScanner - ERROR - Database connection error: no such column: run_id
+2025-08-30 13:46:54,644 - MarketRegimeScanner - ERROR - Unexpected error: no such column: run_id

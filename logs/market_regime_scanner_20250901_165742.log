@@ -1,0 +1,73 @@
+2025-09-01 16:57:42,159 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-09-01 16:57:42,159 - MarketRegimeScanner - INFO - Database path: C:\Users\kyung\StockScanner\core\ticker_data.db
+2025-09-01 16:57:42,160 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
+2025-09-01 16:57:42,161 - MarketRegimeScanner - INFO - Market regime database path: C:\Users\kyung\StockScanner\core\market_regime_data.db
+2025-09-01 16:57:42,176 - MarketRegimeScanner - INFO - Loaded 3251 tickers from database
+2025-09-01 16:57:42,177 - MarketRegimeScanner - INFO - Ticker scanner started
+2025-09-01 16:57:42,178 - MarketRegimeScanner - INFO - Market regime scanner started
+2025-09-01 16:57:42,179 - MarketRegimeScanner - INFO - Starting immediate ticker scan on startup
+2025-09-01 16:57:42,179 - MarketRegimeScanner - INFO - Starting full ticker refresh
+2025-09-01 16:57:42,180 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-09-01 16:57:43,356 - MarketRegimeScanner - INFO - Completed ^IXIC: 3251 stocks across 6 pages
+2025-09-01 16:57:43,436 - MarketRegimeScanner - INFO - Ticker refresh completed in 1.26s
+2025-09-01 16:57:43,436 - MarketRegimeScanner - INFO - Total: 3251 | Added: 0 | Removed: 0
+2025-09-01 16:57:43,436 - MarketRegimeScanner - INFO - Database: 0 inserted, 3251 updated
+2025-09-01 16:57:43,437 - MarketRegimeScanner - INFO - Initial ticker scan completed successfully
+2025-09-01 16:57:43,438 - MarketRegimeScanner - INFO - Next ticker refresh scheduled at 2025-09-02 08:30:00-05:00 (15.0 hours and 32.0 minutes from now)
+2025-09-01 16:57:44,186 - MarketRegimeScanner - INFO - Waiting for initial ticker scan to complete before starting market regime scan
+2025-09-01 16:57:49,201 - MarketRegimeScanner - INFO - Starting immediate market regime scan
+2025-09-01 16:57:49,202 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-09-01 16:57:49,202 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-09-01 16:57:49,361 - MarketRegimeScanner - INFO - Fetched market data with shape: (249, 1)
+2025-09-01 16:57:49,470 - MarketRegimeScanner - WARNING - NaN counts before cleaning: 24
+2025-09-01 16:57:49,474 - MarketRegimeScanner - INFO - Calculated advanced features with shape: (245, 11), NaNs: 0
+2025-09-01 16:57:49,610 - MarketRegimeScanner - WARNING - Final features contain 1092 NaN values, filling with zeros
+2025-09-01 16:57:53,153 - MarketRegimeScanner - INFO - Deep learning models trained
+2025-09-01 16:57:53,474 - MarketRegimeScanner - INFO - Enhanced ensemble model training completed
+2025-09-01 16:57:53,474 - MarketRegimeScanner - INFO - PCA explained variance ratio: 0.973
+2025-09-01 16:57:53,506 - MarketRegimeScanner - INFO - Current market regime: Bear Market (confidence: 0.77)
+2025-09-01 16:57:53,507 - MarketRegimeScanner - INFO - Market regime scan completed in 4.30s
+2025-09-01 16:57:53,507 - MarketRegimeScanner - INFO - Initial market regime scan completed successfully
+2025-09-01 16:57:53,507 - MarketRegimeScanner - INFO - Next market regime scan at 17:00:00 (0.0 hours and 2.0 minutes from now)
+2025-09-01 17:00:00,868 - MarketRegimeScanner - INFO - Starting scheduled market regime scan
+2025-09-01 17:00:00,868 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-09-01 17:00:00,869 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-09-01 17:00:01,027 - MarketRegimeScanner - INFO - Fetched market data with shape: (249, 1)
+2025-09-01 17:00:01,177 - MarketRegimeScanner - WARNING - NaN counts before cleaning: 24
+2025-09-01 17:00:01,180 - MarketRegimeScanner - INFO - Calculated advanced features with shape: (245, 11), NaNs: 0
+2025-09-01 17:00:01,359 - MarketRegimeScanner - WARNING - Final features contain 1092 NaN values, filling with zeros
+2025-09-01 17:00:01,388 - MarketRegimeScanner - INFO - Current market regime: Bear Market (confidence: 0.34)
+2025-09-01 17:00:01,388 - MarketRegimeScanner - INFO - Market regime scan completed in 0.52s
+2025-09-01 17:00:01,389 - MarketRegimeScanner - INFO - Scheduled market regime scan completed successfully
+2025-09-01 17:00:01,389 - MarketRegimeScanner - INFO - Next market regime scan at 18:00:00 (0.0 hours and 59.0 minutes from now)
+2025-09-01 18:31:15,302 - MarketRegimeScanner - INFO - Starting scheduled market regime scan
+2025-09-01 18:31:15,303 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-09-01 18:31:15,304 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-09-01 18:31:15,529 - MarketRegimeScanner - INFO - Fetched market data with shape: (249, 1)
+2025-09-01 18:31:15,626 - MarketRegimeScanner - WARNING - NaN counts before cleaning: 24
+2025-09-01 18:31:15,629 - MarketRegimeScanner - INFO - Calculated advanced features with shape: (245, 11), NaNs: 0
+2025-09-01 18:31:15,751 - MarketRegimeScanner - WARNING - Final features contain 1092 NaN values, filling with zeros
+2025-09-01 18:31:15,789 - MarketRegimeScanner - INFO - Current market regime: Bear Market (confidence: 0.39)
+2025-09-01 18:31:15,789 - MarketRegimeScanner - INFO - Market regime scan completed in 0.49s
+2025-09-01 18:31:15,789 - MarketRegimeScanner - INFO - Scheduled market regime scan completed successfully
+2025-09-01 18:31:15,789 - MarketRegimeScanner - INFO - Next market regime scan at 19:00:00 (0.0 hours and 28.0 minutes from now)
+2025-09-01 19:00:14,000 - MarketRegimeScanner - INFO - Starting scheduled market regime scan
+2025-09-01 19:00:14,000 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-09-01 19:00:14,000 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-09-01 19:00:14,217 - MarketRegimeScanner - INFO - Fetched market data with shape: (249, 1)
+2025-09-01 19:00:14,310 - MarketRegimeScanner - WARNING - NaN counts before cleaning: 24
+2025-09-01 19:00:14,312 - MarketRegimeScanner - INFO - Calculated advanced features with shape: (245, 11), NaNs: 0
+2025-09-01 19:00:14,434 - MarketRegimeScanner - WARNING - Final features contain 1092 NaN values, filling with zeros
+2025-09-01 19:00:14,457 - MarketRegimeScanner - INFO - Current market regime: Bear Market (confidence: 0.43)
+2025-09-01 19:00:14,457 - MarketRegimeScanner - INFO - Market regime scan completed in 0.46s
+2025-09-01 19:00:14,457 - MarketRegimeScanner - INFO - Scheduled market regime scan completed successfully
+2025-09-01 19:00:14,457 - MarketRegimeScanner - INFO - Next market regime scan at 20:00:00 (0.0 hours and 59.0 minutes from now)
+2025-09-01 19:33:45,284 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-01 19:33:45,285 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-01 19:33:45,285 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown
+2025-09-01 19:33:45,286 - MarketRegimeScanner - INFO - Main task cancelled
+2025-09-01 19:33:45,286 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-01 19:33:45,286 - MarketRegimeScanner - INFO - Ticker scanner shutdown complete
+2025-09-01 19:33:45,286 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-01 19:33:45,286 - MarketRegimeScanner - INFO - Market regime scanner shutdown complete
+2025-09-01 19:33:45,286 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown

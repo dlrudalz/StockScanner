@@ -1,0 +1,2 @@
+2025-09-01 20:03:56,609 - MarketRegimeScanner - ERROR - Database connection error: no such column: market_regime
+2025-09-01 20:03:56,609 - MarketRegimeScanner - ERROR - Unexpected error: no such column: market_regime

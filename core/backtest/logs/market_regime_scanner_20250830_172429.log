@@ -1,0 +1,11 @@
+2025-08-30 17:24:29,091 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-08-30 17:24:29,091 - MarketRegimeScanner - INFO - Database path: C:\Users\kyung\StockScanner\core\ticker_data.db
+2025-08-30 17:24:29,091 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
+2025-08-30 17:24:29,093 - MarketRegimeScanner - INFO - Market regime database path: C:\Users\kyung\StockScanner\core\market_regime_data.db
+2025-08-30 17:24:29,093 - MarketRegimeScanner - INFO - Running market regime backtest for 2018-01-15
+2025-08-30 17:24:29,094 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-08-30 17:24:29,094 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-08-30 17:24:29,293 - MarketRegimeScanner - WARNING - Failed to fetch data for ^IXIC (Polygon: COMP): 403 - {"status":"NOT_AUTHORIZED","request_id":"71c36ac00156c753dd163dedfeb524a0","message":"Your plan doesn't include this data timeframe. Please upgrade your plan at https://polygon.io/pricing"}
+2025-08-30 17:24:29,294 - MarketRegimeScanner - ERROR - No market data fetched
+2025-08-30 17:24:29,294 - MarketRegimeScanner - ERROR - No market data available for regime analysis
+2025-08-30 17:24:29,294 - MarketRegimeScanner - WARNING - Failed to fetch regime data for 2018-01-15

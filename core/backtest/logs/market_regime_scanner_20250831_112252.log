@@ -1,0 +1,6 @@
+2025-08-31 11:22:52,423 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-08-31 11:22:52,423 - MarketRegimeScanner - INFO - Database path: C:\Users\kyung\StockScanner\core\ticker_data.db
+2025-08-31 11:22:52,423 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
+2025-08-31 11:22:52,425 - MarketRegimeScanner - INFO - Market regime database path: C:\Users\kyung\StockScanner\core\market_regime_data.db
+2025-08-31 11:22:52,425 - MarketRegimeScanner - INFO - Running market regime backtest for 2023-01-15
+2025-08-31 11:22:52,426 - MarketRegimeScanner - INFO - Using cached regime data for 2023-01-15
