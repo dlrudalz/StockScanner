@@ -1,2 +1,0 @@
-2025-09-04 18:07:10,631 - MarketRegimeScanner - ERROR - Unexpected error: connection to server at "localhost" (::1), port 5432 failed: FATAL:  password authentication failed for user "hodu"
-
