@@ -1,0 +1,49 @@
+2025-09-05 17:35:56,065 - MarketRegimeScanner - INFO - Running immediate database maintenance on startup
+2025-09-05 17:35:56,066 - MarketRegimeScanner - INFO - Starting backtest database maintenance
+2025-09-05 17:35:56,071 - MarketRegimeScanner - INFO - Backtest database maintenance completed successfully
+2025-09-05 17:35:56,071 - MarketRegimeScanner - INFO - Starting backtest database maintenance
+2025-09-05 17:35:56,076 - MarketRegimeScanner - INFO - Backtest database maintenance completed successfully
+2025-09-05 17:35:56,077 - MarketRegimeScanner - INFO - Startup database maintenance completed successfully
+2025-09-05 17:35:56,175 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-09-05 17:35:56,176 - MarketRegimeScanner - INFO - Using PostgreSQL database: stock_scanner
+2025-09-05 17:35:56,176 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
+2025-09-05 17:35:56,353 - MarketRegimeScanner - INFO - Using PostgreSQL database: stock_scanner
+2025-09-05 17:35:56,396 - MarketRegimeScanner - INFO - Loaded 3250 tickers from database
+2025-09-05 17:35:56,398 - MarketRegimeScanner - INFO - Ticker scanner started
+2025-09-05 17:35:56,398 - MarketRegimeScanner - INFO - Market regime scanner started
+2025-09-05 17:35:56,399 - MarketRegimeScanner - INFO - Starting immediate ticker scan on startup
+2025-09-05 17:35:56,399 - MarketRegimeScanner - INFO - Starting full ticker refresh
+2025-09-05 17:35:56,399 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-09-05 17:35:57,545 - MarketRegimeScanner - INFO - Completed ^IXIC: 3250 stocks across 6 pages
+2025-09-05 17:35:57,951 - MarketRegimeScanner - INFO - Ticker refresh completed in 1.55s
+2025-09-05 17:35:57,951 - MarketRegimeScanner - INFO - Total: 3250 | Added: 0 | Removed: 0
+2025-09-05 17:35:57,951 - MarketRegimeScanner - INFO - Database: 0 inserted, 3250 updated
+2025-09-05 17:35:57,952 - MarketRegimeScanner - INFO - Initial ticker scan completed successfully
+2025-09-05 17:35:57,952 - MarketRegimeScanner - INFO - Next ticker refresh scheduled at 2025-09-06 08:30:00-05:00 (14.0 hours and 54.0 minutes from now)
+2025-09-05 17:35:58,405 - MarketRegimeScanner - INFO - Waiting for initial ticker scan to complete before starting market regime scan
+2025-09-05 17:35:58,405 - MarketRegimeScanner - INFO - Next database maintenance scheduled at 2025-09-06 02:00:00 (8.0 hours and 24.0 minutes from now)
+2025-09-05 17:36:03,420 - MarketRegimeScanner - INFO - Starting immediate market regime scan
+2025-09-05 17:36:03,420 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-09-05 17:36:03,420 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-09-05 17:36:03,584 - MarketRegimeScanner - INFO - Fetched market data with shape: (251, 5)
+2025-09-05 17:36:03,641 - MarketRegimeScanner - INFO - Calculated advanced features with shape: (251, 13), NaNs: 0
+2025-09-05 17:36:03,790 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 13), NaNs: 0
+2025-09-05 17:36:03,791 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 14), NaNs: 0
+2025-09-05 17:36:03,796 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 27), NaNs: 0
+2025-09-05 17:36:07,004 - MarketRegimeScanner - INFO - Deep learning models trained
+2025-09-05 17:36:07,282 - MarketRegimeScanner - INFO - Enhanced ensemble model training completed
+2025-09-05 17:36:07,282 - MarketRegimeScanner - INFO - PCA explained variance ratio: 0.954
+2025-09-05 17:36:07,303 - MarketRegimeScanner - INFO - Current market regime: Bull Market (confidence: 0.75)
+2025-09-05 17:36:07,304 - MarketRegimeScanner - INFO - Market regime scan completed in 3.88s
+2025-09-05 17:36:07,304 - MarketRegimeScanner - INFO - Initial market regime scan completed successfully
+2025-09-05 17:36:07,304 - MarketRegimeScanner - INFO - Next market regime scan at 18:00:00 (0.0 hours and 23.0 minutes from now)
+2025-09-05 17:42:18,425 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-05 17:42:18,426 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-05 17:42:18,426 - MarketRegimeScanner - INFO - Main task cancelled
+2025-09-05 17:42:18,426 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-05 17:42:18,426 - MarketRegimeScanner - INFO - Ticker scanner shutdown complete
+2025-09-05 17:42:18,426 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-05 17:42:18,426 - MarketRegimeScanner - INFO - Market regime scanner shutdown complete
+2025-09-05 17:42:18,427 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown
+2025-09-05 17:42:18,427 - MarketRegimeScanner - INFO - Database maintenance scheduling cancelled
+2025-09-05 17:42:18,427 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown

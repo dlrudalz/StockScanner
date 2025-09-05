@@ -1,0 +1,61 @@
+2025-09-05 16:46:13,558 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-09-05 16:46:13,558 - MarketRegimeScanner - INFO - Using PostgreSQL database: stock_scanner
+2025-09-05 16:46:13,558 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
+2025-09-05 16:46:13,842 - MarketRegimeScanner - INFO - Using PostgreSQL database: stock_scanner
+2025-09-05 16:46:13,882 - MarketRegimeScanner - INFO - Loaded 3250 tickers from database
+2025-09-05 16:46:13,885 - MarketRegimeScanner - INFO - Ticker scanner started
+2025-09-05 16:46:13,885 - MarketRegimeScanner - INFO - Market regime scanner started
+2025-09-05 16:46:13,887 - MarketRegimeScanner - INFO - Starting immediate ticker scan
+2025-09-05 16:46:13,887 - MarketRegimeScanner - INFO - Starting full ticker refresh
+2025-09-05 16:46:13,887 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-09-05 16:46:15,118 - MarketRegimeScanner - INFO - Completed ^IXIC: 3250 stocks across 6 pages
+2025-09-05 16:46:15,484 - MarketRegimeScanner - INFO - Ticker refresh completed in 1.60s
+2025-09-05 16:46:15,484 - MarketRegimeScanner - INFO - Total: 3250 | Added: 0 | Removed: 0
+2025-09-05 16:46:15,485 - MarketRegimeScanner - INFO - Database: 0 inserted, 3250 updated
+2025-09-05 16:46:15,485 - MarketRegimeScanner - INFO - Initial ticker scan completed successfully
+2025-09-05 16:46:15,485 - MarketRegimeScanner - INFO - Starting immediate market regime scan
+2025-09-05 16:46:15,485 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-09-05 16:46:15,486 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-09-05 16:46:15,645 - MarketRegimeScanner - INFO - Fetched market data with shape: (251, 5)
+2025-09-05 16:46:15,701 - MarketRegimeScanner - INFO - Calculated advanced features with shape: (251, 13), NaNs: 0
+2025-09-05 16:46:15,836 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 13), NaNs: 0
+2025-09-05 16:46:15,837 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 14), NaNs: 0
+2025-09-05 16:46:15,841 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 27), NaNs: 0
+2025-09-05 16:46:18,855 - MarketRegimeScanner - INFO - Deep learning models trained
+2025-09-05 16:46:19,102 - MarketRegimeScanner - INFO - Enhanced ensemble model training completed
+2025-09-05 16:46:19,102 - MarketRegimeScanner - INFO - PCA explained variance ratio: 0.954
+2025-09-05 16:46:19,122 - MarketRegimeScanner - INFO - Current market regime: Bull Market (confidence: 0.75)
+2025-09-05 16:46:19,122 - MarketRegimeScanner - INFO - Market regime scan completed in 3.64s
+2025-09-05 16:46:19,122 - MarketRegimeScanner - INFO - Initial market regime scan completed successfully
+2025-09-05 16:46:19,123 - MarketRegimeScanner - INFO - Starting immediate ticker scan on startup
+2025-09-05 16:46:19,123 - MarketRegimeScanner - INFO - Starting full ticker refresh
+2025-09-05 16:46:19,123 - MarketRegimeScanner - INFO - Starting immediate market regime scan
+2025-09-05 16:46:19,123 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-09-05 16:46:19,124 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-09-05 16:46:19,124 - MarketRegimeScanner - INFO - Next database maintenance scheduled at 2025-09-06 02:00:00 (9.0 hours and 13.0 minutes from now)
+2025-09-05 16:46:19,124 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-09-05 16:46:19,451 - MarketRegimeScanner - INFO - Fetched market data with shape: (251, 5)
+2025-09-05 16:46:19,510 - MarketRegimeScanner - INFO - Calculated advanced features with shape: (251, 13), NaNs: 0
+2025-09-05 16:46:19,642 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 13), NaNs: 0
+2025-09-05 16:46:19,644 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 14), NaNs: 0
+2025-09-05 16:46:19,648 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 27), NaNs: 0
+2025-09-05 16:46:19,664 - MarketRegimeScanner - INFO - Current market regime: Bull Market (confidence: 0.33)
+2025-09-05 16:46:19,664 - MarketRegimeScanner - INFO - Market regime scan completed in 0.54s
+2025-09-05 16:46:19,664 - MarketRegimeScanner - INFO - Initial market regime scan completed successfully
+2025-09-05 16:46:19,664 - MarketRegimeScanner - INFO - Next market regime scan at 17:00:00 (0.0 hours and 13.0 minutes from now)
+2025-09-05 16:46:20,586 - MarketRegimeScanner - INFO - Completed ^IXIC: 3250 stocks across 6 pages
+2025-09-05 16:46:20,945 - MarketRegimeScanner - INFO - Ticker refresh completed in 1.82s
+2025-09-05 16:46:20,945 - MarketRegimeScanner - INFO - Total: 3250 | Added: 0 | Removed: 0
+2025-09-05 16:46:20,945 - MarketRegimeScanner - INFO - Database: 0 inserted, 3250 updated
+2025-09-05 16:46:20,946 - MarketRegimeScanner - INFO - Initial ticker scan completed successfully
+2025-09-05 16:46:20,946 - MarketRegimeScanner - INFO - Next ticker refresh scheduled at 2025-09-06 08:30:00-05:00 (15.0 hours and 43.0 minutes from now)
+2025-09-05 16:46:47,161 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-05 16:46:47,161 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-05 16:46:47,161 - MarketRegimeScanner - INFO - Database maintenance scheduling cancelled
+2025-09-05 16:46:47,162 - MarketRegimeScanner - INFO - Main task cancelled
+2025-09-05 16:46:47,162 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-05 16:46:47,162 - MarketRegimeScanner - INFO - Ticker scanner shutdown complete
+2025-09-05 16:46:47,162 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-05 16:46:47,162 - MarketRegimeScanner - INFO - Market regime scanner shutdown complete
+2025-09-05 16:46:47,162 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown
+2025-09-05 16:46:47,162 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown

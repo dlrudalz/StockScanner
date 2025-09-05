@@ -288,8 +288,8 @@ class BayesianTransitionModel:
 class DatabaseManager:
     def __init__(self):
         self.pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=1,
-            maxconn=10,
+            minconn=3,  # Increased from 1
+            maxconn=20,  # Increased from 10
             host=config.POSTGRES_HOST,
             port=config.POSTGRES_PORT,
             database=config.POSTGRES_DB,
@@ -308,11 +308,22 @@ class DatabaseManager:
     def get_connection(self):
         conn = self._get_connection_from_pool()
         try:
+            # Validate connection is still open
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
             yield conn
         except psycopg2.Error as e:
             logger.error(f"Database connection error: {e}")
             conn.close()
-            raise
+            # Create a new connection
+            conn = psycopg2.connect(
+                host=config.POSTGRES_HOST,
+                port=config.POSTGRES_PORT,
+                database=config.POSTGRES_DB,
+                user=config.POSTGRES_USER,
+                password=config.POSTGRES_PASSWORD
+            )
+            yield conn
         finally:
             self._return_connection_to_pool(conn)
     
@@ -398,11 +409,15 @@ class DatabaseManager:
             # Create indexes
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_exchange ON tickers(primary_exchange)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_active ON tickers(active)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_updated_at ON tickers(updated_at)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_date ON historical_tickers(change_date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_ticker_date ON historical_tickers(ticker, change_date)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_timestamp ON market_regimes(timestamp)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_regime ON market_regimes(regime)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_created_at ON market_regimes(created_at)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_regime ON regime_statistics(regime)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_date ON regime_statistics(start_date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_duration ON regime_statistics(duration_days)')
             
             conn.commit()
 
@@ -440,111 +455,118 @@ class DatabaseManager:
             logger.error(f"Database write error: {e}, Query: {query}, Params: {converted_params}")
             return 0
 
-    # Update all SQL queries to use PostgreSQL syntax
     def upsert_tickers(self, tickers: List[Dict]) -> Tuple[int, int]:
         if not tickers:
             return 0, 0
             
+        # Prepare arrays for bulk operation
+        tickers_arr = []
+        names_arr = []
+        primary_exchange_arr = []
+        last_updated_utc_arr = []
+        type_arr = []
+        market_arr = []
+        locale_arr = []
+        currency_name_arr = []
+        active_arr = []
+        
+        for t in tickers:
+            tickers_arr.append(t['ticker'])
+            names_arr.append(t.get('name'))
+            primary_exchange_arr.append(t.get('primary_exchange'))
+            last_updated_utc_arr.append(t.get('last_updated_utc'))
+            type_arr.append(t.get('type'))
+            market_arr.append(t.get('market'))
+            locale_arr.append(t.get('locale'))
+            currency_name_arr.append(t.get('currency_name'))
+            active_arr.append(1)
+        
         inserted = 0
         updated = 0
         
         with self.get_connection() as conn:
             with conn.cursor() as cursor:
-                # Get existing tickers
-                ticker_symbols = [t['ticker'] for t in tickers]
-                placeholders = ','.join(['%s'] * len(ticker_symbols))
-                
-                cursor.execute(
-                    f"SELECT ticker FROM tickers WHERE ticker IN ({placeholders})", 
-                    ticker_symbols
-                )
-                existing_tickers = {row[0] for row in cursor.fetchall()}
-                
-                # Separate into inserts and updates
-                inserts = []
-                updates = []
-                
-                for ticker_data in tickers:
-                    if ticker_data['ticker'] in existing_tickers:
-                        updates.append(ticker_data)
-                    else:
-                        inserts.append(ticker_data)
-                
-                # Use transaction
+                # Use transaction for better performance
                 cursor.execute("BEGIN")
                 
                 try:
-                    # Bulk insert new tickers
-                    if inserts:
-                        insert_values = [
-                            (
-                                t['ticker'], t.get('name'), t.get('primary_exchange'), 
-                                t.get('last_updated_utc'), t.get('type'), t.get('market'),
-                                t.get('locale'), t.get('currency_name'), 1
-                            ) for t in inserts
-                        ]
-                        
-                        cursor.executemany('''
-                            INSERT INTO tickers 
-                            (ticker, name, primary_exchange, last_updated_utc, 
-                             type, market, locale, currency_name, active)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ''', insert_values)
-                        
-                        inserted = len(inserts)
-                        
-                        # Bulk insert historical records
-                        historical_inserts = [
-                            (
-                                t['ticker'], t.get('name'), t.get('primary_exchange'), 
-                                t.get('last_updated_utc'), t.get('type'), t.get('market'),
-                                t.get('locale'), t.get('currency_name'), 1, 'added'
-                            ) for t in inserts
-                        ]
-                        
-                        cursor.executemany('''
-                            INSERT INTO historical_tickers 
-                            (ticker, name, primary_exchange, last_updated_utc, 
-                             type, market, locale, currency_name, active, change_type)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ''', historical_inserts)
+                    # Get existing tickers
+                    placeholders = ','.join(['%s'] * len(tickers_arr))
+                    cursor.execute(
+                        f"SELECT ticker FROM tickers WHERE ticker IN ({placeholders})", 
+                        tickers_arr
+                    )
+                    existing_tickers = {row[0] for row in cursor.fetchall()}
                     
-                    # Bulk update existing tickers
-                    if updates:
-                        update_values = [
-                            (
-                                t.get('name'), t.get('primary_exchange'), 
-                                t.get('last_updated_utc'), t.get('type'), t.get('market'),
-                                t.get('locale'), t.get('currency_name'), 1,
-                                t['ticker']
-                            ) for t in updates
-                        ]
-                        
-                        cursor.executemany('''
-                            UPDATE tickers 
-                            SET name = %s, primary_exchange = %s, last_updated_utc = %s, 
-                                type = %s, market = %s, locale = %s, currency_name = %s, 
-                                active = %s, updated_at = CURRENT_TIMESTAMP
-                            WHERE ticker = %s
-                        ''', update_values)
-                        
-                        updated = len(updates)
-                        
-                        # Bulk insert historical records for updates
-                        historical_updates = [
-                            (
-                                t['ticker'], t.get('name'), t.get('primary_exchange'), 
-                                t.get('last_updated_utc'), t.get('type'), t.get('market'),
-                                t.get('locale'), t.get('currency_name'), 1, 'updated'
-                            ) for t in updates
-                        ]
-                        
-                        cursor.executemany('''
-                            INSERT INTO historical_tickers 
-                            (ticker, name, primary_exchange, last_updated_utc, 
-                             type, market, locale, currency_name, active, change_type)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ''', historical_updates)
+                    # Bulk upsert using UNNEST
+                    cursor.execute('''
+                        WITH input_data AS (
+                            SELECT 
+                                unnest(%s) AS ticker,
+                                unnest(%s) AS name,
+                                unnest(%s) AS primary_exchange,
+                                unnest(%s) AS last_updated_utc,
+                                unnest(%s) AS type,
+                                unnest(%s) AS market,
+                                unnest(%s) AS locale,
+                                unnest(%s) AS currency_name,
+                                unnest(%s) AS active
+                        ),
+                        updated AS (
+                            UPDATE tickers t
+                            SET 
+                                name = i.name,
+                                primary_exchange = i.primary_exchange,
+                                last_updated_utc = i.last_updated_utc,
+                                type = i.type,
+                                market = i.market,
+                                locale = i.locale,
+                                currency_name = i.currency_name,
+                                active = i.active,
+                                updated_at = CURRENT_TIMESTAMP
+                            FROM input_data i
+                            WHERE t.ticker = i.ticker
+                            RETURNING t.ticker
+                        ),
+                        inserted AS (
+                            INSERT INTO tickers 
+                                (ticker, name, primary_exchange, last_updated_utc, 
+                                 type, market, locale, currency_name, active)
+                            SELECT 
+                                i.ticker, i.name, i.primary_exchange, i.last_updated_utc,
+                                i.type, i.market, i.locale, i.currency_name, i.active
+                            FROM input_data i
+                            WHERE i.ticker NOT IN (SELECT ticker FROM updated)
+                            RETURNING ticker
+                        )
+                        SELECT 
+                            (SELECT COUNT(*) FROM inserted) AS inserted_count,
+                            (SELECT COUNT(*) FROM updated) AS updated_count
+                    ''', (
+                        tickers_arr, names_arr, primary_exchange_arr, last_updated_utc_arr,
+                        type_arr, market_arr, locale_arr, currency_name_arr, active_arr
+                    ))
+                    
+                    result = cursor.fetchone()
+                    inserted = result[0] if result else 0
+                    updated = result[1] if result else 0
+                    
+                    # Bulk insert historical records
+                    historical_data = []
+                    for t in tickers:
+                        change_type = 'added' if t['ticker'] not in existing_tickers else 'updated'
+                        historical_data.append((
+                            t['ticker'], t.get('name'), t.get('primary_exchange'), 
+                            t.get('last_updated_utc'), t.get('type'), t.get('market'),
+                            t.get('locale'), t.get('currency_name'), 1, change_type
+                        ))
+                    
+                    cursor.executemany('''
+                        INSERT INTO historical_tickers 
+                        (ticker, name, primary_exchange, last_updated_utc, 
+                         type, market, locale, currency_name, active, change_type)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ''', historical_data)
                     
                     cursor.execute("COMMIT")
                     
@@ -714,13 +736,48 @@ class DatabaseManager:
                 "SELECT * FROM regime_statistics ORDER BY start_date"
             )
     
+    def perform_maintenance(self):
+        """Perform database maintenance tasks"""
+        logger.info("Starting database maintenance")
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    # Analyze tables for query optimization
+                    cursor.execute("ANALYZE")
+                    
+                    # Vacuum to reclaim space and update statistics
+                    cursor.execute("VACUUM ANALYZE")
+                    
+            logger.info("Database maintenance completed successfully")
+        except Exception as e:
+            logger.error(f"Database maintenance failed: {e}")
+    
+    def get_slow_queries(self, threshold_ms=1000, limit=10):
+        """Get slow queries from pg_stat_statements"""
+        try:
+            return self.execute_query('''
+                SELECT 
+                    query, 
+                    calls, 
+                    total_exec_time, 
+                    mean_exec_time,
+                    rows
+                FROM pg_stat_statements 
+                WHERE mean_exec_time > %s
+                ORDER BY mean_exec_time DESC
+                LIMIT %s
+            ''', (threshold_ms, limit))
+        except Exception as e:
+            logger.error(f"Failed to get slow queries: {e}")
+            return []
+    
 
 # ======================== BACKTEST DATABASE MANAGER (OPTIMIZED) ======================== #
 class BacktestDatabaseManager:
     def __init__(self):
         self.pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=1,
-            maxconn=5,
+            minconn=2,  # Increased from 1
+            maxconn=10,  # Increased from 5
             host=config.POSTGRES_HOST,
             port=config.POSTGRES_PORT,
             database=config.POSTGRES_DB,
@@ -739,11 +796,22 @@ class BacktestDatabaseManager:
     def get_connection(self):
         conn = self._get_connection_from_pool()
         try:
+            # Validate connection is still open
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
             yield conn
         except psycopg2.Error as e:
             logger.error(f"Database connection error: {e}")
             conn.close()
-            raise
+            # Create a new connection
+            conn = psycopg2.connect(
+                host=config.POSTGRES_HOST,
+                port=config.POSTGRES_PORT,
+                database=config.POSTGRES_DB,
+                user=config.POSTGRES_USER,
+                password=config.POSTGRES_PASSWORD
+            )
+            yield conn
         finally:
             self._return_connection_to_pool(conn)
     
@@ -811,6 +879,7 @@ class BacktestDatabaseManager:
             # Create indexes for better performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_date ON backtest_tickers(date)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_year ON backtest_tickers(year)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_ticker_year ON backtest_tickers(ticker, year)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_dates ON backtest_final_results(start_date, end_date)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_years ON backtest_final_results(start_year, end_year)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_ticker ON backtest_final_results(ticker)')
@@ -861,23 +930,52 @@ class BacktestDatabaseManager:
         year = int(date_str.split('-')[0])  # Extract year from date
         inserted = 0
         
+        # Prepare arrays for bulk operation
+        date_arr = [date_str] * len(tickers)
+        year_arr = [year] * len(tickers)
+        tickers_arr = []
+        names_arr = []
+        primary_exchange_arr = []
+        last_updated_utc_arr = []
+        type_arr = []
+        market_arr = []
+        locale_arr = []
+        currency_name_arr = []
+        
+        for t in tickers:
+            tickers_arr.append(t['ticker'])
+            names_arr.append(t.get('name'))
+            primary_exchange_arr.append(t.get('primary_exchange'))
+            last_updated_utc_arr.append(t.get('last_updated_utc'))
+            type_arr.append(t.get('type'))
+            market_arr.append(t.get('market'))
+            locale_arr.append(t.get('locale'))
+            currency_name_arr.append(t.get('currency_name'))
+        
         with self.get_connection() as conn:
             with conn.cursor() as cursor:
-                # Prepare data for bulk insert
-                data_tuples = [
-                    (
-                        date_str, year, t['ticker'], t.get('name'),
-                        t.get('primary_exchange'), t.get('last_updated_utc'),
-                        t.get('type'), t.get('market'), t.get('locale'),
-                        t.get('currency_name')
-                    ) for t in tickers
-                ]
-                
-                cursor.executemany('''
+                # Use UNNEST for bulk upsert
+                cursor.execute('''
+                    WITH input_data AS (
+                        SELECT 
+                            unnest(%s) AS date,
+                            unnest(%s) AS year,
+                            unnest(%s) AS ticker,
+                            unnest(%s) AS name,
+                            unnest(%s) AS primary_exchange,
+                            unnest(%s) AS last_updated_utc,
+                            unnest(%s) AS type,
+                            unnest(%s) AS market,
+                            unnest(%s) AS locale,
+                            unnest(%s) AS currency_name
+                    )
                     INSERT INTO backtest_tickers 
                     (date, year, ticker, name, primary_exchange, last_updated_utc, 
                      type, market, locale, currency_name)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    SELECT 
+                        i.date, i.year, i.ticker, i.name, i.primary_exchange, i.last_updated_utc,
+                        i.type, i.market, i.locale, i.currency_name
+                    FROM input_data i
                     ON CONFLICT (date, ticker) DO UPDATE SET
                     name = EXCLUDED.name,
                     primary_exchange = EXCLUDED.primary_exchange,
@@ -886,7 +984,10 @@ class BacktestDatabaseManager:
                     market = EXCLUDED.market,
                     locale = EXCLUDED.locale,
                     currency_name = EXCLUDED.currency_name
-                ''', data_tuples)
+                ''', (
+                    date_arr, year_arr, tickers_arr, names_arr, primary_exchange_arr,
+                    last_updated_utc_arr, type_arr, market_arr, locale_arr, currency_name_arr
+                ))
                 
                 inserted = cursor.rowcount
                 conn.commit()
@@ -925,6 +1026,31 @@ class BacktestDatabaseManager:
         start_year = int(start_date.split('-')[0])
         end_year = int(end_date.split('-')[0])
         
+        # Prepare arrays for bulk operation
+        run_id_arr = [run_id] * len(tickers_data)
+        start_date_arr = [start_date] * len(tickers_data)
+        end_date_arr = [end_date] * len(tickers_data)
+        start_year_arr = [start_year] * len(tickers_data)
+        end_year_arr = [end_year] * len(tickers_data)
+        tickers_arr = []
+        names_arr = []
+        primary_exchange_arr = []
+        last_updated_utc_arr = []
+        type_arr = []
+        market_arr = []
+        locale_arr = []
+        currency_name_arr = []
+        
+        for t in tickers_data:
+            tickers_arr.append(t['ticker'])
+            names_arr.append(t.get('name'))
+            primary_exchange_arr.append(t.get('primary_exchange'))
+            last_updated_utc_arr.append(t.get('last_updated_utc'))
+            type_arr.append(t.get('type'))
+            market_arr.append(t.get('market'))
+            locale_arr.append(t.get('locale'))
+            currency_name_arr.append(t.get('currency_name'))
+        
         with self.get_connection() as conn:
             with conn.cursor() as cursor:
                 # Only delete existing results for this specific run_id and date range
@@ -933,22 +1059,20 @@ class BacktestDatabaseManager:
                     (start_date, end_date, run_id)
                 )
                 
-                # Prepare data for bulk insert
-                data_tuples = [
-                    (
-                        run_id, start_date, end_date, start_year, end_year,
-                        t['ticker'], t.get('name'), t.get('primary_exchange'),
-                        t.get('last_updated_utc'), t.get('type'), t.get('market'),
-                        t.get('locale'), t.get('currency_name')
-                    ) for t in tickers_data
-                ]
-                
-                cursor.executemany('''
+                # Use UNNEST for bulk insert
+                cursor.execute('''
                     INSERT INTO backtest_final_results 
                     (run_id, start_date, end_date, start_year, end_year, ticker, name, primary_exchange, last_updated_utc, 
                      type, market, locale, currency_name)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ''', data_tuples)
+                    SELECT 
+                        unnest(%s), unnest(%s), unnest(%s), unnest(%s), unnest(%s),
+                        unnest(%s), unnest(%s), unnest(%s), unnest(%s), unnest(%s),
+                        unnest(%s), unnest(%s), unnest(%s)
+                ''', (
+                    run_id_arr, start_date_arr, end_date_arr, start_year_arr, end_year_arr,
+                    tickers_arr, names_arr, primary_exchange_arr, last_updated_utc_arr,
+                    type_arr, market_arr, locale_arr, currency_name_arr
+                ))
                 
                 inserted = cursor.rowcount
                 conn.commit()
@@ -1004,61 +1128,22 @@ class BacktestDatabaseManager:
             "SELECT DISTINCT backtest_date FROM backtest_market_regimes ORDER BY backtest_date"
         )
         return [row['backtest_date'] for row in result]
-
-    def get_backtest_tickers(self, date_str: str) -> List[Dict]:
-        """Get tickers for a specific backtest date"""
-        return self.execute_query(
-            "SELECT * FROM backtest_tickers WHERE date = %s ORDER BY ticker",
-            (date_str,)
-    )
-
-    def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
-        """Get tickers for a specific backtest year"""
-        return self.execute_query(
-            "SELECT * FROM backtest_tickers WHERE year = %s ORDER BY date, ticker",
-            (year,)
-    )
-
-    def get_backtest_dates(self) -> List[str]:
-        """Get all available backtest dates"""
-        result = self.execute_query(
-            "SELECT DISTINCT date FROM backtest_tickers ORDER BY date"
-        )
-        return [row['date'] for row in result]
-
-    def get_backtest_years(self) -> List[int]:
-        """Get all available backtest years"""
-        result = self.execute_query(
-            "SELECT DISTINCT year FROM backtest_tickers ORDER BY year"
-        )
-        return [row['year'] for row in result]
-
-    def get_backtest_final_results(self, start_date: str, end_date: str, run_id: str = "default") -> List[Dict]:
-        """Get final backtest results for a specific date range"""
-        return self.execute_query(
-            "SELECT * FROM backtest_final_results WHERE start_date = %s AND end_date = %s AND run_id = %s ORDER BY ticker",
-            (start_date, end_date, run_id)
-    )
-
-    def get_backtest_final_results_by_year(self, year: int, run_id: str = "default") -> List[Dict]:
-        """Get final backtest results for a specific year"""
-        return self.execute_query(
-            "SELECT * FROM backtest_final_results WHERE start_year <= %s AND end_year >= %s AND run_id = %s ORDER BY ticker",
-            (year, year, run_id)
-    )
-
-    def get_all_backtest_runs(self) -> List[Dict]:
-        """Get all backtest runs with their date ranges"""
-        return self.execute_query(
-            "SELECT DISTINCT run_id, start_date, end_date, start_year, end_year FROM backtest_final_results ORDER BY start_date, end_date"
-        )
-
-    def get_backtest_runs_by_date_range(self, start_date: str, end_date: str) -> List[Dict]:
-        """Get all backtest runs for a specific date range"""
-        return self.execute_query(
-            "SELECT DISTINCT run_id, start_date, end_date, start_year, end_year FROM backtest_final_results WHERE start_date = %s AND end_date = %s ORDER BY run_id",
-            (start_date, end_date)
-    )
+    
+    def perform_maintenance(self):
+        """Perform database maintenance tasks"""
+        logger.info("Starting backtest database maintenance")
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    # Analyze tables for query optimization
+                    cursor.execute("ANALYZE backtest_tickers, backtest_final_results, backtest_market_regimes")
+                    
+                    # Vacuum to reclaim space and update statistics
+                    cursor.execute("VACUUM ANALYZE backtest_tickers, backtest_final_results, backtest_market_regimes")
+                    
+            logger.info("Backtest database maintenance completed successfully")
+        except Exception as e:
+            logger.error(f"Backtest database maintenance failed: {e}")
 
 # ======================== TICKER SCANNER ======================== #
 class PolygonTickerScanner:
