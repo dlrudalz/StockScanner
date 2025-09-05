@@ -1,0 +1,8 @@
+2025-09-05 10:47:33,965 - MarketRegimeScanner - ERROR - Database connection error: permission denied for schema public
+LINE 2:                 CREATE TABLE IF NOT EXISTS tickers (
+                                                   ^
+
+2025-09-05 10:47:33,965 - MarketRegimeScanner - ERROR - Unexpected error: permission denied for schema public
+LINE 2:                 CREATE TABLE IF NOT EXISTS tickers (
+                                                   ^
+

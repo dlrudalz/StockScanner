@@ -6,6 +6,7 @@ import time
 import os
 import logging
 import json
+import threading
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from threading import Lock, Event, RLock
@@ -13,7 +14,6 @@ from collections import defaultdict
 import sys
 import signal
 from tzlocal import get_localzone
-import sqlite3
 import contextlib
 from typing import List, Dict, Optional, Any, Tuple
 import argparse
@@ -29,7 +29,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-import pyro
 import pyro.distributions as dist
 from pyro.infer import SVI, Trace_ELBO
 from pyro.optim import Adam
@@ -38,6 +37,11 @@ from sklearn.linear_model import BayesianRidge
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel
 from scipy import signal as sp_signal
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import psycopg2.pool
+
 
 # ======================== CONFIGURATION ======================== #
 class Config:
@@ -49,10 +53,6 @@ class Config:
     MAX_CONCURRENT_REQUESTS = 100
     RATE_LIMIT_DELAY = 0.02
     SCAN_TIME = "08:30"
-    
-    # Database Configuration
-    DATABASE_PATH_TICKER = r"C:\Users\kyung\StockScanner\core\ticker_data.db"
-    DATABASE_PATH_REGIME = r"C:\Users\kyung\StockScanner\core\market_regime_data.db"
     
     # Market Regime Configuration
     REGIME_SCAN_INTERVAL = 3600  # 1 hour in seconds
@@ -68,6 +68,13 @@ class Config:
     N_CLUSTERS = 4  # Allow for more nuanced regime detection
     PCA_COMPONENTS = 10  # Reduce dimensionality for better clustering
     ROLLING_TRAINING_WINDOW = 252  # Use 1 year of data for training (approx 252 trading days)
+
+    # Database Configuration - PostgreSQL
+    POSTGRES_HOST = "localhost"
+    POSTGRES_PORT = 5432
+    POSTGRES_DB = "stock_scanner"
+    POSTGRES_USER = "hodumaru"
+    POSTGRES_PASSWORD = "Leetkd214"
     
     # Backtesting Configuration
     BACKTEST_HISTORICAL_DAYS = 30  # Days of historical data to use for backtesting
@@ -277,16 +284,42 @@ class BayesianTransitionModel:
                 return entropy / np.log(self.n_regimes)  # Normalized entropy
         return 1.0  # Maximum uncertainty
 
-# ======================== DATABASE MANAGER ======================== #
+# ======================== DATABASE MANAGER (FULLY OPTIMIZED) ======================== #
 class DatabaseManager:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    def __init__(self):
+        self.pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn=1,
+            maxconn=10,
+            host=config.POSTGRES_HOST,
+            port=config.POSTGRES_PORT,
+            database=config.POSTGRES_DB,
+            user=config.POSTGRES_USER,
+            password=config.POSTGRES_PASSWORD
+        )
         self._init_database()
-        
+    
+    def _get_connection_from_pool(self):
+        return self.pool.getconn()
+                
+    def _return_connection_to_pool(self, conn):
+        self.pool.putconn(conn)
+    
+    @contextlib.contextmanager
+    def get_connection(self):
+        conn = self._get_connection_from_pool()
+        try:
+            yield conn
+        except psycopg2.Error as e:
+            logger.error(f"Database connection error: {e}")
+            conn.close()
+            raise
+        finally:
+            self._return_connection_to_pool(conn)
+    
+    def close_all_connections(self):
+        self.pool.closeall()
+    
     def _init_database(self):
-        """Initialize database with required tables"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
@@ -316,10 +349,10 @@ class DatabaseManager:
                 )
             ''')
             
-            # Create historical_tickers table to track changes over time
+            # Create historical_tickers table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS historical_tickers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     ticker TEXT,
                     name TEXT,
                     primary_exchange TEXT,
@@ -329,10 +362,397 @@ class DatabaseManager:
                     locale TEXT,
                     currency_name TEXT,
                     active INTEGER,
-                    change_type TEXT,  -- 'added', 'removed', 'updated'
+                    change_type TEXT,
                     change_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            # Create market_regimes table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS market_regimes (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP NOT NULL UNIQUE,
+                    regime INTEGER NOT NULL,
+                    regime_label TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    features TEXT,
+                    model_version TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create regime_statistics table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS regime_statistics (
+                    id SERIAL PRIMARY KEY,
+                    regime INTEGER NOT NULL,
+                    start_date TIMESTAMP NOT NULL,
+                    end_date TIMESTAMP,
+                    duration_days INTEGER,
+                    return_pct REAL,
+                    volatility REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create indexes
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_exchange ON tickers(primary_exchange)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_active ON tickers(active)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_date ON historical_tickers(change_date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_timestamp ON market_regimes(timestamp)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_regime ON market_regimes(regime)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_regime ON regime_statistics(regime)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_date ON regime_statistics(start_date)')
+            
+            conn.commit()
+
+    def _convert_numpy_types(self, params):
+        """Convert numpy data types to native Python types for database compatibility"""
+        converted_params = []
+        for param in params:
+            if isinstance(param, np.integer):
+                converted_params.append(int(param))
+            elif isinstance(param, np.floating):
+                converted_params.append(float(param))
+            else:
+                converted_params.append(param)
+        return tuple(converted_params)
+
+    def execute_query(self, query: str, params: tuple = ()) -> List[Dict]:
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, params)
+                    return cursor.fetchall()
+        except psycopg2.Error as e:
+            logger.error(f"Database query error: {e}, Query: {query}, Params: {params}")
+            return []
+            
+    def execute_write(self, query: str, params: tuple = ()) -> int:
+        try:
+            converted_params = self._convert_numpy_types(params)
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query, converted_params)
+                    conn.commit()
+                    return cursor.rowcount
+        except psycopg2.Error as e:
+            logger.error(f"Database write error: {e}, Query: {query}, Params: {converted_params}")
+            return 0
+
+    # Update all SQL queries to use PostgreSQL syntax
+    def upsert_tickers(self, tickers: List[Dict]) -> Tuple[int, int]:
+        if not tickers:
+            return 0, 0
+            
+        inserted = 0
+        updated = 0
+        
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                # Get existing tickers
+                ticker_symbols = [t['ticker'] for t in tickers]
+                placeholders = ','.join(['%s'] * len(ticker_symbols))
+                
+                cursor.execute(
+                    f"SELECT ticker FROM tickers WHERE ticker IN ({placeholders})", 
+                    ticker_symbols
+                )
+                existing_tickers = {row[0] for row in cursor.fetchall()}
+                
+                # Separate into inserts and updates
+                inserts = []
+                updates = []
+                
+                for ticker_data in tickers:
+                    if ticker_data['ticker'] in existing_tickers:
+                        updates.append(ticker_data)
+                    else:
+                        inserts.append(ticker_data)
+                
+                # Use transaction
+                cursor.execute("BEGIN")
+                
+                try:
+                    # Bulk insert new tickers
+                    if inserts:
+                        insert_values = [
+                            (
+                                t['ticker'], t.get('name'), t.get('primary_exchange'), 
+                                t.get('last_updated_utc'), t.get('type'), t.get('market'),
+                                t.get('locale'), t.get('currency_name'), 1
+                            ) for t in inserts
+                        ]
+                        
+                        cursor.executemany('''
+                            INSERT INTO tickers 
+                            (ticker, name, primary_exchange, last_updated_utc, 
+                             type, market, locale, currency_name, active)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ''', insert_values)
+                        
+                        inserted = len(inserts)
+                        
+                        # Bulk insert historical records
+                        historical_inserts = [
+                            (
+                                t['ticker'], t.get('name'), t.get('primary_exchange'), 
+                                t.get('last_updated_utc'), t.get('type'), t.get('market'),
+                                t.get('locale'), t.get('currency_name'), 1, 'added'
+                            ) for t in inserts
+                        ]
+                        
+                        cursor.executemany('''
+                            INSERT INTO historical_tickers 
+                            (ticker, name, primary_exchange, last_updated_utc, 
+                             type, market, locale, currency_name, active, change_type)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ''', historical_inserts)
+                    
+                    # Bulk update existing tickers
+                    if updates:
+                        update_values = [
+                            (
+                                t.get('name'), t.get('primary_exchange'), 
+                                t.get('last_updated_utc'), t.get('type'), t.get('market'),
+                                t.get('locale'), t.get('currency_name'), 1,
+                                t['ticker']
+                            ) for t in updates
+                        ]
+                        
+                        cursor.executemany('''
+                            UPDATE tickers 
+                            SET name = %s, primary_exchange = %s, last_updated_utc = %s, 
+                                type = %s, market = %s, locale = %s, currency_name = %s, 
+                                active = %s, updated_at = CURRENT_TIMESTAMP
+                            WHERE ticker = %s
+                        ''', update_values)
+                        
+                        updated = len(updates)
+                        
+                        # Bulk insert historical records for updates
+                        historical_updates = [
+                            (
+                                t['ticker'], t.get('name'), t.get('primary_exchange'), 
+                                t.get('last_updated_utc'), t.get('type'), t.get('market'),
+                                t.get('locale'), t.get('currency_name'), 1, 'updated'
+                            ) for t in updates
+                        ]
+                        
+                        cursor.executemany('''
+                            INSERT INTO historical_tickers 
+                            (ticker, name, primary_exchange, last_updated_utc, 
+                             type, market, locale, currency_name, active, change_type)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ''', historical_updates)
+                    
+                    cursor.execute("COMMIT")
+                    
+                except psycopg2.Error as e:
+                    cursor.execute("ROLLBACK")
+                    logger.error(f"Transaction failed during ticker upsert: {e}")
+                    raise
+            
+        return inserted, updated
+
+    def get_metadata(self, key: str, default: Any = None) -> Any:
+        """Get metadata value by key"""
+        result = self.execute_query(
+            "SELECT value FROM metadata WHERE key = %s",
+            (key,)
+        )
+        
+        if result:
+            value = result[0]['value']
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return value
+        return default
+    
+    def update_metadata(self, key: str, value: Any) -> None:
+        """Update metadata key-value pair"""
+        self.execute_write(
+            "INSERT INTO metadata (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP",
+            (key, json.dumps(value) if isinstance(value, (list, dict)) else str(value))
+        )
+
+    def get_all_active_tickers(self) -> List[Dict]:
+        """Get all active tickers from the database"""
+        return self.execute_query(
+            "SELECT * FROM tickers WHERE active = 1 ORDER BY ticker"
+        )
+
+    def search_tickers(self, search_term: str, limit: int = 50) -> List[Dict]:
+        """Search tickers by name or symbol"""
+        return self.execute_query(
+            "SELECT * FROM tickers WHERE (ticker LIKE %s OR name LIKE %s) AND active = 1 ORDER BY ticker LIMIT %s",
+            (f"%{search_term}%", f"%{search_term}%", limit)
+        )
+
+    def get_ticker_history(self, ticker: str, limit: int = 10) -> List[Dict]:
+        """Get historical changes for a ticker"""
+        return self.execute_query(
+            "SELECT * FROM historical_tickers WHERE ticker = %s ORDER by change_date DESC LIMIT %s",
+            (ticker, limit)
+        )
+
+    def mark_tickers_inactive(self, tickers: List[str]) -> int:
+        """Mark tickers as inactive using bulk operations"""
+        if not tickers:
+            return 0
+            
+        marked = 0
+        
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                # Get current data for tickers to be marked inactive
+                placeholders = ','.join(['%s'] * len(tickers))
+                cursor.execute(
+                    f"SELECT * FROM tickers WHERE ticker IN ({placeholders}) AND active = 1", 
+                    tickers
+                )
+                rows = cursor.fetchall()
+                
+                if not rows:
+                    return 0
+                    
+                # Use transaction for better performance
+                cursor.execute("BEGIN")
+                
+                try:
+                    # Bulk update to mark as inactive
+                    update_params = [(row[0],) for row in rows]  # Assuming ticker is the first column
+                    cursor.executemany(
+                        "UPDATE tickers SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE ticker = %s",
+                        update_params
+                    )
+                    
+                    marked = cursor.rowcount
+                    
+                    # Bulk insert historical records
+                    historical_data = [
+                        (
+                            row[0], row[1], row[2],  # ticker, name, primary_exchange
+                            row[3], row[4], row[5],  # last_updated_utc, type, market
+                            row[6], row[7], 0, 'removed'  # locale, currency_name, active, change_type
+                        ) for row in rows
+                    ]
+                    
+                    cursor.executemany('''
+                        INSERT INTO historical_tickers 
+                        (ticker, name, primary_exchange, last_updated_utc, 
+                        type, market, locale, currency_name, active, change_type)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ''', historical_data)
+                    
+                    cursor.execute("COMMIT")
+                    
+                except psycopg2.Error as e:
+                    cursor.execute("ROLLBACK")
+                    logger.error(f"Transaction failed during mark inactive: {e}")
+                    raise
+                
+        return marked
+
+    def get_ticker_details(self, ticker: str) -> Optional[Dict]:
+        """Get details for a specific ticker"""
+        result = self.execute_query(
+            "SELECT * FROM tickers WHERE ticker = %s", 
+            (ticker,)
+        )
+        return result[0] if result else None
+
+    def save_market_regime(self, timestamp: datetime, regime: int, regime_label: str, confidence: float, 
+                        features: Dict, model_version: str) -> int:
+        return self.execute_write(
+            '''INSERT INTO market_regimes 
+            (timestamp, regime, regime_label, confidence, features, model_version) 
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (timestamp) DO UPDATE SET
+            regime = EXCLUDED.regime,
+            regime_label = EXCLUDED.regime_label,
+            confidence = EXCLUDED.confidence,
+            features = EXCLUDED.features,
+            model_version = EXCLUDED.model_version''',
+            (timestamp, regime, regime_label, confidence, json.dumps(features), model_version)
+        )
+
+    def get_latest_regime(self) -> Optional[Dict]:
+        """Get the latest market regime from database"""
+        result = self.execute_query(
+            "SELECT * FROM market_regimes ORDER BY timestamp DESC LIMIT 1"
+        )
+        return result[0] if result else None
+
+    def get_regimes_by_date_range(self, start_date: datetime, end_date: datetime) -> List[Dict]:
+        """Get market regimes within a date range"""
+        return self.execute_query(
+            "SELECT * FROM market_regimes WHERE timestamp BETWEEN %s AND %s ORDER BY timestamp",
+            (start_date, end_date)
+        )
+
+    def save_regime_statistics(self, regime: int, start_date: datetime, end_date: datetime, 
+                            duration_days: int, return_pct: float, volatility: float) -> int:
+        """Save regime statistics to database"""
+        return self.execute_write(
+            '''INSERT INTO regime_statistics 
+            (regime, start_date, end_date, duration_days, return_pct, volatility) 
+            VALUES (%s, %s, %s, %s, %s, %s)''',
+            (regime, start_date, end_date, duration_days, return_pct, volatility)
+        )
+
+    def get_regime_statistics(self, regime: Optional[int] = None) -> List[Dict]:
+        """Get regime statistics, optionally filtered by regime"""
+        if regime is not None:
+            return self.execute_query(
+                "SELECT * FROM regime_statistics WHERE regime = %s ORDER BY start_date",
+                (regime,)
+            )
+        else:
+            return self.execute_query(
+                "SELECT * FROM regime_statistics ORDER BY start_date"
+            )
+    
+
+# ======================== BACKTEST DATABASE MANAGER (OPTIMIZED) ======================== #
+class BacktestDatabaseManager:
+    def __init__(self):
+        self.pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn=1,
+            maxconn=5,
+            host=config.POSTGRES_HOST,
+            port=config.POSTGRES_PORT,
+            database=config.POSTGRES_DB,
+            user=config.POSTGRES_USER,
+            password=config.POSTGRES_PASSWORD
+        )
+        self._init_database()
+    
+    def _get_connection_from_pool(self):
+        return self.pool.getconn()
+                
+    def _return_connection_to_pool(self, conn):
+        self.pool.putconn(conn)
+    
+    @contextlib.contextmanager
+    def get_connection(self):
+        conn = self._get_connection_from_pool()
+        try:
+            yield conn
+        except psycopg2.Error as e:
+            logger.error(f"Database connection error: {e}")
+            conn.close()
+            raise
+        finally:
+            self._return_connection_to_pool(conn)
+    
+    def close_all_connections(self):
+        self.pool.closeall()
+    
+    def _init_database(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
             
             # Create backtest_tickers table for historical data with year column
             cursor.execute('''
@@ -354,8 +774,8 @@ class DatabaseManager:
             # Create backtest_final_results table for storing final backtest results
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS backtest_final_results (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id TEXT,  -- Added to support multiple backtest runs
+                    id SERIAL PRIMARY KEY,
+                    run_id TEXT,
                     start_date TEXT,
                     end_date TEXT,
                     start_year INTEGER,
@@ -372,559 +792,273 @@ class DatabaseManager:
                 )
             ''')
             
+            # Create backtest_market_regimes table for historical backtesting with unique constraint
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS backtest_market_regimes (
+                    id SERIAL PRIMARY KEY,
+                    backtest_date TEXT NOT NULL,
+                    timestamp TIMESTAMP NOT NULL,
+                    regime INTEGER NOT NULL,
+                    regime_label TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    features TEXT,
+                    model_version TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (backtest_date, timestamp)
+                )
+            ''')
+            
             # Create indexes for better performance
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_exchange ON tickers(primary_exchange)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_active ON tickers(active)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_date ON historical_tickers(change_date)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_date ON backtest_tickers(date)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_year ON backtest_tickers(year)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_dates ON backtest_final_results(start_date, end_date)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_years ON backtest_final_results(start_year, end_year)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_ticker ON backtest_final_results(ticker)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_run_id ON backtest_final_results(run_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_regimes_date ON backtest_market_regimes(backtest_date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_regimes_timestamp ON backtest_market_regimes(timestamp)')
             
             conn.commit()
-            
-    @contextlib.contextmanager
-    def get_connection(self):
-        """Context manager for database connections"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row  # Enable row factory for dict-like access
-        try:
-            yield conn
-        except sqlite3.Error as e:
-            logger.error(f"Database connection error: {e}")
-            raise
-        finally:
-            conn.close()
+
+    def _convert_numpy_types(self, params):
+        """Convert numpy data types to native Python types for database compatibility"""
+        converted_params = []
+        for param in params:
+            if isinstance(param, np.integer):
+                converted_params.append(int(param))
+            elif isinstance(param, np.floating):
+                converted_params.append(float(param))
+            else:
+                converted_params.append(param)
+        return tuple(converted_params)
             
     def execute_query(self, query: str, params: tuple = ()) -> List[Dict]:
-        """Execute a SELECT query and return results as dictionaries"""
         try:
             with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(query, params)
-                return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, params)
+                    return cursor.fetchall()
+        except psycopg2.Error as e:
             logger.error(f"Database query error: {e}, Query: {query}, Params: {params}")
             return []
             
     def execute_write(self, query: str, params: tuple = ()) -> int:
-        """Execute a write query and return number of affected rows"""
         try:
+            converted_params = self._convert_numpy_types(params)
             with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(query, params)
-                conn.commit()
-                return cursor.rowcount
-        except sqlite3.Error as e:
-            logger.error(f"Database write error: {e}, Query: {query}, Params: {params}")
+                with conn.cursor() as cursor:
+                    cursor.execute(query, converted_params)
+                    conn.commit()
+                    return cursor.rowcount
+        except psycopg2.Error as e:
+            logger.error(f"Database write error: {e}, Query: {query}, Params: {converted_params}")
             return 0
             
-    def upsert_tickers(self, tickers: List[Dict]) -> Tuple[int, int]:
-        """Insert or update tickers in the database"""
-        inserted = 0
-        updated = 0
-        
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            for ticker_data in tickers:
-                # Check if ticker exists
-                cursor.execute(
-                    "SELECT ticker FROM tickers WHERE ticker = ?", 
-                    (ticker_data['ticker'],)
-                )
-                exists = cursor.fetchone()
-                
-                if exists:
-                    # Update existing ticker
-                    cursor.execute('''
-                        UPDATE tickers 
-                        SET name = ?, primary_exchange = ?, last_updated_utc = ?, 
-                            type = ?, market = ?, locale = ?, currency_name = ?, 
-                            active = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE ticker = ?
-                    ''', (
-                        ticker_data.get('name'),
-                        ticker_data.get('primary_exchange'),
-                        ticker_data.get('last_updated_utc'),
-                        ticker_data.get('type'),
-                        ticker_data.get('market'),
-                        ticker_data.get('locale'),
-                        ticker_data.get('currency_name'),
-                        1,  # active
-                        ticker_data['ticker']
-                    ))
-                    
-                    if cursor.rowcount > 0:
-                        updated += 1
-                        
-                        # Record in historical table
-                        cursor.execute('''
-                            INSERT INTO historical_tickers 
-                            (ticker, name, primary_exchange, last_updated_utc, 
-                             type, market, locale, currency_name, active, change_type)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (
-                            ticker_data['ticker'],
-                            ticker_data.get('name'),
-                            ticker_data.get('primary_exchange'),
-                            ticker_data.get('last_updated_utc'),
-                            ticker_data.get('type'),
-                            ticker_data.get('market'),
-                            ticker_data.get('locale'),
-                            ticker_data.get('currency_name'),
-                            1,
-                            'updated'
-                        ))
-                else:
-                    # Insert new ticker
-                    cursor.execute('''
-                        INSERT INTO tickers 
-                        (ticker, name, primary_exchange, last_updated_utc, 
-                         type, market, locale, currency_name, active)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        ticker_data['ticker'],
-                        ticker_data.get('name'),
-                        ticker_data.get('primary_exchange'),
-                        ticker_data.get('last_updated_utc'),
-                        ticker_data.get('type'),
-                        ticker_data.get('market'),
-                        ticker_data.get('locale'),
-                        ticker_data.get('currency_name'),
-                        1  # active
-                    ))
-                    
-                    if cursor.rowcount > 0:
-                        inserted += 1
-                        
-                        # Record in historical table
-                        cursor.execute('''
-                            INSERT INTO historical_tickers 
-                            (ticker, name, primary_exchange, last_updated_utc, 
-                             type, market, locale, currency_name, active, change_type)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (
-                            ticker_data['ticker'],
-                            ticker_data.get('name'),
-                            ticker_data.get('primary_exchange'),
-                            ticker_data.get('last_updated_utc'),
-                            ticker_data.get('type'),
-                            ticker_data.get('market'),
-                            ticker_data.get('locale'),
-                            ticker_data.get('currency_name'),
-                            1,
-                            'added'
-                        ))
-            
-            conn.commit()
-            
-        return inserted, updated
-        
-    def mark_tickers_inactive(self, tickers: List[str]) -> int:
-        """Mark tickers as inactive (removed from exchange)"""
-        marked = 0
-        
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            for ticker in tickers:
-                # Get current data before marking inactive
-                cursor.execute(
-                    "SELECT * FROM tickers WHERE ticker = ?", 
-                    (ticker,)
-                )
-                row = cursor.fetchone()
-                if row:
-                    # Convert sqlite3.Row to dictionary
-                    current_data = dict(row)
-                    # Mark as inactive
-                    cursor.execute(
-                        "UPDATE tickers SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE ticker = ?",
-                        (ticker,)
-                    )
-                    
-                    if cursor.rowcount > 0:
-                        marked += 1
-                        
-                        # Record in historical table
-                        cursor.execute('''
-                            INSERT INTO historical_tickers 
-                            (ticker, name, primary_exchange, last_updated_utc, 
-                             type, market, locale, currency_name, active, change_type)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (
-                            current_data['ticker'],
-                            current_data['name'],
-                            current_data['primary_exchange'],
-                            current_data['last_updated_utc'],
-                            current_data['type'],
-                            current_data['market'],
-                            current_data['locale'],
-                            current_data.get('currency_name', ''),
-                            0,
-                            'removed'
-                        ))
-            
-            conn.commit()
-            
-        return marked
-        
-    def get_all_active_tickers(self) -> List[Dict]:
-        """Get all active tickers from the database"""
-        return self.execute_query(
-            "SELECT * FROM tickers WHERE active = 1 ORDER BY ticker"
-        )
-        
-    def get_ticker_details(self, ticker: str) -> Optional[Dict]:
-        """Get details for a specific ticker"""
-        result = self.execute_query(
-            "SELECT * FROM tickers WHERE ticker = ?", 
-            (ticker,)
-        )
-        return result[0] if result else None
-        
-    def search_tickers(self, search_term: str, limit: int = 50) -> List[Dict]:
-        """Search tickers by name or symbol"""
-        return self.execute_query(
-            "SELECT * FROM tickers WHERE (ticker LIKE ? OR name LIKE ?) AND active = 1 ORDER BY ticker LIMIT ?",
-            (f"%{search_term}%", f"%{search_term}%", limit)
-        )
-        
-    def get_ticker_history(self, ticker: str, limit: int = 10) -> List[Dict]:
-        """Get historical changes for a ticker"""
-        return self.execute_query(
-            "SELECT * FROM historical_tickers WHERE ticker = ? ORDER by change_date DESC LIMIT ?",
-            (ticker, limit)
-        )
-        
-    def update_metadata(self, key: str, value: Any) -> None:
-        """Update metadata key-value pair"""
-        self.execute_write(
-            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-            (key, json.dumps(value) if isinstance(value, (list, dict)) else str(value))
-        )
-        
-    def get_metadata(self, key: str, default: Any = None) -> Any:
-        """Get metadata value by key"""
-        result = self.execute_query(
-            "SELECT value FROM metadata WHERE key = ?",
-            (key,)
-        )
-        
-        if result:
-            value = result[0]['value']
-            try:
-                return json.loads(value)
-            except (json.JSONDecodeError, TypeError):
-                return value
-        return default
-        
     def upsert_backtest_tickers(self, tickers: List[Dict], date_str: str) -> int:
-        """Insert or update tickers in the backtest table with year"""
-        inserted = 0
+        if not tickers:
+            return 0
+            
         year = int(date_str.split('-')[0])  # Extract year from date
+        inserted = 0
         
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            for ticker_data in tickers:
-                cursor.execute('''
-                    INSERT OR REPLACE INTO backtest_tickers 
+            with conn.cursor() as cursor:
+                # Prepare data for bulk insert
+                data_tuples = [
+                    (
+                        date_str, year, t['ticker'], t.get('name'),
+                        t.get('primary_exchange'), t.get('last_updated_utc'),
+                        t.get('type'), t.get('market'), t.get('locale'),
+                        t.get('currency_name')
+                    ) for t in tickers
+                ]
+                
+                cursor.executemany('''
+                    INSERT INTO backtest_tickers 
                     (date, year, ticker, name, primary_exchange, last_updated_utc, 
                      type, market, locale, currency_name)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    date_str,
-                    year,
-                    ticker_data['ticker'],
-                    ticker_data.get('name'),
-                    ticker_data.get('primary_exchange'),
-                    ticker_data.get('last_updated_utc'),
-                    ticker_data.get('type'),
-                    ticker_data.get('market'),
-                    ticker_data.get('locale'),
-                    ticker_data.get('currency_name')
-                ))
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (date, ticker) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    primary_exchange = EXCLUDED.primary_exchange,
+                    last_updated_utc = EXCLUDED.last_updated_utc,
+                    type = EXCLUDED.type,
+                    market = EXCLUDED.market,
+                    locale = EXCLUDED.locale,
+                    currency_name = EXCLUDED.currency_name
+                ''', data_tuples)
                 
-                if cursor.rowcount > 0:
-                    inserted += 1
-            
-            conn.commit()
+                inserted = cursor.rowcount
+                conn.commit()
             
         return inserted
         
     def get_backtest_tickers(self, date_str: str) -> List[Dict]:
-        """Get tickers for a specific backtest date"""
         return self.execute_query(
-            "SELECT * FROM backtest_tickers WHERE date = ? ORDER BY ticker",
+            "SELECT * FROM backtest_tickers WHERE date = %s ORDER BY ticker",
             (date_str,)
         )
         
     def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
-        """Get tickers for a specific backtest year"""
         return self.execute_query(
-            "SELECT * FROM backtest_tickers WHERE year = ? ORDER BY date, ticker",
+            "SELECT * FROM backtest_tickers WHERE year = %s ORDER BY date, ticker",
             (year,)
         )
         
     def get_backtest_dates(self) -> List[str]:
-        """Get all available backtest dates"""
         result = self.execute_query(
             "SELECT DISTINCT date FROM backtest_tickers ORDER BY date"
         )
         return [row['date'] for row in result]
         
     def get_backtest_years(self) -> List[int]:
-        """Get all available backtest years"""
         result = self.execute_query(
             "SELECT DISTINCT year FROM backtest_tickers ORDER BY year"
         )
         return [row['year'] for row in result]
         
     def upsert_backtest_final_results(self, tickers_data: List[Dict], start_date: str, end_date: str, run_id: str = "default") -> int:
-        """Insert final backtest results into the database with year information and run_id"""
+        if not tickers_data:
+            return 0
+            
         inserted = 0
         start_year = int(start_date.split('-')[0])
         end_year = int(end_date.split('-')[0])
         
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Only delete existing results for this specific run_id and date range
-            cursor.execute(
-                "DELETE FROM backtest_final_results WHERE start_date = ? AND end_date = ? AND run_id = ?",
-                (start_date, end_date, run_id)
-            )
-            
-            for ticker_data in tickers_data:
-                cursor.execute('''
+            with conn.cursor() as cursor:
+                # Only delete existing results for this specific run_id and date range
+                cursor.execute(
+                    "DELETE FROM backtest_final_results WHERE start_date = %s AND end_date = %s AND run_id = %s",
+                    (start_date, end_date, run_id)
+                )
+                
+                # Prepare data for bulk insert
+                data_tuples = [
+                    (
+                        run_id, start_date, end_date, start_year, end_year,
+                        t['ticker'], t.get('name'), t.get('primary_exchange'),
+                        t.get('last_updated_utc'), t.get('type'), t.get('market'),
+                        t.get('locale'), t.get('currency_name')
+                    ) for t in tickers_data
+                ]
+                
+                cursor.executemany('''
                     INSERT INTO backtest_final_results 
                     (run_id, start_date, end_date, start_year, end_year, ticker, name, primary_exchange, last_updated_utc, 
                      type, market, locale, currency_name)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    run_id,
-                    start_date,
-                    end_date,
-                    start_year,
-                    end_year,
-                    ticker_data['ticker'],
-                    ticker_data.get('name'),
-                    ticker_data.get('primary_exchange'),
-                    ticker_data.get('last_updated_utc'),
-                    ticker_data.get('type'),
-                    ticker_data.get('market'),
-                    ticker_data.get('locale'),
-                    ticker_data.get('currency_name')
-                ))
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ''', data_tuples)
                 
-                if cursor.rowcount > 0:
-                    inserted += 1
-            
-            conn.commit()
+                inserted = cursor.rowcount
+                conn.commit()
             
         return inserted
         
     def get_backtest_final_results(self, start_date: str, end_date: str, run_id: str = "default") -> List[Dict]:
-        """Get final backtest results for a specific date range and run_id"""
         return self.execute_query(
-            "SELECT * FROM backtest_final_results WHERE start_date = ? AND end_date = ? AND run_id = ? ORDER BY ticker",
+            "SELECT * FROM backtest_final_results WHERE start_date = %s AND end_date = %s AND run_id = %s ORDER BY ticker",
             (start_date, end_date, run_id)
         )
         
     def get_backtest_final_results_by_year(self, year: int, run_id: str = "default") -> List[Dict]:
-        """Get final backtest results for a specific year and run_id"""
         return self.execute_query(
-            "SELECT * FROM backtest_final_results WHERE start_year <= ? AND end_year >= ? AND run_id = ? ORDER BY ticker",
+            "SELECT * FROM backtest_final_results WHERE start_year <= %s AND end_year >= %s AND run_id = %s ORDER BY ticker",
             (year, year, run_id)
         )
         
     def get_all_backtest_runs(self) -> List[Dict]:
-        """Get all backtest runs with their date ranges"""
         return self.execute_query(
             "SELECT DISTINCT run_id, start_date, end_date, start_year, end_year FROM backtest_final_results ORDER BY start_date, end_date"
         )
         
     def get_backtest_runs_by_date_range(self, start_date: str, end_date: str) -> List[Dict]:
-        """Get all backtest runs for a specific date range"""
         return self.execute_query(
-            "SELECT DISTINCT run_id, start_date, end_date, start_year, end_year FROM backtest_final_results WHERE start_date = ? AND end_date = ? ORDER BY run_id",
+            "SELECT DISTINCT run_id, start_date, end_date, start_year, end_year FROM backtest_final_results WHERE start_date = %s AND end_date = %s ORDER BY run_id",
             (start_date, end_date)
         )
-
-# ======================== MARKET REGIME DATABASE ======================== #
-class MarketRegimeDatabase:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self._init_database()
-        
-    def _init_database(self):
-        """Initialize database with required tables for market regime data"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Create market_regimes table with confidence column and unique constraint
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS market_regimes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp DATETIME NOT NULL UNIQUE,  -- Added UNIQUE constraint
-                    regime INTEGER NOT NULL,
-                    confidence REAL NOT NULL,
-                    features TEXT,
-                    model_version TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Create regime_statistics table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS regime_statistics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    regime INTEGER NOT NULL,
-                    start_date DATETIME NOT NULL,
-                    end_date DATETIME,
-                    duration_days INTEGER,
-                    return_pct REAL,
-                    volatility REAL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Create backtest_market_regimes table for historical backtesting with unique constraint
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS backtest_market_regimes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    backtest_date TEXT NOT NULL,
-                    timestamp DATETIME NOT NULL,
-                    regime INTEGER NOT NULL,
-                    confidence REAL NOT NULL,
-                    features TEXT,
-                    model_version TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE (backtest_date, timestamp)  -- Added unique constraint
-                )
-            ''')
-            
-            # Create indexes for better performance
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_timestamp ON market_regimes(timestamp)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_regime ON market_regimes(regime)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_regime ON regime_statistics(regime)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_date ON regime_statistics(start_date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_regimes_date ON backtest_market_regimes(backtest_date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_regimes_timestamp ON backtest_market_regimes(timestamp)')
-            
-            conn.commit()
-            
-    @contextlib.contextmanager
-    def get_connection(self):
-        """Context manager for database connections"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row  # Enable row factory for dict-like access
-        try:
-            yield conn
-        except sqlite3.Error as e:
-            logger.error(f"Database connection error: {e}")
-            raise
-        finally:
-            conn.close()
-            
-    def execute_query(self, query: str, params: tuple = ()) -> List[Dict]:
-        """Execute a SELECT query and return results as dictionaries"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(query, params)
-                return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            logger.error(f"Database query error: {e}, Query: {query}, Params: {params}")
-            return []
-            
-    def execute_write(self, query: str, params: tuple = ()) -> int:
-        """Execute a write query and return number of affected rows"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(query, params)
-                conn.commit()
-                return cursor.rowcount
-        except sqlite3.Error as e:
-            logger.error(f"Database write error: {e}, Query: {query}, Params: {params}")
-            return 0
-            
-    def save_market_regime(self, timestamp: datetime, regime: int, confidence: float, 
-                          features: Dict, model_version: str) -> int:
-        """Save market regime prediction to database using INSERT OR REPLACE"""
-        return self.execute_write(
-            '''INSERT OR REPLACE INTO market_regimes 
-               (timestamp, regime, confidence, features, model_version) 
-               VALUES (?, ?, ?, ?, ?)''',
-            (timestamp, regime, confidence, json.dumps(features), model_version)
-        )
-        
+    
     def save_backtest_market_regime(self, backtest_date: str, timestamp: datetime, regime: int, 
-                                   confidence: float, features: Dict, model_version: str) -> int:
-        """Save backtest market regime prediction to database using INSERT OR REPLACE"""
+                                regime_label: str, confidence: float, features: Dict, model_version: str) -> int:
         return self.execute_write(
-            '''INSERT OR REPLACE INTO backtest_market_regimes 
-               (backtest_date, timestamp, regime, confidence, features, model_version) 
-               VALUES (?, ?, ?, ?, ?, ?)''',
-            (backtest_date, timestamp, regime, confidence, json.dumps(features), model_version)
-        )
-        
-    def get_latest_regime(self) -> Optional[Dict]:
-        """Get the latest market regime from database"""
-        result = self.execute_query(
-            "SELECT * FROM market_regimes ORDER BY timestamp DESC LIMIT 1"
-        )
-        return result[0] if result else None
-        
-    def get_regimes_by_date_range(self, start_date: datetime, end_date: datetime) -> List[Dict]:
-        """Get market regimes within a date range"""
-        return self.execute_query(
-            "SELECT * FROM market_regimes WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp",
-            (start_date, end_date)
+            '''INSERT INTO backtest_market_regimes 
+            (backtest_date, timestamp, regime, regime_label, confidence, features, model_version) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (backtest_date, timestamp) DO UPDATE SET
+            regime = EXCLUDED.regime,
+            regime_label = EXCLUDED.regime_label,
+            confidence = EXCLUDED.confidence,
+            features = EXCLUDED.features,
+            model_version = EXCLUDED.model_version''',
+            (backtest_date, timestamp, regime, regime_label, confidence, json.dumps(features), model_version)
         )
         
     def get_backtest_regimes_by_date(self, backtest_date: str) -> List[Dict]:
-        """Get backtest market regimes for a specific date"""
         return self.execute_query(
-            "SELECT * FROM backtest_market_regimes WHERE backtest_date = ? ORDER BY timestamp",
+            "SELECT * FROM backtest_market_regimes WHERE backtest_date = %s ORDER BY timestamp",
             (backtest_date,)
         )
         
     def get_backtest_dates(self) -> List[str]:
-        """Get all available backtest dates"""
         result = self.execute_query(
             "SELECT DISTINCT backtest_date FROM backtest_market_regimes ORDER BY backtest_date"
         )
         return [row['backtest_date'] for row in result]
-        
-    def save_regime_statistics(self, regime: int, start_date: datetime, end_date: datetime, 
-                              duration_days: int, return_pct: float, volatility: float) -> int:
-        """Save regime statistics to database"""
-        return self.execute_write(
-            '''INSERT INTO regime_statistics 
-               (regime, start_date, end_date, duration_days, return_pct, volatility) 
-               VALUES (?, ?, ?, ?, ?, ?)''',
-            (regime, start_date, end_date, duration_days, return_pct, volatility)
+
+    def get_backtest_tickers(self, date_str: str) -> List[Dict]:
+        """Get tickers for a specific backtest date"""
+        return self.execute_query(
+            "SELECT * FROM backtest_tickers WHERE date = %s ORDER BY ticker",
+            (date_str,)
+    )
+
+    def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
+        """Get tickers for a specific backtest year"""
+        return self.execute_query(
+            "SELECT * FROM backtest_tickers WHERE year = %s ORDER BY date, ticker",
+            (year,)
+    )
+
+    def get_backtest_dates(self) -> List[str]:
+        """Get all available backtest dates"""
+        result = self.execute_query(
+            "SELECT DISTINCT date FROM backtest_tickers ORDER BY date"
         )
-        
-    def get_regime_statistics(self, regime: Optional[int] = None) -> List[Dict]:
-        """Get regime statistics, optionally filtered by regime"""
-        if regime is not None:
-            return self.execute_query(
-                "SELECT * FROM regime_statistics WHERE regime = ? ORDER BY start_date",
-                (regime,)
-            )
-        else:
-            return self.execute_query(
-                "SELECT * FROM regime_statistics ORDER BY start_date"
-            )
+        return [row['date'] for row in result]
+
+    def get_backtest_years(self) -> List[int]:
+        """Get all available backtest years"""
+        result = self.execute_query(
+            "SELECT DISTINCT year FROM backtest_tickers ORDER BY year"
+        )
+        return [row['year'] for row in result]
+
+    def get_backtest_final_results(self, start_date: str, end_date: str, run_id: str = "default") -> List[Dict]:
+        """Get final backtest results for a specific date range"""
+        return self.execute_query(
+            "SELECT * FROM backtest_final_results WHERE start_date = %s AND end_date = %s AND run_id = %s ORDER BY ticker",
+            (start_date, end_date, run_id)
+    )
+
+    def get_backtest_final_results_by_year(self, year: int, run_id: str = "default") -> List[Dict]:
+        """Get final backtest results for a specific year"""
+        return self.execute_query(
+            "SELECT * FROM backtest_final_results WHERE start_year <= %s AND end_year >= %s AND run_id = %s ORDER BY ticker",
+            (year, year, run_id)
+    )
+
+    def get_all_backtest_runs(self) -> List[Dict]:
+        """Get all backtest runs with their date ranges"""
+        return self.execute_query(
+            "SELECT DISTINCT run_id, start_date, end_date, start_year, end_year FROM backtest_final_results ORDER BY start_date, end_date"
+        )
+
+    def get_backtest_runs_by_date_range(self, start_date: str, end_date: str) -> List[Dict]:
+        """Get all backtest runs for a specific date range"""
+        return self.execute_query(
+            "SELECT DISTINCT run_id, start_date, end_date, start_year, end_year FROM backtest_final_results WHERE start_date = %s AND end_date = %s ORDER BY run_id",
+            (start_date, end_date)
+    )
 
 # ======================== TICKER SCANNER ======================== #
 class PolygonTickerScanner:
@@ -945,13 +1079,13 @@ class PolygonTickerScanner:
         self.current_tickers_set = set()
         self.local_tz = get_localzone()
         self.semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
-        self.db = DatabaseManager(config.DATABASE_PATH_TICKER)
+        self.db = DatabaseManager()  # Updated to use PostgreSQL
         self.shutdown_requested = False
         # Backtesting attributes
         self.backtest_mode = False
         self.backtest_date = None
         logger.info(f"Using local timezone: {self.local_tz}")
-        logger.info(f"Database path: {config.DATABASE_PATH_TICKER}")
+        logger.info(f"Using PostgreSQL database: {config.POSTGRES_DB}")
         logger.info(f"Using composite indices: {', '.join(self.composite_indices)}")
         
     def _init_cache(self):
@@ -1176,6 +1310,7 @@ class PolygonTickerScanner:
     async def shutdown(self):
         """Cleanup resources"""
         self.stop()
+        self.db.close_all_connections()
         logger.info("Ticker scanner shutdown complete")
 
     def get_current_tickers_list(self):
@@ -1227,7 +1362,7 @@ class PolygonTickerScanner:
     def get_backtest_runs_by_date_range(self, start_date: str, end_date: str) -> List[Dict]:
         """Get all backtest runs for a specific date range"""
         return self.db.get_backtest_runs_by_date_range(start_date, end_date)
-
+    
 # ======================== MARKET REGIME SCANNER ======================== #
 class MarketRegimeScanner:
     def __init__(self, ticker_scanner: PolygonTickerScanner):
@@ -1238,7 +1373,8 @@ class MarketRegimeScanner:
         self.shutdown_requested = False
         self.local_tz = get_localzone()
         self.semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
-        self.regime_db = MarketRegimeDatabase(config.DATABASE_PATH_REGIME)
+        self.db = DatabaseManager()  # Use main database for regular data
+        self.backtest_db = BacktestDatabaseManager()  # Use backtest database for backtest data
         self.hmm_model = None
         self.gmm_model = None
         self.rf_model = None
@@ -1248,6 +1384,8 @@ class MarketRegimeScanner:
         self.training_data = None
         self.scaler = StandardScaler()
         self.model_version = config.MODEL_VERSION
+        self.min_data_points = 100  # Minimum data points required for reliable analysis
+        self.nan_threshold = 0.1    # Maximum allowed NaN percentage
         
         # New models for enhanced regime detection
         self.lstm_model = None
@@ -1268,7 +1406,7 @@ class MarketRegimeScanner:
             "^IXIC": "COMP",    # NASDAQ Composite (primary focus)
         }
         
-        logger.info(f"Market regime database path: {config.DATABASE_PATH_REGIME}")
+        logger.info(f"Using PostgreSQL database: {config.POSTGRES_DB}")
         
     async def _fetch_historical_data(self, session, ticker: str, days: int, end_date: datetime = None) -> Optional[pd.DataFrame]:
         """Fetch historical data for a ticker with optional end date for backtesting"""
@@ -1318,9 +1456,82 @@ class MarketRegimeScanner:
             except Exception as e:
                 logger.error(f"Error fetching data for {ticker}: {e}")
                 return None
+            
+    def robust_feature_combination(self, basic_features, quant_features):
+        """Robust method to combine features with enhanced NaN handling"""
+        # Align indices first
+        aligned_features = pd.concat([basic_features, quant_features], axis=1)
+        
+        # More aggressive NaN handling
+        aligned_features = aligned_features.replace([np.inf, -np.inf], np.nan)
+        
+        # Drop columns with too many NaNs
+        col_nan_threshold = len(aligned_features) * 0.3  # Keep columns with less than 30% NaN
+        aligned_features = aligned_features.dropna(axis=1, thresh=col_nan_threshold)
+        
+        # Drop rows with too many NaNs
+        row_nan_threshold = len(aligned_features.columns) * 0.7  # Keep rows with at least 70% data
+        aligned_features = aligned_features.dropna(axis=0, thresh=row_nan_threshold)
+        
+        # Fill remaining NaNs with more sophisticated methods
+        for col in aligned_features.columns:
+            if aligned_features[col].isnull().any():
+                # Use forward fill, then backward fill, then median
+                aligned_features[col] = aligned_features[col].fillna(method='ffill').fillna(method='bfill')
+                
+                # If still NaN, use rolling median
+                if aligned_features[col].isnull().any():
+                    aligned_features[col] = aligned_features[col].fillna(
+                        aligned_features[col].rolling(5, min_periods=1).median())
+                    
+                # If still NaN, use overall median
+                if aligned_features[col].isnull().any():
+                    aligned_features[col] = aligned_features[col].fillna(aligned_features[col].median())
+        
+        return aligned_features
+    
+    def validate_features(self, features: pd.DataFrame) -> pd.DataFrame:
+        """Validate and ensure feature quality before training/prediction"""
+        if features.empty:
+            logger.error("Empty features DataFrame")
+            return features
+        
+        # Check for and handle infinite values
+        features = features.replace([np.inf, -np.inf], np.nan)
+        
+        # Calculate NaN percentage
+        nan_percentage = features.isnull().sum().sum() / (features.shape[0] * features.shape[1])
+        
+        if nan_percentage > self.nan_threshold:
+            logger.warning(f"High NaN percentage: {nan_percentage:.2%}. Applying aggressive cleaning.")
+            
+            # Drop columns with too many NaNs
+            features = features.dropna(axis=1, thresh=int(features.shape[0] * 0.7))
+            
+            # Drop rows with too many NaNs
+            features = features.dropna(axis=0, thresh=int(features.shape[1] * 0.7))
+        
+        # Fill remaining NaNs
+        for col in features.columns:
+            if features[col].isnull().any():
+                # Try forward fill first
+                features[col] = features[col].fillna(method='ffill')
+                
+                # Then backward fill
+                features[col] = features[col].fillna(method='bfill')
+                
+                # Then use interpolation
+                features[col] = features[col].interpolate()
+                
+                # Finally, use median if still NaN
+                if features[col].isnull().any():
+                    features[col] = features[col].fillna(features[col].median())
+        
+        logger.info(f"Feature validation completed. Final shape: {features.shape}, NaNs: {features.isnull().sum().sum()}")
+        return features
                 
     async def fetch_market_data(self, days: int = config.HISTORICAL_DATA_DAYS, end_date: datetime = None) -> pd.DataFrame:
-        """Fetch historical market data for all market indices"""
+        """Fetch historical market data for all market indices with enhanced validation"""
         logger.info(f"Fetching {days} days of market data for regime analysis")
         
         # Get the market indices
@@ -1335,138 +1546,182 @@ class MarketRegimeScanner:
                 if result is not None and not result.empty:
                     all_data.append(result)
         
+        # Data validation
         if not all_data:
             logger.error("No market data fetched")
             return pd.DataFrame()
-            
+        
         # Combine all data
         combined_data = pd.concat(all_data)
         
-        # Pivot to get close prices for each ticker
-        close_prices = combined_data.pivot(columns='ticker', values='c')
+        # Ensure no duplicate indices
+        combined_data = combined_data[~combined_data.index.duplicated(keep='first')]
         
-        logger.info(f"Fetched market data with shape: {close_prices.shape}")
-        return close_prices
+        # Ensure data is sorted by date
+        combined_data = combined_data.sort_index()
+        
+        # Check if we have sufficient data
+        if len(combined_data) < self.min_data_points:
+            logger.warning(f"Insufficient data points: {len(combined_data)}. Minimum required: {self.min_data_points}")
+            # Consider implementing a fallback or expanding the date range
+        
+        # Pivot to get OHLCV data for each ticker
+        ohlcv_data = combined_data.pivot_table(index='t', columns='ticker', 
+                                            values=['o', 'h', 'l', 'c', 'v'])
+        
+        # Additional data validation
+        if ohlcv_data.isnull().sum().sum() > len(ohlcv_data) * 0.5:  # If more than 50% NaN
+            logger.error("Poor data quality: more than 50% NaN values")
+            # Consider implementing a fallback data source or retry mechanism
+        
+        logger.info(f"Fetched market data with shape: {ohlcv_data.shape}")
+        return ohlcv_data
             
     def calculate_advanced_features(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Calculate more sophisticated features for regime detection with robust NaN handling"""
-        features = pd.DataFrame(index=data.index)
+        """Calculate more sophisticated features for regime detection with enhanced NaN handling"""
+        # Extract close prices for returns calculation
+        close_prices = data.xs('c', axis=1, level=0) if isinstance(data.columns, pd.MultiIndex) else data
         
-        # Calculate returns first to establish baseline index
-        returns_data = {}
-        for ticker in data.columns:
-            returns = data[ticker].pct_change().dropna()
-            returns_data[ticker] = returns
+        features = pd.DataFrame(index=close_prices.index)
         
-        # Use the returns index as our base index (this ensures consistent length)
-        base_index = returns_data[list(returns_data.keys())[0]].index if returns_data else data.index
-        features = pd.DataFrame(index=base_index)
-        
-        for ticker in data.columns:
-            returns = returns_data.get(ticker, data[ticker].pct_change().dropna())
+        for ticker in close_prices.columns:
+            # Use more robust pct_change with better NaN handling
+            returns = close_prices[ticker].pct_change().fillna(0)
             
             # Ensure we're working with the same index
             if len(returns) != len(features.index):
-                # Align returns with features index
-                returns = returns.reindex(features.index, fill_value=np.nan)
+                returns = returns.reindex(features.index, fill_value=0)
             
             features[f'{ticker}_return'] = returns
             
-            # Advanced volatility measures with robust division
-            volatility_20 = returns.rolling(window=20, min_periods=5).std()
-            volatility_50 = returns.rolling(window=50, min_periods=10).std()
+            # Advanced volatility measures with increased min_periods
+            volatility_20 = returns.rolling(window=20, min_periods=10).std()  # Increased from 5 to 10
+            volatility_50 = returns.rolling(window=50, min_periods=20).std()  # Increased from 10 to 20
             
-            # Safe division to avoid NaN/Inf - ensure same length
-            volatility_ratio = pd.Series(np.nan, index=features.index)
+            # Safe division to avoid NaN/Inf
+            volatility_ratio = pd.Series(1.0, index=features.index)  # Default to 1.0
             valid_mask = (volatility_50 > 1e-10) & (~volatility_20.isnull()) & (~volatility_50.isnull())
             volatility_ratio[valid_mask] = volatility_20[valid_mask] / volatility_50[valid_mask]
-            volatility_ratio = volatility_ratio.fillna(1.0)  # Default value
             
-            features[f'{ticker}_volatility_ratio'] = volatility_ratio
+            features[f'{ticker}_volatility_ratio'] = volatility_ratio.fillna(1.0)
             
-            # Advanced momentum indicators - ensure same index
-            moving_avg_20 = data[ticker].rolling(window=20, min_periods=5).mean().reindex(features.index)
-            moving_avg_50 = data[ticker].rolling(window=50, min_periods=10).mean().reindex(features.index)
+            # Get OHLC data if available
+            if isinstance(data.columns, pd.MultiIndex):
+                try:
+                    highs = data.xs('h', axis=1, level=0)[ticker]
+                    lows = data.xs('l', axis=1, level=0)[ticker]
+                    opens = data.xs('o', axis=1, level=0)[ticker]
+                    volumes = data.xs('v', axis=1, level=0)[ticker]
+                    
+                    # True range calculation with enhanced NaN handling
+                    tr1 = highs - lows
+                    tr2 = abs(highs - close_prices[ticker].shift(1).fillna(method='bfill'))
+                    tr3 = abs(lows - close_prices[ticker].shift(1).fillna(method='bfill'))
+                    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                    features[f'{ticker}_atr'] = true_range.rolling(14, min_periods=7).mean().fillna(method='bfill')
+                    
+                    # Volume features with enhanced NaN handling
+                    features[f'{ticker}_volume_ma'] = volumes.rolling(20, min_periods=10).mean().fillna(method='bfill')
+                    vol_ma_50 = volumes.rolling(50, min_periods=25).mean()
+                    features[f'{ticker}_volume_ratio'] = (volumes / vol_ma_50).fillna(1.0)
+                    
+                except KeyError:
+                    logger.warning(f"OHLCV data not available for {ticker}")
+                    # Fill with default values
+                    features[f'{ticker}_atr'] = pd.Series(0, index=features.index)
+                    features[f'{ticker}_volume_ma'] = pd.Series(0, index=features.index)
+                    features[f'{ticker}_volume_ratio'] = pd.Series(1.0, index=features.index)
+            
+            # Advanced momentum indicators with increased min_periods
+            moving_avg_20 = close_prices[ticker].rolling(window=20, min_periods=10).mean().reindex(features.index)
+            moving_avg_50 = close_prices[ticker].rolling(window=50, min_periods=25).mean().reindex(features.index)
             
             # Safe division for momentum ratio
-            momentum_ratio = pd.Series(np.nan, index=features.index)
+            momentum_ratio = pd.Series(1.0, index=features.index)  # Default to 1.0
             valid_mask = (moving_avg_50 > 1e-10) & (~moving_avg_20.isnull()) & (~moving_avg_50.isnull())
             momentum_ratio[valid_mask] = moving_avg_20[valid_mask] / moving_avg_50[valid_mask]
-            momentum_ratio = momentum_ratio.fillna(1.0)
             
-            features[f'{ticker}_momentum_ratio'] = momentum_ratio
+            features[f'{ticker}_momentum_ratio'] = momentum_ratio.fillna(1.0)
             
-            # Volatility clustering feature with error handling
-            vol_clustering = returns.rolling(window=20, min_periods=5).apply(
-                lambda x: x.autocorr(lag=1) if len(x) > 2 and not np.isclose(x.std(), 0) else np.nan, 
+            # Volatility clustering feature with error handling and increased min_periods
+            vol_clustering = returns.rolling(window=20, min_periods=10).apply(
+                lambda x: x.autocorr(lag=1) if len(x) > 2 and not np.isclose(x.std(), 0) else 0, 
                 raw=False
             )
-            features[f'{ticker}_volatility_clustering'] = vol_clustering.reindex(features.index)
+            features[f'{ticker}_volatility_clustering'] = vol_clustering.reindex(features.index).fillna(0)
             
-            # Jump detection with safe threshold calculation
-            jumps = returns.rolling(window=20, min_periods=5).apply(
-                lambda x: np.sum(np.abs(x) > 2 * x.std()) if len(x) > 0 and not np.isclose(x.std(), 0) else 0, 
-                raw=False
-            )
-            features[f'{ticker}_jumps'] = jumps.reindex(features.index)
-            
-            # Add RSI with safe division
-            delta = data[ticker].diff().reindex(features.index)
-            gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=5).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=5).mean()
+            # Add RSI with safe division and increased min_periods
+            delta = close_prices[ticker].diff().reindex(features.index).fillna(0)
+            gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=7).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=7).mean()
             
             # Safe RSI calculation
-            rs = pd.Series(np.nan, index=features.index)
+            rs = pd.Series(1.0, index=features.index)  # Default to 1.0 (RSI 50)
             valid_mask = (loss > 1e-10) & (~gain.isnull()) & (~loss.isnull())
             rs[valid_mask] = gain[valid_mask] / loss[valid_mask]
             rsi = np.where(rs > 0, 100 - (100 / (1 + rs)), 50)
             features[f'{ticker}_rsi'] = pd.Series(rsi, index=features.index).fillna(50)
             
-            # Add MACD with error handling
+            # Add MACD with error handling and increased min_periods
             try:
-                exp12 = data[ticker].ewm(span=12, adjust=False, min_periods=5).mean().reindex(features.index)
-                exp26 = data[ticker].ewm(span=26, adjust=False, min_periods=5).mean().reindex(features.index)
+                exp12 = close_prices[ticker].ewm(span=12, adjust=False, min_periods=6).mean().reindex(features.index)
+                exp26 = close_prices[ticker].ewm(span=26, adjust=False, min_periods=13).mean().reindex(features.index)
                 macd = exp12 - exp26
-                features[f'{ticker}_macd'] = macd
-                features[f'{ticker}_macd_signal'] = macd.ewm(span=9, adjust=False, min_periods=5).mean()
+                features[f'{ticker}_macd'] = macd.fillna(0)
+                features[f'{ticker}_macd_signal'] = macd.ewm(span=9, adjust=False, min_periods=5).mean().fillna(0)
             except:
                 features[f'{ticker}_macd'] = pd.Series(0, index=features.index)
                 features[f'{ticker}_macd_signal'] = pd.Series(0, index=features.index)
             
-            # Add Bollinger Bands with safe calculations
-            rolling_mean = data[ticker].rolling(window=20, min_periods=5).mean().reindex(features.index)
-            rolling_std = data[ticker].rolling(window=20, min_periods=5).std().reindex(features.index)
+            # Add Bollinger Bands with safe calculations and increased min_periods
+            rolling_mean = close_prices[ticker].rolling(window=20, min_periods=10).mean().reindex(features.index)
+            rolling_std = close_prices[ticker].rolling(window=20, min_periods=10).std().reindex(features.index)
             
-            features[f'{ticker}_bollinger_upper'] = rolling_mean + (rolling_std * 2)
-            features[f'{ticker}_bollinger_lower'] = rolling_mean - (rolling_std * 2)
+            features[f'{ticker}_bollinger_upper'] = (rolling_mean + (rolling_std * 2)).fillna(method='bfill')
+            features[f'{ticker}_bollinger_lower'] = (rolling_mean - (rolling_std * 2)).fillna(method='bfill')
             
             # Safe Bollinger % calculation
             denominator = features[f'{ticker}_bollinger_upper'] - features[f'{ticker}_bollinger_lower']
-            bollinger_pct = pd.Series(np.nan, index=features.index)
+            bollinger_pct = pd.Series(0.5, index=features.index)  # Default to 0.5 (middle of band)
             valid_mask = (denominator > 1e-10) & (~denominator.isnull())
             bollinger_pct[valid_mask] = (
-                (data[ticker].reindex(features.index)[valid_mask] - 
+                (close_prices[ticker].reindex(features.index)[valid_mask] - 
                 features[f'{ticker}_bollinger_lower'][valid_mask]) / 
                 denominator[valid_mask]
             )
             features[f'{ticker}_bollinger_pct'] = bollinger_pct.fillna(0.5)
         
-        # Robust NaN handling
+        # Enhanced NaN handling
         nan_counts = features.isnull().sum()
         if nan_counts.any():
-            logger.warning(f"NaN counts before cleaning: {nan_counts.sum()}")
+            logger.warning(f"NaN counts before final cleaning: {nan_counts.sum()}")
             
-            # Drop rows with too many NaNs
+            # Replace inf/-inf with NaN first
+            features = features.replace([np.inf, -np.inf], np.nan)
+            
+            # Drop rows with excessive NaNs (more than 30% of columns)
             features = features.dropna(thresh=len(features.columns) * 0.7)
             
-            # Fill remaining NaNs with appropriate values
+            # Fill remaining NaNs with appropriate values using multiple strategies
             for col in features.columns:
                 if features[col].isnull().any():
-                    if features[col].dtype in [np.float64, np.int64]:
-                        # Use median for numeric columns
-                        median_val = features[col].median()
-                        if not np.isnan(median_val):
-                            features[col] = features[col].fillna(median_val)
+                    # First try forward fill
+                    features[col] = features[col].fillna(method='ffill')
+                    
+                    # Then backward fill
+                    features[col] = features[col].fillna(method='bfill')
+                    
+                    # Then use interpolation
+                    features[col] = features[col].interpolate()
+                    
+                    # Finally, use median for numeric columns
+                    if features[col].isnull().any():
+                        if features[col].dtype in [np.float64, np.int64]:
+                            median_val = features[col].median()
+                            if not np.isnan(median_val):
+                                features[col] = features[col].fillna(median_val)
+                            else:
+                                features[col] = features[col].fillna(0)
                         else:
                             features[col] = features[col].fillna(0)
         
@@ -1475,29 +1730,37 @@ class MarketRegimeScanner:
 
     def calculate_quant_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """Advanced quantitative features for regime detection with NaN handling"""
-        features = pd.DataFrame(index=data.index)
+        # Extract close prices for returns calculation
+        close_prices = data.xs('c', axis=1, level=0) if isinstance(data.columns, pd.MultiIndex) else data
         
-        for ticker in data.columns:
-            returns = data[ticker].pct_change().dropna()
+        features = pd.DataFrame(index=close_prices.index)
+        
+        for ticker in close_prices.columns:
+            returns = close_prices[ticker].pct_change().dropna()
             
             # Volatility features
             features[f'{ticker}_realized_vol'] = returns.rolling(20, min_periods=5).std()
             
-            # Parkinson volatility estimator
-            if 'h' in data.columns and 'l' in data.columns:
-                parkinson = np.log(data[ticker].h / data[ticker].l)
-                features[f'{ticker}_parkinson_vol'] = parkinson.rolling(20, min_periods=5).std() * (1/(4*np.log(2)))
+            # Parkinson volatility estimator (if we have OHLC data)
+            if isinstance(data.columns, pd.MultiIndex):
+                try:
+                    highs = data.xs('h', axis=1, level=0)[ticker]
+                    lows = data.xs('l', axis=1, level=0)[ticker]
+                    parkinson = np.log(highs / lows)
+                    features[f'{ticker}_parkinson_vol'] = parkinson.rolling(20, min_periods=5).std() * (1/(4*np.log(2)))
+                except KeyError:
+                    logger.warning(f"High/Low data not available for {ticker}")
             
             # Advanced momentum
-            features[f'{ticker}_ts_momentum'] = data[ticker].pct_change(20)
+            features[f'{ticker}_ts_momentum'] = close_prices[ticker].pct_change(20)
             features[f'{ticker}_cross_sectional_mom'] = (
                 returns.rolling(20, min_periods=5).mean() / 
                 returns.rolling(20, min_periods=5).std()
-            )
+            ).fillna(0)
             
             # Mean reversion features
-            features[f'{ticker}_hurst'] = self.calculate_hurst_exponent(data[ticker])
-            features[f'{ticker}_half_life'] = self.calculate_mean_reversion_half_life(data[ticker])
+            features[f'{ticker}_hurst'] = self.calculate_hurst_exponent(close_prices[ticker])
+            features[f'{ticker}_half_life'] = self.calculate_mean_reversion_half_life(close_prices[ticker])
             
             # Jump detection
             features[f'{ticker}_jump_ratio'] = self.calculate_jump_ratio(returns)
@@ -1511,31 +1774,31 @@ class MarketRegimeScanner:
             )
             
             # Microstructure features (if available)
-            if 'v' in data.columns:  # Volume
-                features[f'{ticker}_volume_zscore'] = (
-                    data['v'] - data['v'].rolling(50, min_periods=10).mean()
-                ) / data['v'].rolling(50, min_periods=10).std()
-                
-                # Volume-price relationship
-                volume_pct_change = data['v'].pct_change()
-                features[f'{ticker}_volume_price_correlation'] = returns.rolling(
-                    20, min_periods=5
-                ).corr(volume_pct_change)
+            if isinstance(data.columns, pd.MultiIndex):
+                try:
+                    volumes = data.xs('v', axis=1, level=0)[ticker]
+                    features[f'{ticker}_volume_zscore'] = (
+                        volumes - volumes.rolling(50, min_periods=10).mean()
+                    ) / volumes.rolling(50, min_periods=10).std()
+                    
+                    # Volume-price relationship
+                    volume_pct_change = volumes.pct_change()
+                    features[f'{ticker}_volume_price_correlation'] = returns.rolling(
+                        20, min_periods=5
+                    ).corr(volume_pct_change)
+                except KeyError:
+                    logger.warning(f"Volume data not available for {ticker}")
         
         # Market structure features
-        returns_matrix = data.pct_change().dropna()
+        returns_matrix = close_prices.pct_change().dropna()
         if len(returns_matrix) > 0:
             features['dispersion'] = returns_matrix.std(axis=1)
             features['skewness'] = returns_matrix.skew(axis=1)
             features['kurtosis'] = returns_matrix.kurtosis(axis=1)
         
-        # Liquidity measures
-        if 'v' in data.columns and len(data.columns) > 1:
-            features['market_liquidity'] = data['v'].rolling(5, min_periods=3).mean()
-        
-        # Drop rows with too many NaN values and forward fill remaining NaNs
-        features = features.dropna(thresh=len(features.columns) // 2)  # Keep rows with at least half the features
-        features = features.ffill().bfill()  # Forward then backward fill
+        # Enhanced NaN handling
+        features = features.replace([np.inf, -np.inf], np.nan)
+        features = features.ffill().bfill().fillna(0)  # Forward then backward fill then zero fill
         
         return features
     
@@ -1936,7 +2199,7 @@ class MarketRegimeScanner:
         return interpretation
             
     async def scan_market_regime(self):
-        """Perform a complete market regime scan with error handling"""
+        """Perform a complete market regime scan with enhanced data validation"""
         if self.shutdown_requested:
             return False
             
@@ -1955,23 +2218,35 @@ class MarketRegimeScanner:
                 logger.error("No market data available for regime analysis")
                 return False
                 
+            # Data validation
+            if market_data.isnull().sum().sum() > len(market_data) * 0.5:  # If more than 50% NaN
+                logger.error("Insufficient quality data for regime detection")
+                return False
+                
             # Calculate features
             basic_features = self.calculate_advanced_features(market_data)
             quant_features = self.calculate_quant_features(market_data)
             
+            # Validate features before combining
+            basic_features = self.validate_features(basic_features)
+            quant_features = self.validate_features(quant_features)
+            
             # Check if we have enough data
-            if basic_features.empty or quant_features.empty:
+            if basic_features.empty or quant_features.empty or len(basic_features) < 50:
                 logger.error("Not enough data to calculate features")
                 return False
                 
-            # Combine features
-            features = pd.concat([basic_features, quant_features], axis=1)
-            features = features.loc[:, ~features.columns.duplicated()]  # Remove duplicates
+            # Combine features with robust method
+            features = self.robust_feature_combination(basic_features, quant_features)
+            
+            # Final validation
+            features = self.validate_features(features)
             
             # Final NaN check and handling
             if features.isnull().any().any():
-                logger.warning(f"Final features contain {features.isnull().sum().sum()} NaN values, filling with zeros")
-                features = features.fillna(0)
+                logger.warning(f"Final features contain {features.isnull().sum().sum()} NaN values, cleaning...")
+                features = features.replace([np.inf, -np.inf], np.nan)
+                features = features.ffill().bfill().fillna(0)
                 
             if features.empty:
                 logger.error("No features calculated for regime analysis")
@@ -1987,19 +2262,16 @@ class MarketRegimeScanner:
             interpretation = self.interpret_regime(regime, feature_values)
             regime_label = interpretation["label"]
             
-            # Save to database
+            # Save to appropriate database
             timestamp = datetime.now()
             
             if self.backtest_mode and self.backtest_date:
-                # Save to backtest table
-                self.regime_db.save_backtest_market_regime(
-                    self.backtest_date, timestamp, regime, confidence, feature_values, self.model_version
+                self.backtest_db.save_backtest_market_regime(
+                    self.backtest_date, timestamp, regime, regime_label, confidence, feature_values, self.model_version
                 )
-                logger.info(f"Saved backtest regime for {self.backtest_date}: {regime_label} (confidence: {confidence:.2f})")
             else:
-                # Save to regular table
-                self.regime_db.save_market_regime(
-                    timestamp, regime, confidence, feature_values, self.model_version
+                self.db.save_market_regime(
+                    timestamp, regime, regime_label, confidence, feature_values, self.model_version
                 )
                 logger.info(f"Current market regime: {regime_label} (confidence: {confidence:.2f})")
             
@@ -2028,15 +2300,17 @@ class MarketRegimeScanner:
     async def shutdown(self):
         """Cleanup resources"""
         self.stop()
+        self.db.close_all_connections()
+        self.backtest_db.close_all_connections()
         logger.info("Market regime scanner shutdown complete")
         
     def get_backtest_regimes_by_date(self, backtest_date: str) -> List[Dict]:
         """Get backtest market regimes for a specific date"""
-        return self.regime_db.get_backtest_regimes_by_date(backtest_date)
+        return self.backtest_db.get_backtest_regimes_by_date(backtest_date)
         
     def get_backtest_dates(self) -> List[str]:
         """Get all available backtest dates"""
-        return self.regime_db.get_backtest_dates()
+        return self.backtest_db.get_backtest_dates()
 
 # ======================== BACKTESTER ======================== #
 class Backtester:

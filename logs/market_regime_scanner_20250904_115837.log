@@ -1,0 +1,42 @@
+2025-09-04 11:58:37,509 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-09-04 11:58:37,509 - MarketRegimeScanner - INFO - Database path: C:\Users\kyung\StockScanner\core\main_data.db
+2025-09-04 11:58:37,509 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
+2025-09-04 11:58:37,511 - MarketRegimeScanner - INFO - Using main database: C:\Users\kyung\StockScanner\core\main_data.db
+2025-09-04 11:58:37,512 - MarketRegimeScanner - INFO - Using backtest database: C:\Users\kyung\StockScanner\core\backtest_data.db
+2025-09-04 11:58:37,525 - MarketRegimeScanner - INFO - Loaded 3245 tickers from database
+2025-09-04 11:58:37,525 - MarketRegimeScanner - INFO - Ticker scanner started
+2025-09-04 11:58:37,525 - MarketRegimeScanner - INFO - Market regime scanner started
+2025-09-04 11:58:37,526 - MarketRegimeScanner - INFO - Starting immediate ticker scan on startup
+2025-09-04 11:58:37,526 - MarketRegimeScanner - INFO - Starting full ticker refresh
+2025-09-04 11:58:37,527 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-09-04 11:58:39,529 - MarketRegimeScanner - INFO - Waiting for initial ticker scan to complete before starting market regime scan
+2025-09-04 11:58:39,671 - MarketRegimeScanner - INFO - Completed ^IXIC: 3245 stocks across 6 pages
+2025-09-04 11:58:39,723 - MarketRegimeScanner - INFO - Ticker refresh completed in 2.20s
+2025-09-04 11:58:39,723 - MarketRegimeScanner - INFO - Total: 3245 | Added: 0 | Removed: 0
+2025-09-04 11:58:39,723 - MarketRegimeScanner - INFO - Database: 0 inserted, 3245 updated
+2025-09-04 11:58:39,724 - MarketRegimeScanner - INFO - Initial ticker scan completed successfully
+2025-09-04 11:58:39,724 - MarketRegimeScanner - INFO - Next ticker refresh scheduled at 2025-09-05 08:30:00-05:00 (20.0 hours and 31.0 minutes from now)
+2025-09-04 11:58:44,529 - MarketRegimeScanner - INFO - Starting immediate market regime scan
+2025-09-04 11:58:44,530 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-09-04 11:58:44,530 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-09-04 11:58:44,812 - MarketRegimeScanner - INFO - Fetched market data with shape: (251, 5)
+2025-09-04 11:58:44,867 - MarketRegimeScanner - INFO - Calculated advanced features with shape: (251, 13), NaNs: 0
+2025-09-04 11:58:44,993 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 13), NaNs: 0
+2025-09-04 11:58:44,995 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 14), NaNs: 0
+2025-09-04 11:58:44,999 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 27), NaNs: 0
+2025-09-04 11:58:47,863 - MarketRegimeScanner - INFO - Deep learning models trained
+2025-09-04 11:58:48,097 - MarketRegimeScanner - INFO - Enhanced ensemble model training completed
+2025-09-04 11:58:48,097 - MarketRegimeScanner - INFO - PCA explained variance ratio: 0.953
+2025-09-04 11:58:48,112 - MarketRegimeScanner - INFO - Current market regime: Sideways Market (confidence: 0.75)
+2025-09-04 11:58:48,113 - MarketRegimeScanner - INFO - Market regime scan completed in 3.58s
+2025-09-04 11:58:48,113 - MarketRegimeScanner - INFO - Initial market regime scan completed successfully
+2025-09-04 11:58:48,113 - MarketRegimeScanner - INFO - Next market regime scan at 12:00:00 (0.0 hours and 1.0 minutes from now)
+2025-09-04 11:59:14,311 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-04 11:59:14,311 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-04 11:59:14,311 - MarketRegimeScanner - INFO - Main task cancelled
+2025-09-04 11:59:14,311 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-04 11:59:14,312 - MarketRegimeScanner - INFO - Ticker scanner shutdown complete
+2025-09-04 11:59:14,312 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-04 11:59:14,312 - MarketRegimeScanner - INFO - Market regime scanner shutdown complete
+2025-09-04 11:59:14,312 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown
+2025-09-04 11:59:14,312 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown

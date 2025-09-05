@@ -1,0 +1,51 @@
+2025-09-05 11:06:04,620 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
+2025-09-05 11:06:04,620 - MarketRegimeScanner - INFO - Using PostgreSQL database: stock_scanner
+2025-09-05 11:06:04,620 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
+2025-09-05 11:06:04,682 - MarketRegimeScanner - INFO - Using PostgreSQL database: stock_scanner
+2025-09-05 11:06:04,685 - MarketRegimeScanner - INFO - No tickers found in database
+2025-09-05 11:06:04,685 - MarketRegimeScanner - INFO - Ticker scanner started
+2025-09-05 11:06:04,686 - MarketRegimeScanner - INFO - Market regime scanner started
+2025-09-05 11:06:04,687 - MarketRegimeScanner - INFO - Starting immediate ticker scan on startup
+2025-09-05 11:06:04,687 - MarketRegimeScanner - INFO - Starting full ticker refresh
+2025-09-05 11:06:04,687 - MarketRegimeScanner - INFO - Fetching tickers for composite index ^IXIC
+2025-09-05 11:06:06,702 - MarketRegimeScanner - INFO - Waiting for initial ticker scan to complete before starting market regime scan
+2025-09-05 11:06:07,170 - MarketRegimeScanner - INFO - Completed ^IXIC: 3250 stocks across 6 pages
+2025-09-05 11:06:07,633 - MarketRegimeScanner - INFO - Ticker refresh completed in 2.95s
+2025-09-05 11:06:07,634 - MarketRegimeScanner - INFO - Total: 3250 | Added: 3250 | Removed: 0
+2025-09-05 11:06:07,634 - MarketRegimeScanner - INFO - Database: 3250 inserted, 0 updated
+2025-09-05 11:06:07,634 - MarketRegimeScanner - INFO - Initial ticker scan completed successfully
+2025-09-05 11:06:07,635 - MarketRegimeScanner - INFO - Next ticker refresh scheduled at 2025-09-06 08:30:00-05:00 (21.0 hours and 23.0 minutes from now)
+2025-09-05 11:06:11,703 - MarketRegimeScanner - INFO - Starting immediate market regime scan
+2025-09-05 11:06:11,704 - MarketRegimeScanner - INFO - Starting market regime scan
+2025-09-05 11:06:11,704 - MarketRegimeScanner - INFO - Fetching 365 days of market data for regime analysis
+2025-09-05 11:06:11,881 - MarketRegimeScanner - INFO - Fetched market data with shape: (251, 5)
+2025-09-05 11:06:11,940 - MarketRegimeScanner - INFO - Calculated advanced features with shape: (251, 13), NaNs: 0
+2025-09-05 11:06:12,077 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 13), NaNs: 0
+2025-09-05 11:06:12,079 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 14), NaNs: 0
+2025-09-05 11:06:12,083 - MarketRegimeScanner - INFO - Feature validation completed. Final shape: (251, 27), NaNs: 0
+2025-09-05 11:06:15,951 - MarketRegimeScanner - INFO - Deep learning models trained
+2025-09-05 11:06:16,164 - MarketRegimeScanner - INFO - Enhanced ensemble model training completed
+2025-09-05 11:06:16,164 - MarketRegimeScanner - INFO - PCA explained variance ratio: 0.954
+2025-09-05 11:06:16,189 - MarketRegimeScanner - ERROR - Database connection error: can't adapt type 'numpy.int64'
+2025-09-05 11:06:16,190 - MarketRegimeScanner - ERROR - Database write error: can't adapt type 'numpy.int64', Query: INSERT INTO market_regimes 
+            (timestamp, regime, regime_label, confidence, features, model_version) 
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (timestamp) DO UPDATE SET
+            regime = EXCLUDED.regime,
+            regime_label = EXCLUDED.regime_label,
+            confidence = EXCLUDED.confidence,
+            features = EXCLUDED.features,
+            model_version = EXCLUDED.model_version, Params: (datetime.datetime(2025, 9, 5, 11, 6, 16, 189842), np.int64(2), 'Bull Market', np.float64(0.7628878974999489), '{"^IXIC_return": -0.006951871657753905, "^IXIC_volatility_ratio": 1.0238209339577444, "^IXIC_atr": 0.394992857142857, "^IXIC_volume_ma": 7594805.05, "^IXIC_volume_ratio": 0.4161164752664407, "^IXIC_momentum_ratio": 1.144914718072538, "^IXIC_volatility_clustering": 0.2744920095822224, "^IXIC_rsi": 58.54483925549916, "^IXIC_macd": 0.41603064115366095, "^IXIC_macd_signal": 0.45065413644398117, "^IXIC_bollinger_upper": 9.704510413491503, "^IXIC_bollinger_lower": 8.029989586508497, "^IXIC_bollinger_pct": 0.7494743530617427, "^IXIC_realized_vol": 0.029900448320525984, "^IXIC_parkinson_vol": 0.00576302956578106, "^IXIC_ts_momentum": 0.13093788063337386, "^IXIC_cross_sectional_mom": 0.2202275214981434, "^IXIC_hurst": 0.0, "^IXIC_half_life": 24.283140397607664, "^IXIC_jump_ratio": 0.0, "^IXIC_var_95": -0.04212469959946591, "^IXIC_expected_shortfall": -0.07755496815902821, "^IXIC_volume_zscore": -1.3488884220582762, "^IXIC_volume_price_correlation": 0.5230452531980496, "dispersion": 0.0, "skewness": 0.0, "kurtosis": 0.0, "anomaly_score": -0.4768746923740389, "model_agreement": 0.5, "bayesian_uncertainty": 0.4160518393507399, "transition_probability": 0.25, "transition_uncertainty": 1.0}', 'enhanced_v4.0')
+2025-09-05 11:06:16,190 - MarketRegimeScanner - INFO - Current market regime: Bull Market (confidence: 0.76)
+2025-09-05 11:06:16,190 - MarketRegimeScanner - INFO - Market regime scan completed in 4.49s
+2025-09-05 11:06:16,191 - MarketRegimeScanner - INFO - Initial market regime scan completed successfully
+2025-09-05 11:06:16,191 - MarketRegimeScanner - INFO - Next market regime scan at 12:00:00 (0.0 hours and 53.0 minutes from now)
+2025-09-05 11:11:33,664 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-05 11:11:33,664 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-05 11:11:33,664 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown
+2025-09-05 11:11:33,664 - MarketRegimeScanner - INFO - Sleep interrupted by shutdown
+2025-09-05 11:11:33,665 - MarketRegimeScanner - INFO - Main task cancelled
+2025-09-05 11:11:33,665 - MarketRegimeScanner - INFO - Ticker scanner stopped
+2025-09-05 11:11:33,665 - MarketRegimeScanner - INFO - Ticker scanner shutdown complete
+2025-09-05 11:11:33,665 - MarketRegimeScanner - INFO - Market regime scanner stopped
+2025-09-05 11:11:33,665 - MarketRegimeScanner - INFO - Market regime scanner shutdown complete

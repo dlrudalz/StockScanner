@@ -1,5 +1,0 @@
-2025-09-01 20:04:19,537 - MarketRegimeScanner - INFO - Using local timezone: America/Chicago
-2025-09-01 20:04:19,537 - MarketRegimeScanner - INFO - Database path: C:\Users\kyung\StockScanner\core\ticker_data.db
-2025-09-01 20:04:19,537 - MarketRegimeScanner - INFO - Using composite indices: ^IXIC
-2025-09-01 20:04:19,572 - MarketRegimeScanner - ERROR - Database connection error: no such table: main.backtest_market_regimes
-2025-09-01 20:04:19,573 - MarketRegimeScanner - ERROR - Unexpected error: no such table: main.backtest_market_regimes
