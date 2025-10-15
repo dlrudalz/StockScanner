@@ -7,7 +7,7 @@ import os
 import logging
 import json
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from urllib.parse import urlencode
 from threading import Lock, Event, RLock
 from collections import defaultdict
@@ -17,79 +17,144 @@ from tzlocal import get_localzone
 import contextlib
 from typing import List, Dict, Optional, Any, Tuple
 import argparse
-from sklearn.preprocessing import StandardScaler
-from hmmlearn import hmm
-from sklearn.mixture import GaussianMixture
-from sklearn.ensemble import RandomForestClassifier, IsolationForest
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
-import warnings
-warnings.filterwarnings("ignore")
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-import pyro.distributions as dist
-from pyro.infer import SVI, Trace_ELBO
-from pyro.optim import Adam
-from scipy.stats import norm, t
-from sklearn.linear_model import BayesianRidge
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, WhiteKernel
-from scipy import signal as sp_signal
+import asyncpg
+from asyncpg.pool import Pool
+import pandas_market_calendars as mcal
+from functools import wraps
+from concurrent.futures import ThreadPoolExecutor
+import uuid
+import alpaca_trade_api as tradeapi
+from alpaca_trade_api.rest import TimeFrame
+# FIX: Use the correct import for polygon REST client
+try:
+    from polygon import RESTClient
+except ImportError:
+    try:
+        from polygon.rest import RESTClient
+    except ImportError:
+        # Fallback: Use requests directly if polygon library is not available
+        RESTClient = None
+        import requests
+import talib
+from dataclasses import dataclass
+from enum import Enum
+import backtrader as bt
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import psycopg2.pool
+# ======================== CUSTOM EXCEPTIONS ======================== #
+class TickerScannerError(Exception):
+    """Base exception for Ticker Scanner"""
+    pass
 
+class DatabaseError(TickerScannerError):
+    """Database related errors"""
+    pass
+
+class APIError(TickerScannerError):
+    """API related errors"""
+    pass
+
+class ConfigurationError(TickerScannerError):
+    """Configuration related errors"""
+    pass
+
+class CircuitBreakerError(TickerScannerError):
+    """Circuit breaker related errors"""
+    pass
+
+class TradingError(TickerScannerError):
+    """Trading related errors"""
+    pass
+
+# ======================== ERROR HANDLING DECORATOR ======================== #
+def handle_errors(max_retries=3, retry_delay=1):
+    """Unified error handling decorator for both sync and async methods"""
+    def decorator(func):
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            retries = 0
+            while retries <= max_retries:
+                try:
+                    return await func(*args, **kwargs)
+                except (APIError, DatabaseError, TradingError) as e:
+                    retries += 1
+                    if retries > max_retries:
+                        logger.error(f"Max retries exceeded for {func.__name__}: {e}")
+                        raise
+                    logger.warning(f"Retry {retries}/{max_retries} for {func.__name__} after error: {e}")
+                    await asyncio.sleep(retry_delay * retries)
+                except Exception as e:
+                    logger.error(f"Unexpected error in {func.__name__}: {e}")
+                    raise
+            return None
+
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            retries = 0
+            while retries <= max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except (APIError, DatabaseError, TradingError) as e:
+                    retries += 1
+                    if retries > max_retries:
+                        logger.error(f"Max retries exceeded for {func.__name__}: {e}")
+                        raise
+                    logger.warning(f"Retry {retries}/{max_retries} for {func.__name__} after error: {e}")
+                    time.sleep(retry_delay * retries)
+                except Exception as e:
+                    logger.error(f"Unexpected error in {func.__name__}: {e}")
+                    raise
+            return None
+
+        return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
+    return decorator
 
 # ======================== CONFIGURATION ======================== #
 class Config:
-    # API Configuration
-    POLYGON_API_KEY = "ld1Poa63U6t4Y2MwOCA2JeKQyHVrmyg8"
+    # API Configuration - Use environment variables with fallbacks
+    POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "ld1Poa63U6t4Y2MwOCA2JeKQyHVrmyg8")
+    
+    # Alpaca Configuration
+    ALPACA_API_KEY = os.getenv("ALPACA_API_KEY", "PKVNsM6Lm8Nq3aQ6N2sF")
+    ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "your_alpaca_secret_here")
+    ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")  # Paper trading
     
     # Scanner Configuration - Using ONLY Nasdaq Composite
-    COMPOSITE_INDICES = ["^IXIC"]  # NASDAQ Composite only
-    MAX_CONCURRENT_REQUESTS = 100
-    RATE_LIMIT_DELAY = 0.02
-    SCAN_TIME = "08:30"
+    COMPOSITE_INDICES = json.loads(os.getenv("COMPOSITE_INDICES", '["^IXIC"]'))  # NASDAQ Composite only
+    MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "100"))
+    RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", "0.02"))
+    SCAN_TIME = os.getenv("SCAN_TIME", "08:30")
     
-    # Market Regime Configuration
-    REGIME_SCAN_INTERVAL = 3600  # 1 hour in seconds
-    HISTORICAL_DATA_DAYS = 365  # 1 year of historical data
-    HMM_N_COMPONENTS = 3  # Number of market regimes (bull, bear, sideways)
-    HMM_N_ITER = 100  # Number of HMM iterations
-    HMM_COVARIANCE_TYPE = "diag"  # Covariance type
+    # Error Handling Configuration
+    MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+    RETRY_DELAY = int(os.getenv("RETRY_DELAY", "5"))
+    CIRCUIT_THRESHOLD = int(os.getenv("CIRCUIT_THRESHOLD", "10"))
+    CIRCUIT_TIMEOUT = int(os.getenv("CIRCUIT_TIMEOUT", "300"))  # 5 minutes
     
-    # Enhanced Model Configuration
-    USE_ENSEMBLE_MODEL = True  # Use ensemble of HMM and GMM
-    MODEL_VERSION = "enhanced_v4.0"  # Model version identifier
-    USE_ANOMALY_DETECTION = True  # Detect anomalous market conditions
-    N_CLUSTERS = 4  # Allow for more nuanced regime detection
-    PCA_COMPONENTS = 10  # Reduce dimensionality for better clustering
-    ROLLING_TRAINING_WINDOW = 252  # Use 1 year of data for training (approx 252 trading days)
-
     # Database Configuration - PostgreSQL
-    POSTGRES_HOST = "localhost"
-    POSTGRES_PORT = 5432
-    POSTGRES_DB = "stock_scanner"
-    POSTGRES_USER = "hodumaru"
-    POSTGRES_PASSWORD = "Leetkd214"
+    POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+    POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
+    POSTGRES_DB = os.getenv("POSTGRES_DB", "stock_scanner")
+    POSTGRES_USER = os.getenv("POSTGRES_USER", "hodumaru")
+    POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "Leetkd214")
+    
+    # Market Calendar Configuration
+    MARKET_CALENDAR = os.getenv("MARKET_CALENDAR", "NASDAQ")  # Use NASDAQ calendar
     
     # Backtesting Configuration
-    BACKTEST_HISTORICAL_DAYS = 30  # Days of historical data to use for backtesting
+    BACKTEST_HISTORICAL_DAYS = int(os.getenv("BACKTEST_HISTORICAL_DAYS", "30"))  # Days of historical data
+    
+    # Strategy Configuration
+    INITIAL_CAPITAL = float(os.getenv("INITIAL_CAPITAL", "100000.0"))
+    MAX_POSITION_SIZE = float(os.getenv("MAX_POSITION_SIZE", "0.1"))  # 10% per position
+    STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "0.02"))  # 2% stop loss
+    TAKE_PROFIT_PCT = float(os.getenv("TAKE_PROFIT_PCT", "0.04"))  # 4% take profit
     
     # Logging Configuration
-    LOG_LEVEL = logging.INFO
-    LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    LOG_FORMAT = os.getenv("LOG_FORMAT", '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
-    # New Configuration for Enhanced Features
-    USE_DEEP_LEARNING = True
-    DEEP_LEARNING_HIDDEN_LAYERS = [64, 32]
-    BAYESIAN_SAMPLES = 1000
-    MICROSTRUCTURE_FEATURES = True
-    UNCERTAINTY_ESTIMATION = True
-    REGIME_TRANSITION_PROBABILITIES = True
+    # Thread Pool Configuration
+    THREAD_POOL_SIZE = int(os.getenv("THREAD_POOL_SIZE", "10"))
 
 # Initialize configuration
 config = Config()
@@ -99,243 +164,244 @@ def setup_logging():
     """Configure logging with file and console handlers"""
     os.makedirs("logs", exist_ok=True)
     
-    logger = logging.getLogger("MarketRegimeScanner")
-    logger.setLevel(config.LOG_LEVEL)
+    logger = logging.getLogger("TickerScanner")
+    logger.setLevel(getattr(logging, config.LOG_LEVEL.upper()))
     
     if logger.hasHandlers():
         logger.handlers.clear()
     
     formatter = logging.Formatter(config.LOG_FORMAT)
     
+    # File handler with rotation
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = f"logs/market_regime_scanner_{timestamp}.log"
+    log_file = f"logs/ticker_scanner_{timestamp}.log"
     file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(config.LOG_LEVEL)
+    file_handler.setLevel(getattr(logging, config.LOG_LEVEL.upper()))
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     
+    # Console handler
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(config.LOG_LEVEL)
+    console_handler.setLevel(getattr(logging, config.LOG_LEVEL.upper()))
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
+    
+    # Error handler
+    error_handler = logging.FileHandler("logs/errors.log")
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(formatter)
+    logger.addHandler(error_handler)
     
     return logger
 
 logger = setup_logging()
 
-# ======================== DEEP LEARNING MODELS ======================== #
-class MarketRegimeLSTM(nn.Module):
-    """LSTM-based market regime classifier"""
-    def __init__(self, input_size, hidden_size, num_layers, num_classes, dropout=0.2):
-        super(MarketRegimeLSTM, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, 
-                           batch_first=True, dropout=dropout)
-        self.fc = nn.Linear(hidden_size, num_classes)
-        self.dropout = nn.Dropout(dropout)
+# ======================== PERFORMANCE MONITORING ======================== #
+def monitor_performance(func):
+    """Decorator to monitor function performance"""
+    @wraps(func)
+    async def async_wrapper(self, *args, **kwargs):
+        start_time = time.time()
+        result = await func(self, *args, **kwargs)
+        end_time = time.time()
         
-    def forward(self, x):
-        # Initialize hidden state
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        duration = end_time - start_time
+        logger.info(f"{func.__name__} executed in {duration:.2f}s")
         
-        # Forward propagate LSTM
-        out, _ = self.lstm(x, (h0, c0))
-        
-        # Decode the hidden state of the last time step
-        out = self.fc(self.dropout(out[:, -1, :]))
-        return out
-
-class MarketRegimeCNN(nn.Module):
-    """CNN-based market regime classifier"""
-    def __init__(self, input_channels, num_classes):
-        super(MarketRegimeCNN, self).__init__()
-        self.conv1 = nn.Conv1d(input_channels, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv1d(32, 64, kernel_size=3, padding=1)
-        self.pool = nn.AdaptiveAvgPool1d(1)
-        self.fc1 = nn.Linear(64, 32)
-        self.fc2 = nn.Linear(32, num_classes)
-        self.dropout = nn.Dropout(0.3)
-        self.relu = nn.ReLU()
-        
-    def forward(self, x):
-        x = x.transpose(1, 2)  # Convert to (batch, channels, time)
-        x = self.relu(self.conv1(x))
-        x = self.relu(self.conv2(x))
-        x = self.pool(x).squeeze(-1)
-        x = self.dropout(self.relu(self.fc1(x)))
-        x = self.fc2(x)
-        return x
-
-# ======================== BAYESIAN MODELS ======================== #
-class BayesianMarketRegime:
-    """Bayesian model for market regime detection with uncertainty estimation"""
-    def __init__(self, n_regimes=4):
-        self.n_regimes = n_regimes
-        self.models = []
-        
-    def fit(self, X, n_models=10):
-        """Train ensemble of models for uncertainty estimation"""
-        from sklearn.utils import resample
-        
-        self.models = []
-        successful_models = 0
-        
-        for i in range(n_models):
-            try:
-                # Bootstrap sample
-                X_sample = resample(X)
-                
-                # Skip if sample is too small
-                if len(X_sample) < 20:
-                    continue
-                
-                # Train diverse models
-                model = GaussianMixture(
-                    n_components=self.n_regimes, 
-                    covariance_type='full', 
-                    random_state=np.random.randint(1000),
-                    max_iter=200,
-                    n_init=3
-                )
-                model.fit(X_sample)
-                self.models.append(model)
-                successful_models += 1
-                
-            except Exception as e:
-                logger.debug(f"Bayesian model {i+1} failed: {e}")
-                continue
-        
-        # Ensure we have at least one model
-        if successful_models == 0:
-            logger.warning("All Bayesian models failed, creating fallback model")
-            try:
-                model = GaussianMixture(
-                    n_components=self.n_regimes,
-                    covariance_type='full',
-                    random_state=42,
-                    max_iter=200
-                )
-                model.fit(X)
-                self.models.append(model)
-            except Exception as e:
-                logger.error(f"Fallback Bayesian model also failed: {e}")
-    
-    def predict_proba(self, X):
-        """Get probabilistic predictions with uncertainty"""
-        if not self.models:
-            # Return default predictions if no models are available
-            default_probs = np.ones((len(X), self.n_regimes)) / self.n_regimes
-            return default_probs, np.ones(len(X)) * 0.5, []
-        
-        all_probs = []
-        for model in self.models:
-            try:
-                probs = model.predict_proba(X)
-                all_probs.append(probs)
-            except:
-                # Skip failed predictions
-                continue
-        
-        if not all_probs:
-            # Return default if all predictions failed
-            default_probs = np.ones((len(X), self.n_regimes)) / self.n_regimes
-            return default_probs, np.ones(len(X)) * 0.5, []
-        
-        # Mean and standard deviation across ensemble
-        mean_probs = np.mean(all_probs, axis=0)
-        std_probs = np.std(all_probs, axis=0)
-        
-        # Uncertainty measure
-        uncertainty = np.mean(std_probs, axis=1)
-        
-        return mean_probs, uncertainty, all_probs
-    
-class BayesianTransitionModel:
-    """Bayesian model for regime transition probabilities"""
-    def __init__(self, n_regimes=4):
-        self.n_regimes = n_regimes
-        self.transition_counts = np.ones((n_regimes, n_regimes))  # Dirichlet prior
-        self.transition_probs = np.ones((n_regimes, n_regimes)) / n_regimes
-        
-    def update(self, previous_regime, current_regime):
-        """Update transition probabilities"""
-        # Ensure regimes are within valid range
-        if 0 <= previous_regime < self.n_regimes and 0 <= current_regime < self.n_regimes:
-            self.transition_counts[previous_regime, current_regime] += 1
-            self.transition_probs = self.transition_counts / self.transition_counts.sum(axis=1, keepdims=True)
-        
-    def get_transition_prob(self, previous_regime, current_regime):
-        """Get transition probability"""
-        if 0 <= previous_regime < self.n_regimes and 0 <= current_regime < self.n_regimes:
-            return self.transition_probs[previous_regime, current_regime]
-        return 1.0 / self.n_regimes  # Default equal probability
-    
-    def get_transition_uncertainty(self, previous_regime):
-        """Get uncertainty about transitions from a regime"""
-        if 0 <= previous_regime < self.n_regimes:
-            counts = self.transition_counts[previous_regime]
-            total = counts.sum()
-            # Higher entropy means more uncertainty
-            if total > 0:
-                probs = counts / total
-                entropy = -np.sum(probs * np.log(probs + 1e-10))
-                return entropy / np.log(self.n_regimes)  # Normalized entropy
-        return 1.0  # Maximum uncertainty
-
-# ======================== DATABASE MANAGER (FULLY OPTIMIZED) ======================== #
-class DatabaseManager:
-    def __init__(self):
-        self.pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=3,  # Increased from 1
-            maxconn=20,  # Increased from 10
-            host=config.POSTGRES_HOST,
-            port=config.POSTGRES_PORT,
-            database=config.POSTGRES_DB,
-            user=config.POSTGRES_USER,
-            password=config.POSTGRES_PASSWORD
-        )
-        self._init_database()
-    
-    def _get_connection_from_pool(self):
-        return self.pool.getconn()
-                
-    def _return_connection_to_pool(self, conn):
-        self.pool.putconn(conn)
-    
-    @contextlib.contextmanager
-    def get_connection(self):
-        conn = self._get_connection_from_pool()
-        try:
-            # Validate connection is still open
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT 1")
-            yield conn
-        except psycopg2.Error as e:
-            logger.error(f"Database connection error: {e}")
-            conn.close()
-            # Create a new connection
-            conn = psycopg2.connect(
-                host=config.POSTGRES_HOST,
-                port=config.POSTGRES_PORT,
-                database=config.POSTGRES_DB,
-                user=config.POSTGRES_USER,
-                password=config.POSTGRES_PASSWORD
-            )
-            yield conn
-        finally:
-            self._return_connection_to_pool(conn)
-    
-    def close_all_connections(self):
-        self.pool.closeall()
-    
-    def _init_database(self):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
+        # Track metrics
+        if hasattr(self, 'performance_metrics'):
+            if func.__name__ not in self.performance_metrics:
+                self.performance_metrics[func.__name__] = {
+                    'total_duration': 0,
+                    'count': 0,
+                    'last_execution': 0
+                }
             
+            self.performance_metrics[func.__name__]['total_duration'] += duration
+            self.performance_metrics[func.__name__]['count'] += 1
+            self.performance_metrics[func.__name__]['last_execution'] = end_time
+        
+        return result
+    
+    @wraps(func)
+    def sync_wrapper(self, *args, **kwargs):
+        start_time = time.time()
+        result = func(self, *args, **kwargs)
+        end_time = time.time()
+        
+        duration = end_time - start_time
+        logger.info(f"{func.__name__} executed in {duration:.2f}s")
+        
+        # Track metrics
+        if hasattr(self, 'performance_metrics'):
+            if func.__name__ not in self.performance_metrics:
+                self.performance_metrics[func.__name__] = {
+                    'total_duration': 0,
+                    'count': 0,
+                    'last_execution': 0
+                }
+            
+            self.performance_metrics[func.__name__]['total_duration'] += duration
+            self.performance_metrics[func.__name__]['count'] += 1
+            self.performance_metrics[func.__name__]['last_execution'] = end_time
+        
+        return result
+    
+    if asyncio.iscoroutinefunction(func):
+        return async_wrapper
+    else:
+        return sync_wrapper
+
+# ======================== BASE DATABASE MANAGER ======================== #
+class BaseDatabaseManager:
+    """Base class for database managers with common functionality - Async version"""
+    
+    def __init__(self, minconn, maxconn):
+        try:
+            self.pool = None
+            self.minconn = minconn
+            self.maxconn = maxconn
+            self._init_lock = asyncio.Lock()
+            self.performance_metrics = {}
+        except Exception as e:
+            logger.error(f"Database initialization failed: {e}")
+            raise DatabaseError(f"Database initialization failed: {e}")
+
+    async def initialize(self):
+        """Initialize the connection pool asynchronously"""
+        async with self._init_lock:
+            if self.pool is None:
+                try:
+                    self.pool = await asyncpg.create_pool(
+                        min_size=self.minconn,
+                        max_size=self.maxconn,
+                        host=config.POSTGRES_HOST,
+                        port=config.POSTGRES_PORT,
+                        database=config.POSTGRES_DB,
+                        user=config.POSTGRES_USER,
+                        password=config.POSTGRES_PASSWORD
+                    )
+                    await self._init_database()
+                except Exception as e:
+                    logger.error(f"Database connection failed: {e}")
+                    raise DatabaseError(f"Database connection failed: {e}")
+
+    @contextlib.asynccontextmanager
+    async def get_connection(self):
+        """Get a connection from the pool with proper error handling"""
+        if self.pool is None:
+            await self.initialize()
+            
+        conn = None
+        retry_count = 0
+        max_retries = 3
+        
+        while retry_count < max_retries:
+            try:
+                conn = await self.pool.acquire()
+                # Validate connection is still open
+                await conn.execute("SELECT 1")
+                yield conn
+                break
+            except (asyncpg.PostgresConnectionError, asyncpg.InterfaceError) as e:
+                logger.warning(f"Database connection error (attempt {retry_count+1}): {e}")
+                if conn:
+                    try:
+                        await self.pool.release(conn)
+                    except:
+                        pass
+                retry_count += 1
+                if retry_count >= max_retries:
+                    raise DatabaseError(f"Failed to get valid connection after {max_retries} attempts")
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.error(f"Database error: {e}")
+                if conn:
+                    try:
+                        await self.pool.release(conn)
+                    except:
+                        pass
+                raise DatabaseError(f"Database error: {e}")
+            finally:
+                if conn and not conn.is_closed() and retry_count < max_retries:
+                    try:
+                        await self.pool.release(conn)
+                    except Exception as e:
+                        logger.error(f"Error returning connection to pool: {e}")
+
+    async def close_all_connections(self):
+        """Close all connections in the pool"""
+        if self.pool:
+            await self.pool.close()
+
+    async def _init_database(self):
+        """Initialize database tables - to be implemented by subclasses"""
+        raise NotImplementedError("Subclasses must implement _init_database")
+
+    def _convert_numpy_types(self, params):
+        """Convert numpy data types to native Python types for database compatibility"""
+        converted_params = []
+        for param in params:
+            if isinstance(param, np.integer):
+                converted_params.append(int(param))
+            elif isinstance(param, np.floating):
+                converted_params.append(float(param))
+            else:
+                converted_params.append(param)
+        return tuple(converted_params)
+    
+    @monitor_performance
+    @handle_errors()
+    async def execute_query(self, query: str, params: tuple = ()) -> List[Dict]:
+        try:
+            async with self.get_connection() as conn:
+                records = await conn.fetch(query, *params)
+                # Convert asyncpg Records to dictionaries with column names
+                return [dict(record) for record in records]
+        except Exception as e:
+            logger.error(f"Database query error: {e}, Query: {query}, Params: {params}")
+            raise DatabaseError(f"Query execution failed: {e}")
+            
+    @monitor_performance
+    @handle_errors()
+    async def execute_write(self, query: str, params: tuple = ()) -> int:
+        try:
+            converted_params = self._convert_numpy_types(params)
+            async with self.get_connection() as conn:
+                result = await conn.execute(query, *converted_params)
+                # For INSERT/UPDATE/DELETE, result is a string like "INSERT 0 1"
+                # We need to parse this to get the row count
+                if "INSERT" in result:
+                    return int(result.split()[-1])
+                elif "UPDATE" in result or "DELETE" in result:
+                    return int(result.split()[-1])
+                return 0
+        except Exception as e:
+            logger.error(f"Database write error: {e}, Query: {query}, Params: {converted_params}")
+            raise DatabaseError(f"Write execution failed: {e}")
+    
+    async def get_pool_status(self):
+        """Get connection pool status"""
+        if self.pool:
+            return {
+                'min_size': self.pool.get_min_size(),
+                'max_size': self.pool.get_max_size(),
+                'size': self.pool.get_size(),
+                'free': self.pool.get_free_size(),
+            }
+        return {}
+
+# ======================== MAIN DATABASE MANAGER ======================== #
+class DatabaseManager(BaseDatabaseManager):
+    """Main database manager for ticker operations - Async version"""
+    
+    def __init__(self):
+        super().__init__(minconn=3, maxconn=20)
+    
+    async def _init_database(self):
+        async with self.get_connection() as conn:
             # Create tickers table
-            cursor.execute('''
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS tickers (
                     ticker TEXT PRIMARY KEY,
                     name TEXT,
@@ -352,7 +418,7 @@ class DatabaseManager:
             ''')
             
             # Create metadata table
-            cursor.execute('''
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY,
                     value TEXT,
@@ -360,10 +426,13 @@ class DatabaseManager:
                 )
             ''')
             
-            # Create historical_tickers table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS historical_tickers (
-                    id SERIAL PRIMARY KEY,
+            # Drop the existing historical_tickers table if it exists
+            await conn.execute('DROP TABLE IF EXISTS historical_tickers CASCADE')
+            
+            # Create historical_tickers table with proper partitioning
+            await conn.execute('''
+                CREATE TABLE historical_tickers (
+                    id SERIAL,
                     ticker TEXT,
                     name TEXT,
                     primary_exchange TEXT,
@@ -374,88 +443,30 @@ class DatabaseManager:
                     currency_name TEXT,
                     active INTEGER,
                     change_type TEXT,
-                    change_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
+                    change_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (id, change_date)
+                ) PARTITION BY RANGE (change_date)
             ''')
             
-            # Create market_regimes table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS market_regimes (
-                    id SERIAL PRIMARY KEY,
-                    timestamp TIMESTAMP NOT NULL UNIQUE,
-                    regime INTEGER NOT NULL,
-                    regime_label TEXT NOT NULL,
-                    confidence REAL NOT NULL,
-                    features TEXT,
-                    model_version TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
+            # Create default partition
+            await conn.execute('''
+                CREATE TABLE historical_tickers_default 
+                PARTITION OF historical_tickers DEFAULT
             ''')
             
-            # Create regime_statistics table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS regime_statistics (
-                    id SERIAL PRIMARY KEY,
-                    regime INTEGER NOT NULL,
-                    start_date TIMESTAMP NOT NULL,
-                    end_date TIMESTAMP,
-                    duration_days INTEGER,
-                    return_pct REAL,
-                    volatility REAL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+            # Create indexes with partial indexes
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_tickers_exchange ON tickers(primary_exchange)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_tickers_active ON tickers(active) WHERE active = 1')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_tickers_updated_at ON tickers(updated_at)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_date ON historical_tickers(change_date)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_ticker_date ON historical_tickers(ticker, change_date)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_change_type ON historical_tickers(change_type) WHERE change_type IS NOT NULL')
             
-            # Create indexes
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_exchange ON tickers(primary_exchange)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_active ON tickers(active)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_updated_at ON tickers(updated_at)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_date ON historical_tickers(change_date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_tickers_ticker_date ON historical_tickers(ticker, change_date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_timestamp ON market_regimes(timestamp)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_regime ON market_regimes(regime)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_regimes_created_at ON market_regimes(created_at)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_regime ON regime_statistics(regime)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_date ON regime_statistics(start_date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_duration ON regime_statistics(duration_days)')
-            
-            conn.commit()
+            logger.info("Database tables initialized successfully")
 
-    def _convert_numpy_types(self, params):
-        """Convert numpy data types to native Python types for database compatibility"""
-        converted_params = []
-        for param in params:
-            if isinstance(param, np.integer):
-                converted_params.append(int(param))
-            elif isinstance(param, np.floating):
-                converted_params.append(float(param))
-            else:
-                converted_params.append(param)
-        return tuple(converted_params)
-
-    def execute_query(self, query: str, params: tuple = ()) -> List[Dict]:
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                    cursor.execute(query, params)
-                    return cursor.fetchall()
-        except psycopg2.Error as e:
-            logger.error(f"Database query error: {e}, Query: {query}, Params: {params}")
-            return []
-            
-    def execute_write(self, query: str, params: tuple = ()) -> int:
-        try:
-            converted_params = self._convert_numpy_types(params)
-            with self.get_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(query, converted_params)
-                    conn.commit()
-                    return cursor.rowcount
-        except psycopg2.Error as e:
-            logger.error(f"Database write error: {e}, Query: {query}, Params: {converted_params}")
-            return 0
-
-    def upsert_tickers(self, tickers: List[Dict]) -> Tuple[int, int]:
+    @monitor_performance
+    @handle_errors()
+    async def upsert_tickers(self, tickers: List[Dict]) -> Tuple[int, int]:
         if not tickers:
             return 0, 0
             
@@ -484,33 +495,31 @@ class DatabaseManager:
         inserted = 0
         updated = 0
         
-        with self.get_connection() as conn:
-            with conn.cursor() as cursor:
-                # Use transaction for better performance
-                cursor.execute("BEGIN")
-                
+        async with self.get_connection() as conn:
+            # Use transaction for better performance
+            async with conn.transaction():
                 try:
                     # Get existing tickers
-                    placeholders = ','.join(['%s'] * len(tickers_arr))
-                    cursor.execute(
+                    placeholders = ','.join(['$' + str(i+1) for i in range(len(tickers_arr))])
+                    existing = await conn.fetch(
                         f"SELECT ticker FROM tickers WHERE ticker IN ({placeholders})", 
-                        tickers_arr
+                        *tickers_arr
                     )
-                    existing_tickers = {row[0] for row in cursor.fetchall()}
+                    existing_tickers = {row['ticker'] for row in existing}
                     
                     # Bulk upsert using UNNEST
-                    cursor.execute('''
+                    result = await conn.fetchrow('''
                         WITH input_data AS (
                             SELECT 
-                                unnest(%s) AS ticker,
-                                unnest(%s) AS name,
-                                unnest(%s) AS primary_exchange,
-                                unnest(%s) AS last_updated_utc,
-                                unnest(%s) AS type,
-                                unnest(%s) AS market,
-                                unnest(%s) AS locale,
-                                unnest(%s) AS currency_name,
-                                unnest(%s) AS active
+                                unnest($1::text[]) AS ticker,
+                                unnest($2::text[]) AS name,
+                                unnest($3::text[]) AS primary_exchange,
+                                unnest($4::text[]) AS last_updated_utc,
+                                unnest($5::text[]) AS type,
+                                unnest($6::text[]) AS market,
+                                unnest($7::text[]) AS locale,
+                                unnest($8::text[]) AS currency_name,
+                                unnest($9::int[]) AS active
                         ),
                         updated AS (
                             UPDATE tickers t
@@ -542,14 +551,11 @@ class DatabaseManager:
                         SELECT 
                             (SELECT COUNT(*) FROM inserted) AS inserted_count,
                             (SELECT COUNT(*) FROM updated) AS updated_count
-                    ''', (
-                        tickers_arr, names_arr, primary_exchange_arr, last_updated_utc_arr,
-                        type_arr, market_arr, locale_arr, currency_name_arr, active_arr
-                    ))
+                    ''', tickers_arr, names_arr, primary_exchange_arr, last_updated_utc_arr,
+                    type_arr, market_arr, locale_arr, currency_name_arr, active_arr)
                     
-                    result = cursor.fetchone()
-                    inserted = result[0] if result else 0
-                    updated = result[1] if result else 0
+                    inserted = result['inserted_count'] if result else 0
+                    updated = result['updated_count'] if result else 0
                     
                     # Bulk insert historical records
                     historical_data = []
@@ -561,26 +567,28 @@ class DatabaseManager:
                             t.get('locale'), t.get('currency_name'), 1, change_type
                         ))
                     
-                    cursor.executemany('''
+                    # Use execute many for bulk insert
+                    await conn.executemany(
+                        '''
                         INSERT INTO historical_tickers 
                         (ticker, name, primary_exchange, last_updated_utc, 
                          type, market, locale, currency_name, active, change_type)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ''', historical_data)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                        ''',
+                        historical_data
+                    )
                     
-                    cursor.execute("COMMIT")
-                    
-                except psycopg2.Error as e:
-                    cursor.execute("ROLLBACK")
+                except Exception as e:
                     logger.error(f"Transaction failed during ticker upsert: {e}")
-                    raise
+                    raise DatabaseError(f"Transaction failed during ticker upsert: {e}")
             
         return inserted, updated
 
-    def get_metadata(self, key: str, default: Any = None) -> Any:
+    @handle_errors()
+    async def get_metadata(self, key: str, default: Any = None) -> Any:
         """Get metadata value by key"""
-        result = self.execute_query(
-            "SELECT value FROM metadata WHERE key = %s",
+        result = await self.execute_query(
+            "SELECT value FROM metadata WHERE key = $1",
             (key,)
         )
         
@@ -592,170 +600,108 @@ class DatabaseManager:
                 return value
         return default
     
-    def update_metadata(self, key: str, value: Any) -> None:
+    @handle_errors()
+    async def update_metadata(self, key: str, value: Any) -> None:
         """Update metadata key-value pair"""
-        self.execute_write(
-            "INSERT INTO metadata (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP",
+        await self.execute_write(
+            "INSERT INTO metadata (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP",
             (key, json.dumps(value) if isinstance(value, (list, dict)) else str(value))
         )
 
-    def get_all_active_tickers(self) -> List[Dict]:
+    @handle_errors()
+    async def get_all_active_tickers(self) -> List[Dict]:
         """Get all active tickers from the database"""
-        return self.execute_query(
+        return await self.execute_query(
             "SELECT * FROM tickers WHERE active = 1 ORDER BY ticker"
         )
 
-    def search_tickers(self, search_term: str, limit: int = 50) -> List[Dict]:
+    @handle_errors()
+    async def search_tickers(self, search_term: str, limit: int = 50) -> List[Dict]:
         """Search tickers by name or symbol"""
-        return self.execute_query(
-            "SELECT * FROM tickers WHERE (ticker LIKE %s OR name LIKE %s) AND active = 1 ORDER BY ticker LIMIT %s",
+        return await self.execute_query(
+            "SELECT * FROM tickers WHERE (ticker ILIKE $1 OR name ILIKE $2) AND active = 1 ORDER BY ticker LIMIT $3",
             (f"%{search_term}%", f"%{search_term}%", limit)
         )
 
-    def get_ticker_history(self, ticker: str, limit: int = 10) -> List[Dict]:
+    @handle_errors()
+    async def get_ticker_history(self, ticker: str, limit: int = 10) -> List[Dict]:
         """Get historical changes for a ticker"""
-        return self.execute_query(
-            "SELECT * FROM historical_tickers WHERE ticker = %s ORDER by change_date DESC LIMIT %s",
+        return await self.execute_query(
+            "SELECT * FROM historical_tickers WHERE ticker = $1 ORDER by change_date DESC LIMIT $2",
             (ticker, limit)
         )
 
-    def mark_tickers_inactive(self, tickers: List[str]) -> int:
+    @monitor_performance
+    @handle_errors()
+    async def mark_tickers_inactive(self, tickers: List[str]) -> int:
         """Mark tickers as inactive using bulk operations"""
         if not tickers:
             return 0
             
         marked = 0
         
-        with self.get_connection() as conn:
-            with conn.cursor() as cursor:
-                # Get current data for tickers to be marked inactive
-                placeholders = ','.join(['%s'] * len(tickers))
-                cursor.execute(
-                    f"SELECT * FROM tickers WHERE ticker IN ({placeholders}) AND active = 1", 
-                    tickers
-                )
-                rows = cursor.fetchall()
+        async with self.get_connection() as conn:
+            # Get current data for tickers to be marked inactive
+            rows = await conn.fetch(
+                "SELECT * FROM tickers WHERE ticker = ANY($1) AND active = 1", 
+                tickers
+            )
+            
+            if not rows:
+                return 0
                 
-                if not rows:
-                    return 0
-                    
-                # Use transaction for better performance
-                cursor.execute("BEGIN")
-                
+            # Use transaction for better performance
+            async with conn.transaction():
                 try:
                     # Bulk update to mark as inactive
-                    update_params = [(row[0],) for row in rows]  # Assuming ticker is the first column
-                    cursor.executemany(
-                        "UPDATE tickers SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE ticker = %s",
-                        update_params
+                    update_result = await conn.execute(
+                        "UPDATE tickers SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE ticker = ANY($1)",
+                        tickers
                     )
                     
-                    marked = cursor.rowcount
+                    marked = int(update_result.split()[-1]) if "UPDATE" in update_result else 0
                     
                     # Bulk insert historical records
-                    historical_data = [
-                        (
-                            row[0], row[1], row[2],  # ticker, name, primary_exchange
-                            row[3], row[4], row[5],  # last_updated_utc, type, market
-                            row[6], row[7], 0, 'removed'  # locale, currency_name, active, change_type
-                        ) for row in rows
-                    ]
+                    historical_data = []
+                    for row in rows:
+                        # Convert asyncpg Record to dict
+                        row_dict = dict(row)
+                        historical_data.append((
+                            row_dict['ticker'], row_dict.get('name'), row_dict.get('primary_exchange'), 
+                            row_dict.get('last_updated_utc'), row_dict.get('type'), row_dict.get('market'),
+                            row_dict.get('locale'), row_dict.get('currency_name'), 0, 'removed'
+                        ))
                     
-                    cursor.executemany('''
+                    await conn.executemany(
+                        '''
                         INSERT INTO historical_tickers 
                         (ticker, name, primary_exchange, last_updated_utc, 
                         type, market, locale, currency_name, active, change_type)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ''', historical_data)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                        ''',
+                        historical_data
+                    )
                     
-                    cursor.execute("COMMIT")
-                    
-                except psycopg2.Error as e:
-                    cursor.execute("ROLLBACK")
+                except Exception as e:
                     logger.error(f"Transaction failed during mark inactive: {e}")
-                    raise
+                    raise DatabaseError(f"Transaction failed during mark inactive: {e}")
                 
         return marked
 
-    def get_ticker_details(self, ticker: str) -> Optional[Dict]:
+    @handle_errors()
+    async def get_ticker_details(self, ticker: str) -> Optional[Dict]:
         """Get details for a specific ticker"""
-        result = self.execute_query(
-            "SELECT * FROM tickers WHERE ticker = %s", 
+        result = await self.execute_query(
+            "SELECT * FROM tickers WHERE ticker = $1", 
             (ticker,)
         )
         return result[0] if result else None
-
-    def save_market_regime(self, timestamp: datetime, regime: int, regime_label: str, confidence: float, 
-                        features: Dict, model_version: str) -> int:
-        return self.execute_write(
-            '''INSERT INTO market_regimes 
-            (timestamp, regime, regime_label, confidence, features, model_version) 
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (timestamp) DO UPDATE SET
-            regime = EXCLUDED.regime,
-            regime_label = EXCLUDED.regime_label,
-            confidence = EXCLUDED.confidence,
-            features = EXCLUDED.features,
-            model_version = EXCLUDED.model_version''',
-            (timestamp, regime, regime_label, confidence, json.dumps(features), model_version)
-        )
-
-    def get_latest_regime(self) -> Optional[Dict]:
-        """Get the latest market regime from database"""
-        result = self.execute_query(
-            "SELECT * FROM market_regimes ORDER BY timestamp DESC LIMIT 1"
-        )
-        return result[0] if result else None
-
-    def get_regimes_by_date_range(self, start_date: datetime, end_date: datetime) -> List[Dict]:
-        """Get market regimes within a date range"""
-        return self.execute_query(
-            "SELECT * FROM market_regimes WHERE timestamp BETWEEN %s AND %s ORDER BY timestamp",
-            (start_date, end_date)
-        )
-
-    def save_regime_statistics(self, regime: int, start_date: datetime, end_date: datetime, 
-                            duration_days: int, return_pct: float, volatility: float) -> int:
-        """Save regime statistics to database"""
-        return self.execute_write(
-            '''INSERT INTO regime_statistics 
-            (regime, start_date, end_date, duration_days, return_pct, volatility) 
-            VALUES (%s, %s, %s, %s, %s, %s)''',
-            (regime, start_date, end_date, duration_days, return_pct, volatility)
-        )
-
-    def get_regime_statistics(self, regime: Optional[int] = None) -> List[Dict]:
-        """Get regime statistics, optionally filtered by regime"""
-        if regime is not None:
-            return self.execute_query(
-                "SELECT * FROM regime_statistics WHERE regime = %s ORDER BY start_date",
-                (regime,)
-            )
-        else:
-            return self.execute_query(
-                "SELECT * FROM regime_statistics ORDER BY start_date"
-            )
     
-    def perform_maintenance(self):
-        """Perform database maintenance tasks"""
-        logger.info("Starting database maintenance")
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cursor:
-                    # Analyze tables for query optimization
-                    cursor.execute("ANALYZE")
-                    
-                    # Vacuum to reclaim space and update statistics
-                    cursor.execute("VACUUM ANALYZE")
-                    
-            logger.info("Database maintenance completed successfully")
-        except Exception as e:
-            logger.error(f"Database maintenance failed: {e}")
-    
-    def get_slow_queries(self, threshold_ms=1000, limit=10):
+    @handle_errors()
+    async def get_slow_queries(self, threshold_ms=1000, limit=10):
         """Get slow queries from pg_stat_statements"""
         try:
-            return self.execute_query('''
+            return await self.execute_query('''
                 SELECT 
                     query, 
                     calls, 
@@ -763,71 +709,33 @@ class DatabaseManager:
                     mean_exec_time,
                     rows
                 FROM pg_stat_statements 
-                WHERE mean_exec_time > %s
+                WHERE mean_exec_time > $1
                 ORDER BY mean_exec_time DESC
-                LIMIT %s
+                LIMIT $2
             ''', (threshold_ms, limit))
         except Exception as e:
             logger.error(f"Failed to get slow queries: {e}")
             return []
-    
 
-# ======================== BACKTEST DATABASE MANAGER (OPTIMIZED) ======================== #
-class BacktestDatabaseManager:
+# ======================== BACKTEST DATABASE MANAGER ======================== #
+class BacktestDatabaseManager(BaseDatabaseManager):
+    """Database manager for backtesting operations - Async version"""
+    
     def __init__(self):
-        self.pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=2,  # Increased from 1
-            maxconn=10,  # Increased from 5
-            host=config.POSTGRES_HOST,
-            port=config.POSTGRES_PORT,
-            database=config.POSTGRES_DB,
-            user=config.POSTGRES_USER,
-            password=config.POSTGRES_PASSWORD
-        )
-        self._init_database()
+        # Call the parent class constructor with the correct parameters
+        super().__init__(minconn=5, maxconn=30)
     
-    def _get_connection_from_pool(self):
-        return self.pool.getconn()
-                
-    def _return_connection_to_pool(self, conn):
-        self.pool.putconn(conn)
-    
-    @contextlib.contextmanager
-    def get_connection(self):
-        conn = self._get_connection_from_pool()
-        try:
-            # Validate connection is still open
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT 1")
-            yield conn
-        except psycopg2.Error as e:
-            logger.error(f"Database connection error: {e}")
-            conn.close()
-            # Create a new connection
-            conn = psycopg2.connect(
-                host=config.POSTGRES_HOST,
-                port=config.POSTGRES_PORT,
-                database=config.POSTGRES_DB,
-                user=config.POSTGRES_USER,
-                password=config.POSTGRES_PASSWORD
-            )
-            yield conn
-        finally:
-            self._return_connection_to_pool(conn)
-    
-    def close_all_connections(self):
-        self.pool.closeall()
-    
-    def _init_database(self):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
+    async def _init_database(self):
+        async with self.get_connection() as conn:
+            # Drop and recreate the backtest_tickers table (temporary data)
+            await conn.execute('DROP TABLE IF EXISTS backtest_tickers')
             
-            # Create backtest_tickers table for historical data with year column
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS backtest_tickers (
-                    date TEXT,
-                    year INTEGER,
-                    ticker TEXT,
+            # Create backtest_tickers table for historical data with proper primary key
+            await conn.execute('''
+                CREATE TABLE backtest_tickers (
+                    date TEXT NOT NULL,
+                    year INTEGER NOT NULL,
+                    ticker TEXT NOT NULL,
                     name TEXT,
                     primary_exchange TEXT,
                     last_updated_utc TEXT,
@@ -840,7 +748,7 @@ class BacktestDatabaseManager:
             ''')
             
             # Create backtest_final_results table for storing final backtest results
-            cursor.execute('''
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS backtest_final_results (
                     id SERIAL PRIMARY KEY,
                     run_id TEXT,
@@ -860,123 +768,68 @@ class BacktestDatabaseManager:
                 )
             ''')
             
-            # Create backtest_market_regimes table for historical backtesting with unique constraint
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS backtest_market_regimes (
+            # Create composite_availability table if it doesn't exist
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS composite_availability (
                     id SERIAL PRIMARY KEY,
-                    backtest_date TEXT NOT NULL,
-                    timestamp TIMESTAMP NOT NULL,
-                    regime INTEGER NOT NULL,
-                    regime_label TEXT NOT NULL,
-                    confidence REAL NOT NULL,
-                    features TEXT,
-                    model_version TEXT,
+                    ticker TEXT NOT NULL,
+                    name TEXT,
+                    primary_exchange TEXT,
+                    last_updated_utc TEXT,
+                    type TEXT,
+                    market TEXT,
+                    locale TEXT,
+                    currency_name TEXT,
+                    available_from DATE NOT NULL,
+                    available_until DATE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE (backtest_date, timestamp)
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(ticker, available_from)
                 )
             ''')
             
-            # Create indexes for better performance
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_date ON backtest_tickers(date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_year ON backtest_tickers(year)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_ticker_year ON backtest_tickers(ticker, year)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_dates ON backtest_final_results(start_date, end_date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_years ON backtest_final_results(start_year, end_year)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_ticker ON backtest_final_results(ticker)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_run_id ON backtest_final_results(run_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_regimes_date ON backtest_market_regimes(backtest_date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_backtest_regimes_timestamp ON backtest_market_regimes(timestamp)')
+            # Create indexes for better performance with partial indexes
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_date ON backtest_tickers(date)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_year ON backtest_tickers(year)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_backtest_tickers_ticker_year ON backtest_tickers(ticker, year)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_dates ON backtest_final_results(start_date, end_date)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_years ON backtest_final_results(start_year, end_year)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_ticker ON backtest_final_results(ticker)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_backtest_final_run_id ON backtest_final_results(run_id)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_composite_availability_ticker ON composite_availability(ticker)')
+            await conn.execute('CREATE INDEX IF NOT EXISTS idx_composite_availability_dates ON composite_availability(available_from, available_until) WHERE available_until IS NOT NULL')
             
-            conn.commit()
-
-    def _convert_numpy_types(self, params):
-        """Convert numpy data types to native Python types for database compatibility"""
-        converted_params = []
-        for param in params:
-            if isinstance(param, np.integer):
-                converted_params.append(int(param))
-            elif isinstance(param, np.floating):
-                converted_params.append(float(param))
-            else:
-                converted_params.append(param)
-        return tuple(converted_params)
+            logger.info("Backtest database tables initialized successfully")
             
-    def execute_query(self, query: str, params: tuple = ()) -> List[Dict]:
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                    cursor.execute(query, params)
-                    return cursor.fetchall()
-        except psycopg2.Error as e:
-            logger.error(f"Database query error: {e}, Query: {query}, Params: {params}")
-            return []
-            
-    def execute_write(self, query: str, params: tuple = ()) -> int:
-        try:
-            converted_params = self._convert_numpy_types(params)
-            with self.get_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(query, converted_params)
-                    conn.commit()
-                    return cursor.rowcount
-        except psycopg2.Error as e:
-            logger.error(f"Database write error: {e}, Query: {query}, Params: {converted_params}")
-            return 0
-            
-    def upsert_backtest_tickers(self, tickers: List[Dict], date_str: str) -> int:
+    @monitor_performance
+    @handle_errors()
+    async def upsert_backtest_tickers(self, tickers: List[Dict], date_str: str) -> int:
         if not tickers:
             return 0
             
         year = int(date_str.split('-')[0])  # Extract year from date
-        inserted = 0
         
         # Prepare arrays for bulk operation
-        date_arr = [date_str] * len(tickers)
-        year_arr = [year] * len(tickers)
-        tickers_arr = []
-        names_arr = []
-        primary_exchange_arr = []
-        last_updated_utc_arr = []
-        type_arr = []
-        market_arr = []
-        locale_arr = []
-        currency_name_arr = []
+        dates = [date_str] * len(tickers)
+        years = [year] * len(tickers)
+        ticker_symbols = [t['ticker'] for t in tickers]
+        names = [t.get('name') for t in tickers]
+        primary_exchanges = [t.get('primary_exchange') for t in tickers]
+        last_updated_utcs = [t.get('last_updated_utc') for t in tickers]
+        types = [t.get('type') for t in tickers]
+        markets = [t.get('market') for t in tickers]
+        locales = [t.get('locale') for t in tickers]
+        currency_names = [t.get('currency_name') for t in tickers]
         
-        for t in tickers:
-            tickers_arr.append(t['ticker'])
-            names_arr.append(t.get('name'))
-            primary_exchange_arr.append(t.get('primary_exchange'))
-            last_updated_utc_arr.append(t.get('last_updated_utc'))
-            type_arr.append(t.get('type'))
-            market_arr.append(t.get('market'))
-            locale_arr.append(t.get('locale'))
-            currency_name_arr.append(t.get('currency_name'))
-        
-        with self.get_connection() as conn:
-            with conn.cursor() as cursor:
-                # Use UNNEST for bulk upsert
-                cursor.execute('''
-                    WITH input_data AS (
-                        SELECT 
-                            unnest(%s) AS date,
-                            unnest(%s) AS year,
-                            unnest(%s) AS ticker,
-                            unnest(%s) AS name,
-                            unnest(%s) AS primary_exchange,
-                            unnest(%s) AS last_updated_utc,
-                            unnest(%s) AS type,
-                            unnest(%s) AS market,
-                            unnest(%s) AS locale,
-                            unnest(%s) AS currency_name
-                    )
-                    INSERT INTO backtest_tickers 
-                    (date, year, ticker, name, primary_exchange, last_updated_utc, 
-                     type, market, locale, currency_name)
-                    SELECT 
-                        i.date, i.year, i.ticker, i.name, i.primary_exchange, i.last_updated_utc,
-                        i.type, i.market, i.locale, i.currency_name
-                    FROM input_data i
-                    ON CONFLICT (date, ticker) DO UPDATE SET
+        async with self.get_connection() as conn:
+            result = await conn.execute('''
+                INSERT INTO backtest_tickers 
+                (date, year, ticker, name, primary_exchange, last_updated_utc, 
+                 type, market, locale, currency_name)
+                SELECT 
+                    unnest($1::text[]), unnest($2::int[]), unnest($3::text[]), unnest($4::text[]), unnest($5::text[]),
+                    unnest($6::text[]), unnest($7::text[]), unnest($8::text[]), unnest($9::text[]), unnest($10::text[])
+                ON CONFLICT (date, ticker) DO UPDATE SET
                     name = EXCLUDED.name,
                     primary_exchange = EXCLUDED.primary_exchange,
                     last_updated_utc = EXCLUDED.last_updated_utc,
@@ -984,41 +837,44 @@ class BacktestDatabaseManager:
                     market = EXCLUDED.market,
                     locale = EXCLUDED.locale,
                     currency_name = EXCLUDED.currency_name
-                ''', (
-                    date_arr, year_arr, tickers_arr, names_arr, primary_exchange_arr,
-                    last_updated_utc_arr, type_arr, market_arr, locale_arr, currency_name_arr
-                ))
-                
-                inserted = cursor.rowcount
-                conn.commit()
+            ''', (
+                dates, years, ticker_symbols, names, primary_exchanges,
+                last_updated_utcs, types, markets, locales, currency_names
+            ))
             
-        return inserted
+            return len(tickers)
         
-    def get_backtest_tickers(self, date_str: str) -> List[Dict]:
-        return self.execute_query(
-            "SELECT * FROM backtest_tickers WHERE date = %s ORDER BY ticker",
+    @handle_errors()
+    async def get_backtest_tickers(self, date_str: str) -> List[Dict]:
+        return await self.execute_query(
+            "SELECT * FROM backtest_tickers WHERE date = $1 ORDER BY ticker",
             (date_str,)
         )
         
-    def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
-        return self.execute_query(
-            "SELECT * FROM backtest_tickers WHERE year = %s ORDER BY date, ticker",
+    @handle_errors()
+    async def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
+        return await self.execute_query(
+            "SELECT * FROM backtest_tickers WHERE year = $1 ORDER BY date, ticker",
             (year,)
         )
         
-    def get_backtest_dates(self) -> List[str]:
-        result = self.execute_query(
+    @handle_errors()
+    async def get_backtest_dates(self) -> List[str]:
+        result = await self.execute_query(
             "SELECT DISTINCT date FROM backtest_tickers ORDER BY date"
         )
         return [row['date'] for row in result]
         
-    def get_backtest_years(self) -> List[int]:
-        result = self.execute_query(
+    @handle_errors()
+    async def get_backtest_years(self) -> List[int]:
+        result = await self.execute_query(
             "SELECT DISTINCT year FROM backtest_tickers ORDER BY year"
         )
         return [row['year'] for row in result]
         
-    def upsert_backtest_final_results(self, tickers_data: List[Dict], start_date: str, end_date: str, run_id: str = "default") -> int:
+    @monitor_performance
+    @handle_errors()
+    async def upsert_backtest_final_results(self, tickers_data: List[Dict], start_date: str, end_date: str, run_id: str = "default") -> int:
         if not tickers_data:
             return 0
             
@@ -1026,124 +882,1136 @@ class BacktestDatabaseManager:
         start_year = int(start_date.split('-')[0])
         end_year = int(end_date.split('-')[0])
         
-        # Prepare arrays for bulk operation
-        run_id_arr = [run_id] * len(tickers_data)
-        start_date_arr = [start_date] * len(tickers_data)
-        end_date_arr = [end_date] * len(tickers_data)
-        start_year_arr = [start_year] * len(tickers_data)
-        end_year_arr = [end_year] * len(tickers_data)
-        tickers_arr = []
-        names_arr = []
-        primary_exchange_arr = []
-        last_updated_utc_arr = []
-        type_arr = []
-        market_arr = []
-        locale_arr = []
-        currency_name_arr = []
-        
-        for t in tickers_data:
-            tickers_arr.append(t['ticker'])
-            names_arr.append(t.get('name'))
-            primary_exchange_arr.append(t.get('primary_exchange'))
-            last_updated_utc_arr.append(t.get('last_updated_utc'))
-            type_arr.append(t.get('type'))
-            market_arr.append(t.get('market'))
-            locale_arr.append(t.get('locale'))
-            currency_name_arr.append(t.get('currency_name'))
-        
-        with self.get_connection() as conn:
-            with conn.cursor() as cursor:
-                # Only delete existing results for this specific run_id and date range
-                cursor.execute(
-                    "DELETE FROM backtest_final_results WHERE start_date = %s AND end_date = %s AND run_id = %s",
-                    (start_date, end_date, run_id)
-                )
-                
-                # Use UNNEST for bulk insert
-                cursor.execute('''
-                    INSERT INTO backtest_final_results 
-                    (run_id, start_date, end_date, start_year, end_year, ticker, name, primary_exchange, last_updated_utc, 
-                     type, market, locale, currency_name)
-                    SELECT 
-                        unnest(%s), unnest(%s), unnest(%s), unnest(%s), unnest(%s),
-                        unnest(%s), unnest(%s), unnest(%s), unnest(%s), unnest(%s),
-                        unnest(%s), unnest(%s), unnest(%s)
-                ''', (
-                    run_id_arr, start_date_arr, end_date_arr, start_year_arr, end_year_arr,
-                    tickers_arr, names_arr, primary_exchange_arr, last_updated_utc_arr,
-                    type_arr, market_arr, locale_arr, currency_name_arr
-                ))
-                
-                inserted = cursor.rowcount
-                conn.commit()
+        async with self.get_connection() as conn:
+            # Delete existing results for this specific run_id and date range
+            await conn.execute(
+                "DELETE FROM backtest_final_results WHERE start_date = $1 AND end_date = $2 AND run_id = $3",
+                start_date, end_date, run_id
+            )
+            
+            # Prepare arrays for bulk operation
+            run_ids = [run_id] * len(tickers_data)
+            start_dates = [start_date] * len(tickers_data)
+            end_dates = [end_date] * len(tickers_data)
+            start_years = [start_year] * len(tickers_data)
+            end_years = [end_year] * len(tickers_data)
+            ticker_symbols = [t['ticker'] for t in tickers_data]
+            names = [t.get('name') for t in tickers_data]
+            primary_exchanges = [t.get('primary_exchange') for t in tickers_data]
+            last_updated_utcs = [t.get('last_updated_utc') for t in tickers_data]
+            types = [t.get('type') for t in tickers_data]
+            markets = [t.get('market') for t in tickers_data]
+            locales = [t.get('locale') for t in tickers_data]
+            currency_names = [t.get('currency_name') for t in tickers_data]
+            
+            # Use execute many for bulk insert
+            data_tuples = list(zip(
+                run_ids, start_dates, end_dates, start_years, end_years,
+                ticker_symbols, names, primary_exchanges, last_updated_utcs,
+                types, markets, locales, currency_names
+            ))
+            
+            await conn.executemany(
+                '''
+                INSERT INTO backtest_final_results 
+                (run_id, start_date, end_date, start_year, end_year, ticker, name, primary_exchange, last_updated_utc, 
+                 type, market, locale, currency_name)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                ''',
+                data_tuples
+            )
+            
+            # We don't have a direct row count from executemany, so we'll use the input length
+            inserted = len(tickers_data)
             
         return inserted
         
-    def get_backtest_final_results(self, start_date: str, end_date: str, run_id: str = "default") -> List[Dict]:
-        return self.execute_query(
-            "SELECT * FROM backtest_final_results WHERE start_date = %s AND end_date = %s AND run_id = %s ORDER BY ticker",
-            (start_date, end_date, run_id)
+    @handle_errors()
+    async def get_backtest_final_results(self, start_date: str, end_date: str, run_id: str = "default") -> List[Dict]:
+        return await self.execute_query(
+            "SELECT * FROM backtest_final_results WHERE start_date = $1 AND end_date = $2 AND run_id = $3 ORDER BY ticker",
+            start_date, end_date, run_id
         )
         
-    def get_backtest_final_results_by_year(self, year: int, run_id: str = "default") -> List[Dict]:
-        return self.execute_query(
-            "SELECT * FROM backtest_final_results WHERE start_year <= %s AND end_year >= %s AND run_id = %s ORDER BY ticker",
-            (year, year, run_id)
+    @handle_errors()
+    async def get_backtest_final_results_by_year(self, year: int, run_id: str = "default") -> List[Dict]:
+        return await self.execute_query(
+            "SELECT * FROM backtest_final_results WHERE start_year <= $1 AND end_year >= $2 AND run_id = $3 ORDER BY ticker",
+            year, year, run_id
         )
         
-    def get_all_backtest_runs(self) -> List[Dict]:
-        return self.execute_query(
+    @handle_errors()
+    async def get_all_backtest_runs(self) -> List[Dict]:
+        return await self.execute_query(
             "SELECT DISTINCT run_id, start_date, end_date, start_year, end_year FROM backtest_final_results ORDER BY start_date, end_date"
         )
         
-    def get_backtest_runs_by_date_range(self, start_date: str, end_date: str) -> List[Dict]:
-        return self.execute_query(
-            "SELECT DISTINCT run_id, start_date, end_date, start_year, end_year FROM backtest_final_results WHERE start_date = %s AND end_date = %s ORDER BY run_id",
-            (start_date, end_date)
-        )
-    
-    def save_backtest_market_regime(self, backtest_date: str, timestamp: datetime, regime: int, 
-                                regime_label: str, confidence: float, features: Dict, model_version: str) -> int:
-        return self.execute_write(
-            '''INSERT INTO backtest_market_regimes 
-            (backtest_date, timestamp, regime, regime_label, confidence, features, model_version) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (backtest_date, timestamp) DO UPDATE SET
-            regime = EXCLUDED.regime,
-            regime_label = EXCLUDED.regime_label,
-            confidence = EXCLUDED.confidence,
-            features = EXCLUDED.features,
-            model_version = EXCLUDED.model_version''',
-            (backtest_date, timestamp, regime, regime_label, confidence, json.dumps(features), model_version)
+    @handle_errors()
+    async def get_backtest_runs_by_date_range(self, start_date: str, end_date: str) -> List[Dict]:
+        return await self.execute_query(
+            "SELECT DISTINCT run_id, start_date, end_date, start_year, end_year FROM backtest_final_results WHERE start_date = $1 AND end_date = $2 ORDER BY run_id",
+            start_date, end_date
         )
         
-    def get_backtest_regimes_by_date(self, backtest_date: str) -> List[Dict]:
-        return self.execute_query(
-            "SELECT * FROM backtest_market_regimes WHERE backtest_date = %s ORDER BY timestamp",
-            (backtest_date,)
-        )
-        
-    def get_backtest_dates(self) -> List[str]:
-        result = self.execute_query(
-            "SELECT DISTINCT backtest_date FROM backtest_market_regimes ORDER BY backtest_date"
-        )
-        return [row['backtest_date'] for row in result]
+    @handle_errors()
+    async def upsert_composite_availability(self, ticker_data: Dict, available_from: date, available_until: date = None) -> int:
+        """Upsert a ticker's availability in the composite index"""
+        return await self.execute_write('''
+            INSERT INTO composite_availability 
+            (ticker, name, primary_exchange, last_updated_utc, type, market, locale, currency_name, available_from, available_until)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (ticker, available_from) 
+            DO UPDATE SET
+                name = EXCLUDED.name,
+                primary_exchange = EXCLUDED.primary_exchange,
+                last_updated_utc = EXCLUDED.last_updated_utc,
+                type = EXCLUDED.type,
+                market = EXCLUDED.market,
+                locale = EXCLUDED.locale,
+                currency_name = EXCLUDED.currency_name,
+                available_until = EXCLUDED.available_until,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (
+            ticker_data['ticker'],
+            ticker_data.get('name'),
+            ticker_data.get('primary_exchange'),
+            ticker_data.get('last_updated_utc'),
+            ticker_data.get('type'),
+            ticker_data.get('market'),
+            ticker_data.get('locale'),
+            ticker_data.get('currency_name'),
+            available_from,
+            available_until
+        ))
     
-    def perform_maintenance(self):
-        """Perform database maintenance tasks"""
-        logger.info("Starting backtest database maintenance")
+    @handle_errors()
+    async def get_composite_availability(self, ticker: str = None, start_date: str = None, end_date: str = None) -> List[Dict]:
+        """Get composite availability for tickers, optionally filtered by ticker and date range"""
+        query = "SELECT * FROM composite_availability WHERE 1=1"
+        params = []
+        
+        if ticker:
+            query += " AND ticker = $1"
+            params.append(ticker)
+        
+        if start_date:
+            query += " AND (available_until IS NULL OR available_until >= $2)"
+            params.append(start_date)
+        
+        if end_date:
+            query += " AND available_from <= $3"
+            params.append(end_date)
+        
+        query += " ORDER BY ticker, available_from"
+        
+        return await self.execute_query(query, *params)
+    
+    @handle_errors()
+    async def get_tickers_available_in_range(self, start_date: str, end_date: str) -> List[Dict]:
+        """Get all tickers that were available in the composite during the entire date range"""
+        return await self.execute_query('''
+            SELECT DISTINCT ON (ticker) *
+            FROM composite_availability 
+            WHERE available_from <= $1 AND (available_until IS NULL OR available_until >= $2)
+            ORDER BY ticker, available_from
+        ''', start_date, end_date)
+    
+    @monitor_performance
+    @handle_errors()
+    async def update_availability_period(self, start_date: str, end_date: str, run_id: str = "default") -> int:
+        """
+        Update the composite_availability table based on backtest results
+        This will set available_from and available_until based on the backtest period
+        """
+        # First, get all tickers from the backtest_final_results for this run
+        final_tickers = await self.get_backtest_final_results(start_date, end_date, run_id)
+        
+        if not final_tickers:
+            return 0
+        
+        # Convert string dates to date objects
+        start_date_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date()
+        
+        # Prepare arrays for bulk operation
+        tickers = []
+        names = []
+        primary_exchanges = []
+        last_updated_utcs = []
+        types = []
+        markets = []
+        locales = []
+        currency_names = []
+        available_froms = []
+        available_untils = []
+        
+        for ticker_data in final_tickers:
+            tickers.append(ticker_data['ticker'])
+            names.append(ticker_data.get('name'))
+            primary_exchanges.append(ticker_data.get('primary_exchange'))
+            last_updated_utcs.append(ticker_data.get('last_updated_utc'))
+            types.append(ticker_data.get('type'))
+            markets.append(ticker_data.get('market'))
+            locales.append(ticker_data.get('locale'))
+            currency_names.append(ticker_data.get('currency_name'))
+            available_froms.append(start_date_obj)
+            available_untils.append(end_date_obj)
+        
+        updated_count = 0
+        
+        # Use execute many for bulk operation
         try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cursor:
-                    # Analyze tables for query optimization
-                    cursor.execute("ANALYZE backtest_tickers, backtest_final_results, backtest_market_regimes")
-                    
-                    # Vacuum to reclaim space and update statistics
-                    cursor.execute("VACUUM ANALYZE backtest_tickers, backtest_final_results, backtest_market_regimes")
-                    
-            logger.info("Backtest database maintenance completed successfully")
+            async with self.get_connection() as conn:
+                data_tuples = list(zip(
+                    tickers, names, primary_exchanges, last_updated_utcs, types,
+                    markets, locales, currency_names, available_froms, available_untils
+                ))
+                
+                await conn.executemany(
+                    '''
+                    INSERT INTO composite_availability 
+                    (ticker, name, primary_exchange, last_updated_utc, type, market, locale, currency_name, available_from, available_until)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    ON CONFLICT (ticker, available_from) 
+                    DO UPDATE SET
+                        name = EXCLUDED.name,
+                        primary_exchange = EXCLUDED.primary_exchange,
+                        last_updated_utc = EXCLUDED.last_updated_utc,
+                        type = EXCLUDED.type,
+                        market = EXCLUDED.market,
+                        locale = EXCLUDED.locale,
+                        currency_name = EXCLUDED.currency_name,
+                        available_until = EXCLUDED.available_until,
+                        updated_at = CURRENT_TIMESTAMP
+                    ''',
+                    data_tuples
+                )
+                
+                updated_count = len(data_tuples)
         except Exception as e:
-            logger.error(f"Backtest database maintenance failed: {e}")
+            logger.error(f"Database error during bulk availability update: {e}")
+            # Fall back to individual inserts if bulk operation fails
+            updated_count = await self._update_availability_individual(final_tickers, start_date_obj, end_date_obj)
+        
+        return updated_count
+
+    async def _update_availability_individual(self, tickers_data: List[Dict], start_date: date, end_date: date) -> int:
+        """Fallback method to update availability one by one"""
+        updated_count = 0
+        for ticker_data in tickers_data:
+            try:
+                result = await self.upsert_composite_availability(ticker_data, start_date, end_date)
+                if result:
+                    updated_count += 1
+            except Exception as e:
+                logger.error(f"Failed to update availability for {ticker_data.get('ticker', 'unknown')}: {e}")
+        
+        return updated_count
+
+# ======================== DATA PROVIDERS ======================== #
+class PolygonDataProvider:
+    """Polygon.io data provider for historical and real-time data"""
+    
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.client = RESTClient(api_key)
+        self.rate_limit_delay = config.RATE_LIMIT_DELAY
+        
+    @handle_errors(max_retries=3, retry_delay=1)
+    async def get_historical_bars(self, symbol: str, timeframe: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """Get historical bar data from Polygon"""
+        logger.info(f"Fetching historical data for {symbol} from {start_date} to {end_date}")
+        
+        # Convert timeframe to Polygon format
+        timeframe_map = {
+            '1min': 'minute',
+            '5min': 'minute', 
+            '15min': 'minute',
+            '1h': 'hour',
+            '1day': 'day'
+        }
+        
+        timespan = timeframe_map.get(timeframe, 'day')
+        multiplier = 1
+        
+        if timeframe == '5min':
+            multiplier = 5
+        elif timeframe == '15min':
+            multiplier = 15
+            
+        try:
+            # Polygon REST client is synchronous, so we run in thread pool
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as executor:
+                aggs = await loop.run_in_executor(
+                    executor, 
+                    lambda: list(self.client.get_aggs(
+                        symbol, 
+                        multiplier, 
+                        timespan, 
+                        start_date, 
+                        end_date,
+                        limit=50000
+                    ))
+                )
+            
+            if not aggs:
+                logger.warning(f"No data returned for {symbol}")
+                return pd.DataFrame()
+                
+            # Convert to DataFrame
+            df = pd.DataFrame([{
+                'timestamp': pd.to_datetime(agg.timestamp, unit='ms'),
+                'open': agg.open,
+                'high': agg.high, 
+                'low': agg.low,
+                'close': agg.close,
+                'volume': agg.volume
+            } for agg in aggs])
+            
+            if df.empty:
+                return df
+                
+            df.set_index('timestamp', inplace=True)
+            df.sort_index(inplace=True)
+            
+            logger.info(f"Retrieved {len(df)} bars for {symbol}")
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error fetching historical data for {symbol}: {e}")
+            raise APIError(f"Failed to fetch historical data for {symbol}: {e}")
+    
+    @handle_errors(max_retries=3, retry_delay=1)        
+    async def get_real_time_quote(self, symbol: str) -> Dict[str, Any]:
+        """Get real-time quote from Polygon"""
+        try:
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as executor:
+                quote = await loop.run_in_executor(
+                    executor,
+                    lambda: self.client.get_last_quote(symbol)
+                )
+            
+            return {
+                'symbol': symbol,
+                'bid_price': quote.bidprice,
+                'bid_size': quote.bidsize,
+                'ask_price': quote.askprice,
+                'ask_size': quote.asksize,
+                'timestamp': quote.timestamp
+            }
+        except Exception as e:
+            logger.error(f"Error fetching real-time quote for {symbol}: {e}")
+            raise APIError(f"Failed to fetch quote for {symbol}: {e}")
+
+class AlpacaTrading:
+    """Alpaca trading interface for paper and live trading"""
+    
+    def __init__(self):
+        self.api_key = config.ALPACA_API_KEY
+        self.secret_key = config.ALPACA_SECRET_KEY
+        self.base_url = config.ALPACA_BASE_URL
+        self.api = tradeapi.REST(self.api_key, self.secret_key, self.base_url)
+        self.performance_metrics = {}
+        
+    @handle_errors(max_retries=3, retry_delay=1)
+    async def place_order(self, symbol: str, qty: int, side: str, order_type: str = 'market', 
+                         time_in_force: str = 'day', stop_loss: float = None, take_profit: float = None) -> Dict[str, Any]:
+        """Place an order through Alpaca"""
+        try:
+            loop = asyncio.get_event_loop()
+            
+            # For bracket orders (stop loss + take profit)
+            if stop_loss and take_profit:
+                order = await loop.run_in_executor(
+                    None,
+                    lambda: self.api.submit_order(
+                        symbol=symbol,
+                        qty=qty,
+                        side=side,
+                        type=order_type,
+                        time_in_force=time_in_force,
+                        order_class='bracket',
+                        stop_loss={'stop_price': stop_loss},
+                        take_profit={'limit_price': take_profit}
+                    )
+                )
+            else:
+                order = await loop.run_in_executor(
+                    None,
+                    lambda: self.api.submit_order(
+                        symbol=symbol,
+                        qty=qty,
+                        side=side,
+                        type=order_type,
+                        time_in_force=time_in_force
+                    )
+                )
+            
+            logger.info(f"Order placed: {side} {qty} {symbol} at {order_type}")
+            return {
+                'order_id': order.id,
+                'symbol': symbol,
+                'qty': qty,
+                'side': side,
+                'status': order.status,
+                'submitted_at': order.submitted_at
+            }
+            
+        except Exception as e:
+            logger.error(f"Error placing order for {symbol}: {e}")
+            raise TradingError(f"Failed to place order for {symbol}: {e}")
+    
+    @handle_errors(max_retries=3, retry_delay=1)
+    async def get_account_info(self) -> Dict[str, Any]:
+        """Get account information from Alpaca"""
+        try:
+            loop = asyncio.get_event_loop()
+            account = await loop.run_in_executor(None, self.api.get_account)
+            
+            return {
+                'buying_power': float(account.buying_power),
+                'portfolio_value': float(account.portfolio_value),
+                'cash': float(account.cash),
+                'day_trading_count': int(account.day_trade_count),
+                'account_blocked': account.account_blocked,
+                'trading_blocked': account.trading_blocked
+            }
+        except Exception as e:
+            logger.error(f"Error fetching account info: {e}")
+            raise TradingError(f"Failed to fetch account info: {e}")
+    
+    @handle_errors(max_retries=3, retry_delay=1)
+    async def get_positions(self) -> List[Dict[str, Any]]:
+        """Get current positions from Alpaca"""
+        try:
+            loop = asyncio.get_event_loop()
+            positions = await loop.run_in_executor(None, self.api.list_positions)
+            
+            return [{
+                'symbol': pos.symbol,
+                'qty': int(pos.qty),
+                'avg_entry_price': float(pos.avg_entry_price),
+                'current_price': float(pos.current_price),
+                'unrealized_pl': float(pos.unrealized_pl),
+                'side': 'long' if int(pos.qty) > 0 else 'short'
+            } for pos in positions]
+        except Exception as e:
+            logger.error(f"Error fetching positions: {e}")
+            raise TradingError(f"Failed to fetch positions: {e}")
+
+# ======================== STRATEGY CORE ======================== #
+class SignalType(Enum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+    NEUTRAL = "NEUTRAL"
+
+@dataclass
+class StrategySignal:
+    ticker: str
+    signal_type: SignalType
+    score: float
+    entry_price: float
+    stop_loss: float
+    take_profit: float
+    confidence: float
+    trend_strength: float
+    mean_reversion_strength: float
+    volume_confirmation: float
+    timestamp: str
+    position_size: float = 0.0
+
+class HybridStrategy:
+    """
+    Hybrid Trend Following + Mean Reversion Strategy
+    Uses trend for direction and mean reversion for entry timing
+    """
+    
+    def __init__(self, config: Dict[str, Any] = None):
+        self.config = config or self._get_default_config()
+        self.performance_metrics = {}
+        
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Get default strategy configuration"""
+        return {
+            # Trend Following Parameters
+            'trend_ema_fast': 20,
+            'trend_ema_slow': 50,
+            'trend_adx_period': 14,
+            'min_trend_strength': 25,  # ADX threshold
+            
+            # Mean Reversion Parameters
+            'mean_reversion_rsi_period': 14,
+            'rsi_oversold': 30,
+            'rsi_overbought': 70,
+            'bollinger_period': 20,
+            'bollinger_std': 2,
+            
+            # Volatility Parameters
+            'atr_period': 14,
+            'stop_loss_atr_multiplier': 1.5,
+            'take_profit_atr_multiplier': 2.5,
+            
+            # Volume Confirmation
+            'volume_ma_period': 20,
+            'min_volume_ratio': 1.2,
+            
+            # Risk Management
+            'max_position_score': 100,
+            'min_confidence': 0.6,
+            'max_daily_trades': 10,
+            
+            # Scoring Weights
+            'weight_trend_strength': 0.3,
+            'weight_mean_reversion': 0.4,
+            'weight_volume': 0.2,
+            'weight_volatility': 0.1
+        }
+    
+    @monitor_performance
+    def calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate all technical indicators needed for the strategy
+        """
+        if len(df) < max(self.config['trend_ema_slow'], self.config['bollinger_period'], self.config['atr_period']):
+            return df
+            
+        # Ensure we have the right column names
+        required_cols = ['open', 'high', 'low', 'close', 'volume']
+        if not all(col in df.columns for col in required_cols):
+            logger.warning("DataFrame missing required columns")
+            return df
+        
+        close = df['close'].values
+        high = df['high'].values
+        low = df['low'].values
+        volume = df['volume'].values
+        
+        try:
+            # Trend Following Indicators
+            df['ema_fast'] = talib.EMA(close, timeperiod=self.config['trend_ema_fast'])
+            df['ema_slow'] = talib.EMA(close, timeperiod=self.config['trend_ema_slow'])
+            df['adx'] = talib.ADX(high, low, close, timeperiod=self.config['trend_adx_period'])
+            
+            # Mean Reversion Indicators
+            df['rsi'] = talib.RSI(close, timeperiod=self.config['mean_reversion_rsi_period'])
+            df['bb_upper'], df['bb_middle'], df['bb_lower'] = talib.BBANDS(
+                close, 
+                timeperiod=self.config['bollinger_period'],
+                nbdevup=self.config['bollinger_std'],
+                nbdevdn=self.config['bollinger_std']
+            )
+            
+            # Volatility Indicators
+            df['atr'] = talib.ATR(high, low, close, timeperiod=self.config['atr_period'])
+            
+            # Volume Indicators
+            df['volume_ma'] = talib.SMA(volume, timeperiod=self.config['volume_ma_period'])
+            df['volume_ratio'] = volume / df['volume_ma']
+            
+            # Derived Metrics
+            df['trend_direction'] = np.where(df['ema_fast'] > df['ema_slow'], 1, -1)
+            df['bb_position'] = (close - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+            
+        except Exception as e:
+            logger.error(f"Error calculating technical indicators: {e}")
+            
+        return df
+    
+    @monitor_performance
+    def calculate_signal_score(self, df: pd.DataFrame) -> Dict[str, float]:
+        """
+        Calculate signal score for the latest data point
+        """
+        if len(df) < 2:
+            return {'signal': SignalType.NEUTRAL, 'score': 0, 'confidence': 0}
+            
+        latest = df.iloc[-1]
+        
+        # Check if we have valid indicator data
+        required_indicators = ['ema_fast', 'ema_slow', 'rsi', 'adx', 'atr', 'volume_ratio']
+        if any(pd.isna(latest.get(col, np.nan)) for col in required_indicators):
+            return {'signal': SignalType.NEUTRAL, 'score': 0, 'confidence': 0}
+        
+        # Initialize scores
+        trend_score = 0
+        mean_reversion_score = 0
+        volume_score = 0
+        volatility_score = 0
+        
+        # 1. Trend Strength Scoring
+        trend_strength = min(latest['adx'] / 100, 1.0)  # Normalize to 0-1
+        trend_score = trend_strength * self.config['weight_trend_strength']
+        
+        # 2. Mean Reversion Scoring
+        # For long signals in uptrend
+        if latest['trend_direction'] > 0:
+            rsi_score = max((self.config['rsi_oversold'] - latest['rsi']) / self.config['rsi_oversold'], 0)
+            bb_score = max((0.5 - latest['bb_position']) / 0.5, 0)  # Prefer lower BB position
+        # For short signals in downtrend
+        else:
+            rsi_score = max((latest['rsi'] - self.config['rsi_overbought']) / (100 - self.config['rsi_overbought']), 0)
+            bb_score = max((latest['bb_position'] - 0.5) / 0.5, 0)  # Prefer higher BB position
+        
+        mean_reversion_score = (rsi_score * 0.6 + bb_score * 0.4) * self.config['weight_mean_reversion']
+        
+        # 3. Volume Confirmation Scoring
+        volume_score = min(latest['volume_ratio'] / 3, 1.0) * self.config['weight_volume']
+        
+        # 4. Volatility Scoring (prefer medium volatility)
+        atr_pct = latest['atr'] / latest['close']
+        # Ideal ATR% is around 2-3%, score peaks there
+        if atr_pct < 0.02:
+            volatility_score = (atr_pct / 0.02) * self.config['weight_volatility']
+        else:
+            volatility_score = max(0, 1 - (atr_pct - 0.03) / 0.05) * self.config['weight_volatility']
+        
+        total_score = trend_score + mean_reversion_score + volume_score + volatility_score
+        confidence = min(total_score / (self.config['weight_trend_strength'] + self.config['weight_mean_reversion']), 1.0)
+        
+        return {
+            'trend_score': trend_score,
+            'mean_reversion_score': mean_reversion_score,
+            'volume_score': volume_score,
+            'volatility_score': volatility_score,
+            'total_score': total_score,
+            'confidence': confidence,
+            'trend_strength': trend_strength,
+            'mean_reversion_strength': mean_reversion_score / self.config['weight_mean_reversion'] if self.config['weight_mean_reversion'] > 0 else 0
+        }
+    
+    @monitor_performance
+    def generate_signal(self, ticker: str, df: pd.DataFrame) -> Optional[StrategySignal]:
+        """
+        Generate trading signal for a specific ticker
+        """
+        if len(df) < max(self.config['trend_ema_slow'], self.config['bollinger_period']):
+            return None
+            
+        # Calculate indicators
+        df_with_indicators = self.calculate_technical_indicators(df)
+        
+        # Get latest data
+        latest = df_with_indicators.iloc[-1]
+        
+        # Check if we have valid indicator data
+        required_indicators = ['ema_fast', 'ema_slow', 'rsi', 'adx', 'atr', 'volume_ratio']
+        if any(pd.isna(latest.get(col, np.nan)) for col in required_indicators):
+            return None
+        
+        # Calculate scores
+        score_data = self.calculate_signal_score(df_with_indicators)
+        
+        # Minimum confidence check
+        if score_data['confidence'] < self.config['min_confidence']:
+            return None
+        
+        # Trend strength check
+        if score_data['trend_strength'] * 100 < self.config['min_trend_strength']:
+            return None
+        
+        # Determine signal type based on trend direction
+        signal_type = SignalType.LONG if latest['trend_direction'] > 0 else SignalType.SHORT
+        
+        # Calculate position sizing and risk management
+        current_price = latest['close']
+        atr = latest['atr']
+        
+        if signal_type == SignalType.LONG:
+            stop_loss = current_price - (atr * self.config['stop_loss_atr_multiplier'])
+            take_profit = current_price + (atr * self.config['take_profit_atr_multiplier'])
+        else:  # SHORT
+            stop_loss = current_price + (atr * self.config['stop_loss_atr_multiplier'])
+            take_profit = current_price - (atr * self.config['take_profit_atr_multiplier'])
+        
+        # Volume confirmation
+        volume_confirmation = min(latest['volume_ratio'] / 2, 1.0) if pd.notna(latest['volume_ratio']) else 0.5
+        
+        return StrategySignal(
+            ticker=ticker,
+            signal_type=signal_type,
+            score=score_data['total_score'],
+            entry_price=current_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            confidence=score_data['confidence'],
+            trend_strength=score_data['trend_strength'],
+            mean_reversion_strength=score_data['mean_reversion_strength'],
+            volume_confirmation=volume_confirmation,
+            timestamp=df.index[-1].strftime('%Y-%m-%d %H:%M:%S')
+        )
+
+# ======================== PORTFOLIO OPTIMIZER ======================== #
+class PortfolioOptimizer:
+    """
+    Portfolio optimization and risk management for the hybrid strategy
+    """
+    
+    def __init__(self, config: Dict[str, Any] = None):
+        self.config = config or self._get_default_config()
+        
+    def _get_default_config(self) -> Dict[str, Any]:
+        return {
+            'max_positions': 10,
+            'max_sector_exposure': 0.3,  # 30% per sector
+            'max_position_size': 0.1,    # 10% per position
+            'max_daily_loss': 0.02,      # 2% max daily loss
+            'target_daily_return': 0.005, # 0.5% target daily return
+            'correlation_threshold': 0.7,
+            'min_diversification': 5
+        }
+    
+    @monitor_performance
+    def optimize_portfolio_allocation(self, signals: List[StrategySignal], 
+                                    current_positions: Dict[str, float],
+                                    sector_data: Dict[str, str] = None) -> List[StrategySignal]:
+        """
+        Optimize portfolio allocation based on signals and current positions
+        """
+        if not signals:
+            return []
+        
+        # Sort signals by score (descending)
+        sorted_signals = sorted(signals, key=lambda x: x.score, reverse=True)
+        
+        # Apply position limits
+        max_new_positions = self.config['max_positions'] - len(current_positions)
+        if max_new_positions <= 0:
+            return []
+        
+        candidate_signals = sorted_signals[:max_new_positions]
+        
+        # Apply sector diversification if sector data available
+        if sector_data:
+            candidate_signals = self._apply_sector_diversification(candidate_signals, sector_data)
+        
+        # Calculate position sizes based on confidence and risk
+        optimized_signals = self._calculate_position_sizes(candidate_signals)
+        
+        return optimized_signals
+    
+    def _apply_sector_diversification(self, signals: List[StrategySignal], 
+                                    sector_data: Dict[str, str]) -> List[StrategySignal]:
+        """Apply sector diversification rules"""
+        sector_counts = {}
+        diversified_signals = []
+        
+        for signal in signals:
+            sector = sector_data.get(signal.ticker, 'Unknown')
+            sector_counts[sector] = sector_counts.get(sector, 0) + 1
+            
+            # Check sector exposure limit
+            if sector_counts[sector] <= self.config['max_sector_exposure'] * self.config['max_positions']:
+                diversified_signals.append(signal)
+            
+            if len(diversified_signals) >= self.config['min_diversification']:
+                break
+        
+        return diversified_signals
+    
+    def _calculate_position_sizes(self, signals: List[StrategySignal]) -> List[StrategySignal]:
+        """Calculate position sizes based on signal strength and risk"""
+        total_score = sum(signal.score for signal in signals)
+        
+        for signal in signals:
+            # Position size proportional to signal score
+            position_size = (signal.score / total_score) * self.config['max_position_size'] if total_score > 0 else 0
+            # Adjust for confidence
+            position_size *= signal.confidence
+            signal.position_size = min(position_size, self.config['max_position_size'])
+        
+        return signals
+
+# ======================== BACKTESTING ENGINE ======================== #
+class BacktestEngine:
+    """
+    Backtesting engine using Backtrader with Polygon data
+    """
+    
+    def __init__(self, polygon_provider: PolygonDataProvider, initial_capital: float = 100000.0):
+        self.polygon_provider = polygon_provider
+        self.initial_capital = initial_capital
+        self.cerebro = bt.Cerebro()
+        self.cerebro.broker.setcash(initial_capital)
+        self.cerebro.broker.setcommission(commission=0.001)  # 0.1% commission
+        
+    class HybridStrategyBT(bt.Strategy):
+        """Backtrader implementation of the hybrid strategy"""
+        
+        def __init__(self):
+            # Trend indicators
+            self.ema_fast = bt.indicators.EMA(self.data.close, period=20)
+            self.ema_slow = bt.indicators.EMA(self.data.close, period=50)
+            self.adx = bt.indicators.ADX(self.data.high, self.data.low, self.data.close, period=14)
+            
+            # Mean reversion indicators
+            self.rsi = bt.indicators.RSI(self.data.close, period=14)
+            self.bb = bt.indicators.BollingerBands(self.data.close, period=20, devfactor=2)
+            
+            # Volatility
+            self.atr = bt.indicators.ATR(self.data.high, self.data.low, self.data.close, period=14)
+            
+            # Track orders
+            self.order = None
+            self.trade_count = 0
+            
+        def next(self):
+            # Skip if we have an open order
+            if self.order:
+                return
+                
+            # Check if we have enough data
+            if len(self.data) < 50:
+                return
+            
+            # Calculate trend direction
+            trend_up = self.ema_fast[0] > self.ema_slow[0]
+            trend_strength = self.adx[0] if not np.isnan(self.adx[0]) else 0
+            
+            # Skip if trend is weak
+            if trend_strength < 25:
+                return
+                
+            # Generate signals
+            if trend_up and self.rsi[0] < 30:  # Uptrend + oversold
+                if not self.position:
+                    size = int(self.broker.getcash() * 0.1 / self.data.close[0])
+                    if size > 0:
+                        self.order = self.buy(size=size)
+                        self.trade_count += 1
+                        
+            elif not trend_up and self.rsi[0] > 70:  # Downtrend + overbought
+                if not self.position:
+                    size = int(self.broker.getcash() * 0.1 / self.data.close[0])
+                    if size > 0:
+                        self.order = self.sell(size=size)
+                        self.trade_count += 1
+    
+    @monitor_performance
+    @handle_errors(max_retries=3, retry_delay=1)
+    async def run_backtest(self, symbol: str, start_date: str, end_date: str, timeframe: str = '1day') -> Dict[str, Any]:
+        """
+        Run backtest for a single symbol
+        """
+        logger.info(f"Running backtest for {symbol} from {start_date} to {end_date}")
+        
+        try:
+            # Fetch historical data from Polygon
+            df = await self.polygon_provider.get_historical_bars(symbol, timeframe, start_date, end_date)
+            
+            if df.empty:
+                logger.warning(f"No data available for {symbol}")
+                return {}
+            
+            # Convert to Backtrader data format
+            data = bt.feeds.PandasData(
+                dataname=df,
+                datetime=None,  # Use index as datetime
+                open='open',
+                high='high', 
+                low='low',
+                close='close',
+                volume='volume',
+                openinterest=-1
+            )
+            
+            # Add data and strategy to cerebro
+            self.cerebro.adddata(data)
+            self.cerebro.addstrategy(self.HybridStrategyBT)
+            
+            # Add analyzers
+            self.cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+            self.cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+            self.cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
+            self.cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
+            
+            # Run backtest
+            results = self.cerebro.run()
+            strategy = results[0]
+            
+            # Extract results
+            final_value = self.cerebro.broker.getvalue()
+            total_return = (final_value - self.initial_capital) / self.initial_capital
+            
+            # Get analyzer results
+            sharpe = strategy.analyzers.sharpe.get_analysis()
+            drawdown = strategy.analyzers.drawdown.get_analysis()
+            trade_analysis = strategy.analyzers.trades.get_analysis()
+            returns_analysis = strategy.analyzers.returns.get_analysis()
+            
+            return {
+                'symbol': symbol,
+                'initial_capital': self.initial_capital,
+                'final_value': final_value,
+                'total_return': total_return,
+                'total_trades': trade_analysis.get('total', {}).get('total', 0),
+                'winning_trades': trade_analysis.get('won', {}).get('total', 0),
+                'losing_trades': trade_analysis.get('lost', {}).get('total', 0),
+                'sharpe_ratio': sharpe.get('sharperatio', 0),
+                'max_drawdown': drawdown.get('max', {}).get('drawdown', 0),
+                'annual_return': returns_analysis.get('rnorm100', 0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in backtest for {symbol}: {e}")
+            raise TradingError(f"Backtest failed for {symbol}: {e}")
+
+# ======================== STRATEGY EXECUTION ENGINE ======================== #
+class StrategyExecutionEngine:
+    """
+    Main execution engine for the hybrid strategy with Polygon data and Alpaca trading
+    """
+    
+    def __init__(self, ticker_scanner, config: Dict[str, Any] = None):
+        self.ticker_scanner = ticker_scanner
+        self.strategy = HybridStrategy(config)
+        self.optimizer = PortfolioOptimizer()
+        self.polygon_provider = PolygonDataProvider(config.POLYGON_API_KEY)
+        self.alpaca_trading = AlpacaTrading()
+        self.backtest_engine = BacktestEngine(self.polygon_provider, config.INITIAL_CAPITAL)
+        self.active_signals: Dict[str, StrategySignal] = {}
+        self.performance_metrics = {}
+        
+    @monitor_performance
+    @handle_errors()
+    async def generate_watchlist(self, min_volume: float = 1000000, min_price: float = 5.0) -> List[str]:
+        """
+        Generate a focused watchlist based on liquidity and volatility criteria
+        """
+        all_tickers = await self.ticker_scanner.db.get_all_active_tickers()
+        
+        watchlist = []
+        for ticker_data in all_tickers:
+            ticker = ticker_data['ticker']
+            
+            # Basic filters
+            if (ticker_data.get('primary_exchange') in ['NASDAQ', 'NYSE'] and
+                ticker_data.get('type', '').upper() == 'CS' and
+                ticker_data.get('market') == 'stocks'):
+                watchlist.append(ticker)
+        
+        logger.info(f"Generated watchlist with {len(watchlist)} tickers")
+        return watchlist[:100]  # Limit to top 100 for performance
+    
+    @monitor_performance
+    @handle_errors()
+    async def fetch_price_data(self, ticker: str, period: str = "30d", interval: str = "1day") -> Optional[pd.DataFrame]:
+        """
+        Fetch price data for a ticker using Polygon
+        """
+        try:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+            start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            
+            df = await self.polygon_provider.get_historical_bars(ticker, interval, start_date, end_date)
+            
+            if df.empty:
+                logger.warning(f"No price data available for {ticker}")
+                return None
+                
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error fetching price data for {ticker}: {e}")
+            return None
+    
+    @monitor_performance
+    @handle_errors()
+    async def scan_for_signals(self, watchlist: List[str]) -> List[StrategySignal]:
+        """
+        Scan watchlist for trading signals using the hybrid strategy
+        """
+        signals = []
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = []
+            for ticker in watchlist:
+                future = executor.submit(self._scan_single_ticker, ticker)
+                futures.append(future)
+            
+            # Collect results
+            for future in futures:
+                try:
+                    signal = future.result(timeout=30)  # 30 second timeout per ticker
+                    if signal:
+                        signals.append(signal)
+                except Exception as e:
+                    logger.warning(f"Error scanning ticker: {e}")
+                    continue
+        
+        logger.info(f"Found {len(signals)} potential signals")
+        return signals
+    
+    def _scan_single_ticker(self, ticker: str) -> Optional[StrategySignal]:
+        """
+        Scan a single ticker for signals (synchronous version for thread pool)
+        """
+        try:
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Fetch price data
+            df = loop.run_until_complete(self.fetch_price_data(ticker))
+            
+            if df is None or df.empty:
+                return None
+            
+            # Generate signal
+            signal = self.strategy.generate_signal(ticker, df)
+            
+            loop.close()
+            return signal
+            
+        except Exception as e:
+            logger.warning(f"Error scanning {ticker}: {e}")
+            return None
+    
+    @monitor_performance
+    @handle_errors()
+    async def execute_strategy(self, live_trading: bool = False) -> Dict[str, Any]:
+        """
+        Execute the complete hybrid strategy
+        """
+        logger.info("Starting hybrid strategy execution")
+        
+        # 1. Generate watchlist
+        watchlist = await self.generate_watchlist()
+        if not watchlist:
+            logger.warning("No tickers in watchlist")
+            return {'signals': [], 'executed_trades': []}
+        
+        # 2. Scan for signals
+        raw_signals = await self.scan_for_signals(watchlist)
+        if not raw_signals:
+            logger.info("No signals generated")
+            return {'signals': [], 'executed_trades': []}
+        
+        # 3. Get current positions for optimization
+        current_positions = {}
+        if live_trading:
+            try:
+                positions = await self.alpaca_trading.get_positions()
+                current_positions = {pos['symbol']: pos['qty'] for pos in positions}
+            except Exception as e:
+                logger.warning(f"Could not fetch current positions: {e}")
+        
+        # 4. Portfolio optimization
+        optimized_signals = self.optimizer.optimize_portfolio_allocation(
+            raw_signals, current_positions
+        )
+        
+        # 5. Execute trades
+        executed_trades = []
+        if live_trading and optimized_signals:
+            executed_trades = await self._execute_trades(optimized_signals)
+        
+        # 6. Update active signals
+        for signal in optimized_signals:
+            self.active_signals[signal.ticker] = signal
+        
+        logger.info(f"Strategy execution completed: {len(executed_trades)} trades executed")
+        
+        return {
+            'signals': optimized_signals,
+            'executed_trades': executed_trades,
+            'watchlist_size': len(watchlist),
+            'raw_signals_count': len(raw_signals),
+            'live_trading': live_trading
+        }
+    
+    async def _execute_trades(self, signals: List[StrategySignal]) -> List[Dict]:
+        """
+        Execute trades through Alpaca API
+        """
+        executed_trades = []
+        
+        for signal in signals:
+            try:
+                # Calculate position size based on account value
+                account_info = await self.alpaca_trading.get_account_info()
+                position_value = account_info['portfolio_value'] * signal.position_size
+                
+                # Calculate quantity
+                quantity = int(position_value / signal.entry_price)
+                if quantity <= 0:
+                    continue
+                
+                # Determine order side
+                side = 'buy' if signal.signal_type == SignalType.LONG else 'sell'
+                
+                # Place order with bracket (stop loss + take profit)
+                order_result = await self.alpaca_trading.place_order(
+                    symbol=signal.ticker,
+                    qty=quantity,
+                    side=side,
+                    order_type='market',
+                    stop_loss=signal.stop_loss,
+                    take_profit=signal.take_profit
+                )
+                
+                trade = {
+                    'ticker': signal.ticker,
+                    'signal_type': signal.signal_type.value,
+                    'entry_price': signal.entry_price,
+                    'stop_loss': signal.stop_loss,
+                    'take_profit': signal.take_profit,
+                    'quantity': quantity,
+                    'position_size': signal.position_size,
+                    'order_id': order_result['order_id'],
+                    'timestamp': signal.timestamp,
+                    'score': signal.score,
+                    'confidence': signal.confidence
+                }
+                executed_trades.append(trade)
+                
+                logger.info(f"Executed {signal.signal_type.value} trade for {signal.ticker} "
+                           f"at {signal.entry_price:.2f} (Score: {signal.score:.2f})")
+                
+            except Exception as e:
+                logger.error(f"Error executing trade for {signal.ticker}: {e}")
+        
+        return executed_trades
+    
+    @monitor_performance
+    @handle_errors()
+    async def run_backtest(self, symbols: List[str], start_date: str, end_date: str) -> Dict[str, Any]:
+        """
+        Run backtest for multiple symbols
+        """
+        logger.info(f"Running backtest for {len(symbols)} symbols from {start_date} to {end_date}")
+        
+        results = {}
+        total_return = 0
+        successful_tests = 0
+        
+        for symbol in symbols:
+            try:
+                result = await self.backtest_engine.run_backtest(symbol, start_date, end_date)
+                if result:
+                    results[symbol] = result
+                    total_return += result['total_return']
+                    successful_tests += 1
+                    
+                    logger.info(f"Backtest completed for {symbol}: {result['total_return']:.2%} return")
+                    
+            except Exception as e:
+                logger.error(f"Backtest failed for {symbol}: {e}")
+                continue
+        
+        # Calculate aggregate statistics
+        avg_return = total_return / successful_tests if successful_tests > 0 else 0
+        
+        return {
+            'symbols_tested': successful_tests,
+            'total_symbols': len(symbols),
+            'average_return': avg_return,
+            'individual_results': results,
+            'start_date': start_date,
+            'end_date': end_date
+        }
 
 # ======================== TICKER SCANNER ======================== #
 class PolygonTickerScanner:
@@ -1164,78 +2032,212 @@ class PolygonTickerScanner:
         self.current_tickers_set = set()
         self.local_tz = get_localzone()
         self.semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
-        self.db = DatabaseManager()  # Updated to use PostgreSQL
+        self.db = DatabaseManager()
         self.backtest_db = BacktestDatabaseManager() 
         self.shutdown_requested = False
         # Backtesting attributes
         self.backtest_mode = False
         self.backtest_date = None
+        # Market calendar
+        self.market_calendar = mcal.get_calendar(config.MARKET_CALENDAR)
+        # Circuit breaker attributes
+        self.api_error_count = 0
+        self.circuit_open = False
+        self.circuit_open_time = 0
+        self.CIRCUIT_THRESHOLD = config.CIRCUIT_THRESHOLD
+        self.CIRCUIT_TIMEOUT = config.CIRCUIT_TIMEOUT
+        # Performance metrics
+        self.performance_metrics = {}
+        # Async lock for thread-safe operations
+        self._async_lock = asyncio.Lock()
+        # Strategy engine
+        self.strategy_engine = None
+        
         logger.info(f"Using local timezone: {self.local_tz}")
         logger.info(f"Using PostgreSQL database: {config.POSTGRES_DB}")
         logger.info(f"Using composite indices: {', '.join(self.composite_indices)}")
+        logger.info(f"Using market calendar: {config.MARKET_CALENDAR}")
         
-    def _init_cache(self):
+    async def _init_cache(self):
         """Initialize or load ticker cache from database"""
-        self.last_refresh_time = self.db.get_metadata('last_refresh_time', 0)
-        
-        # Load active tickers from database
-        db_tickers = self.db.get_all_active_tickers()
-        
-        if db_tickers:
-            self.ticker_cache = pd.DataFrame(db_tickers)
-            logger.info(f"Loaded {len(self.ticker_cache)} tickers from database")
-        else:
-            self.ticker_cache = pd.DataFrame(columns=[
-                "ticker", "name", "primary_exchange", "last_updated_utc", "type", "market", "locale"
-            ])
-            logger.info("No tickers found in database")
-        
-        self.current_tickers_set = set(self.ticker_cache['ticker'].tolist()) if not self.ticker_cache.empty else set()
-        
-        # Load known missing tickers from database
-        self.known_missing_tickers = set(self.db.get_metadata('known_missing_tickers', []))
-        
-        self.initial_refresh_complete.set()
+        try:
+            self.last_refresh_time = await self.db.get_metadata('last_refresh_time', 0)
+            
+            # Load active tickers from database
+            db_tickers = await self.db.get_all_active_tickers()
+            
+            if db_tickers:
+                # Convert to DataFrame with proper column names
+                self.ticker_cache = pd.DataFrame(db_tickers)
+                logger.info(f"Loaded {len(self.ticker_cache)} tickers from database")
+                
+                # Debug: Check column names
+                logger.info(f"DataFrame columns: {self.ticker_cache.columns.tolist()}")
+                
+                # Find the ticker column (case insensitive)
+                column_names_lower = [str(col).lower() for col in self.ticker_cache.columns]
+                if 'ticker' in column_names_lower:
+                    ticker_col_idx = column_names_lower.index('ticker')
+                    ticker_col = self.ticker_cache.columns[ticker_col_idx]
+                    self.current_tickers_set = set(self.ticker_cache[ticker_col].tolist())
+                else:
+                    # Try to find a column that might contain ticker symbols
+                    for col in self.ticker_cache.columns:
+                        if any(keyword in str(col).lower() for keyword in ['symbol', 'ticker', 'code', 'id']):
+                            self.current_tickers_set = set(self.ticker_cache[col].tolist())
+                            logger.warning(f"Using '{col}' as ticker column")
+                            break
+                    else:
+                        # Use the first column as fallback
+                        ticker_col = self.ticker_cache.columns[0]
+                        self.current_tickers_set = set(self.ticker_cache[ticker_col].tolist())
+                        logger.warning(f"Using first column '{ticker_col}' as ticker column")
+            else:
+                self.ticker_cache = pd.DataFrame(columns=[
+                    "ticker", "name", "primary_exchange", "last_updated_utc", "type", "market", "locale"
+                ])
+                logger.info("No tickers found in database")
+                self.current_tickers_set = set()
+            
+            # Load known missing tickers from database
+            missing_tickers = await self.db.get_metadata('known_missing_tickers', [])
+            self.known_missing_tickers = set(missing_tickers) if missing_tickers else set()
+            
+            self.initial_refresh_complete.set()
+            logger.info(f"Cache initialized with {len(self.current_tickers_set)} tickers")
+        except Exception as e:
+            logger.error(f"Failed to initialize cache: {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise DatabaseError(f"Cache initialization failed: {e}")
 
-    async def _call_polygon_api(self, session, url):
+    @handle_errors()
+    def is_trading_day(self, date):
+        """Check if a date is a trading day using market calendar"""
+        if isinstance(date, str):
+            date = datetime.strptime(date, "%Y-%m-%d").date()
+        elif isinstance(date, datetime):
+            date = date.date()
+            
+        schedule = self.market_calendar.schedule(start_date=date, end_date=date)
+        return not schedule.empty
+
+    @handle_errors(max_retries=config.MAX_RETRIES, retry_delay=config.RETRY_DELAY)
+    async def _call_polygon_api(self, session, url, retry_count=0):
         """Make API call with retry logic and rate limiting"""
         # Check for shutdown before making the request
         if self.shutdown_requested:
             return None
             
+        # Check circuit breaker
+        if self.circuit_open:
+            if time.time() - self.circuit_open_time < self.CIRCUIT_TIMEOUT:
+                logger.warning("Circuit breaker is open, skipping API call")
+                raise CircuitBreakerError("Circuit breaker is open")
+            else:
+                logger.info("Circuit breaker timeout elapsed, trying again")
+                self.circuit_open = False
+                self.api_error_count = 0
+                
+        if retry_count >= config.MAX_RETRIES:
+            logger.error(f"Max retries ({config.MAX_RETRIES}) exceeded for URL: {url}")
+            raise APIError(f"Max retries exceeded for URL: {url}")
+            
         async with self.semaphore:
             try:
-                async with session.get(url, timeout=10) as response:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == 200:
+                        # Reset error count on success
+                        self.api_error_count = 0
                         return await response.json()
                     elif response.status == 429:
-                        retry_after = int(response.headers.get('Retry-After', 1))
-                        logger.warning(f"Rate limit hit, retrying after {retry_after} seconds")
+                        retry_after = int(response.headers.get('Retry-After', config.RETRY_DELAY))
+                        logger.warning(f"Rate limit hit, retrying after {retry_after} seconds (attempt {retry_count+1})")
                         await asyncio.sleep(retry_after)
-                        return await self._call_polygon_api(session, url)
+                        return await self._call_polygon_api(session, url, retry_count+1)
+                    elif response.status >= 500:
+                        self.api_error_count += 1
+                        logger.warning(f"Server error {response.status}, retrying in {config.RETRY_DELAY}s (attempt {retry_count+1})")
+                        await asyncio.sleep(config.RETRY_DELAY)
+                        return await self._call_polygon_api(session, url, retry_count+1)
                     else:
-                        logger.error(f"API request failed: {response.status}")
-                        return None
+                        self.api_error_count += 1
+                        logger.error(f"API request failed: {response.status} for URL: {url}")
+                        raise APIError(f"API request failed: {response.status} for URL: {url}")
             except asyncio.TimeoutError:
-                logger.warning(f"Timeout for URL: {url}")
-                return None
-            except asyncio.CancelledError:
-                logger.info("API request cancelled")
-                return None
+                self.api_error_count += 1
+                logger.warning(f"Timeout for URL: {url}, retrying (attempt {retry_count+1})")
+                await asyncio.sleep(config.RETRY_DELAY)
+                return await self._call_polygon_api(session, url, retry_count+1)
+            except aiohttp.ClientError as e:
+                self.api_error_count += 1
+                logger.error(f"Client error for URL {url}: {e}, retrying (attempt {retry_count+1})")
+                await asyncio.sleep(config.RETRY_DELAY)
+                return await self._call_polygon_api(session, url, retry_count+1)
             except Exception as e:
-                logger.error(f"API request exception: {e}")
-                return None
+                self.api_error_count += 1
+                logger.error(f"Unexpected error for URL {url}: {e}")
+                raise APIError(f"Unexpected error for URL {url}: {e}")
+            finally:
+                # Check if we need to open the circuit breaker
+                if self.api_error_count >= self.CIRCUIT_THRESHOLD and not self.circuit_open:
+                    self.circuit_open = True
+                    self.circuit_open_time = time.time()
+                    logger.error(f"Circuit breaker opened due to excessive errors ({self.api_error_count})")
+                    raise CircuitBreakerError(f"Circuit breaker opened due to excessive errors ({self.api_error_count})")
 
+    @handle_errors()
+    def _validate_ticker_data(self, ticker_data):
+        """Validate ticker data before processing"""
+        required_fields = ['ticker']
+        validated_data = []
+        
+        for ticker in ticker_data:
+            # Check required fields
+            if not all(field in ticker for field in required_fields):
+                logger.warning(f"Skipping invalid ticker data: {ticker}")
+                continue
+                
+            # Sanitize fields
+            sanitized = {
+                'ticker': str(ticker.get('ticker', '')).strip(),
+                'name': str(ticker.get('name', '')).strip() if ticker.get('name') else None,
+                'primary_exchange': str(ticker.get('primary_exchange', '')).strip() if ticker.get('primary_exchange') else None,
+                'last_updated_utc': str(ticker.get('last_updated_utc', '')).strip() if ticker.get('last_updated_utc') else None,
+                'type': str(ticker.get('type', '')).strip() if ticker.get('type') else None,
+                'market': str(ticker.get('market', '')).strip() if ticker.get('market') else None,
+                'locale': str(ticker.get('locale', '')).strip() if ticker.get('locale') else None,
+                'currency_name': str(ticker.get('currency_name', '')).strip() if ticker.get('currency_name') else None,
+            }
+            
+            # Skip empty tickers
+            if not sanitized['ticker']:
+                continue
+                
+            validated_data.append(sanitized)
+        
+        return validated_data
+
+    @monitor_performance
+    @handle_errors(max_retries=config.MAX_RETRIES, retry_delay=config.RETRY_DELAY)
     async def _fetch_composite_tickers(self, session, composite_index):
         """Fetch all tickers for a specific composite index"""
         logger.info(f"Fetching tickers for composite index {composite_index}")
         all_results = []
         next_url = None
+        page_count = 0
+        max_pages = 50  # Safety limit
         
         # Use current date or backtest date
         if self.backtest_mode and self.backtest_date:
             date_param = self.backtest_date
             logger.info(f"Using historical date: {date_param}")
+            
+            # Check if it's a trading day for historical data
+            if not self.is_trading_day(date_param):
+                logger.info(f"Skipping non-trading day: {date_param}")
+                return []
         else:
             date_param = datetime.now().strftime("%Y-%m-%d")
             
@@ -1244,7 +2246,7 @@ class PolygonTickerScanner:
             exchange = "XNAS"
         else:
             logger.error(f"Unknown composite index: {composite_index}")
-            return []
+            raise ConfigurationError(f"Unknown composite index: {composite_index}")
             
         params = {
             "market": "stocks",
@@ -1257,14 +2259,17 @@ class PolygonTickerScanner:
         
         # Initial URL construction
         url = f"{self.base_url}?{urlencode(params)}"
-        page_count = 0
         
-        while url and not self.shutdown_requested:
+        while url and page_count < max_pages and not self.shutdown_requested:
             data = await self._call_polygon_api(session, url)
             if not data or self.shutdown_requested:
                 break
                 
             results = data.get("results", [])
+            if not results:
+                logger.warning(f"No results in page {page_count + 1} for {composite_index}")
+                break
+                
             # Filter for common stocks only and add composite index info
             stock_results = [
                 {**r, "composite_index": composite_index} 
@@ -1277,8 +2282,12 @@ class PolygonTickerScanner:
             url = f"{next_url}&apiKey={self.api_key}" if next_url else None
             page_count += 1
             
-            # Minimal delay for premium API access
-            await asyncio.sleep(config.RATE_LIMIT_DELAY)
+            # Add progressive delay to avoid rate limiting
+            delay = config.RATE_LIMIT_DELAY * (1 + page_count / 10)
+            await asyncio.sleep(min(delay, 5.0))  # Cap at 5 seconds
+        
+        if page_count >= max_pages:
+            logger.warning(f"Reached maximum page limit ({max_pages}) for {composite_index}")
         
         if self.shutdown_requested:
             logger.info(f"Shutdown requested, aborting {composite_index} fetch")
@@ -1287,6 +2296,8 @@ class PolygonTickerScanner:
         logger.info(f"Completed {composite_index}: {len(all_results)} stocks across {page_count} pages")
         return all_results
 
+    @monitor_performance
+    @handle_errors(max_retries=config.MAX_RETRIES, retry_delay=config.RETRY_DELAY)
     async def _refresh_all_tickers_async(self):
         """Refresh all tickers with parallel composite index processing"""
         start_time = time.time()
@@ -1301,28 +2312,42 @@ class PolygonTickerScanner:
             logger.info("Shutdown requested, aborting refresh")
             return False
             
-        async with aiohttp.ClientSession() as session:
-            # Fetch all composite indices in parallel
-            tasks = [self._fetch_composite_tickers(session, idx) for idx in self.composite_indices]
-            composite_results = await asyncio.gather(*tasks)
-            
-            # Check for shutdown after fetching
-            if self.shutdown_requested:
-                logger.info("Shutdown requested during data processing")
-                return False
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Fetch all composite indices in parallel
+                tasks = [self._fetch_composite_tickers(session, idx) for idx in self.composite_indices]
+                composite_results = await asyncio.gather(*tasks, return_exceptions=True)
                 
-            # Flatten results
-            all_results = []
-            for results in composite_results:
-                if results:
-                    all_results.extend(results)
+                # Process results
+                all_results = []
+                for i, results in enumerate(composite_results):
+                    if isinstance(results, Exception):
+                        logger.error(f"Error fetching {self.composite_indices[i]}: {results}")
+                        continue
+                    if results:
+                        all_results.extend(results)
+                
+                # Check for shutdown after fetching
+                if self.shutdown_requested:
+                    logger.info("Shutdown requested during data processing")
+                    return False
+        except Exception as e:
+            logger.error(f"Error during API fetch: {e}")
+            # Fall back to database if API fails
+            return await self._fallback_to_database()
         
         if not all_results:
             logger.warning("Refresh fetched no results")
-            return False
+            return await self._fallback_to_database()
+            
+        # Validate and sanitize data
+        validated_results = self._validate_ticker_data(all_results)
+        if not validated_results:
+            logger.warning("No valid ticker data after validation")
+            return await self._fallback_to_database()
             
         # Create DataFrame with only necessary columns
-        new_df = pd.DataFrame(all_results)[["ticker", "name", "primary_exchange", "last_updated_utc", "type", "market", "locale", "currency_name"]]
+        new_df = pd.DataFrame(validated_results)[["ticker", "name", "primary_exchange", "last_updated_utc", "type", "market", "locale", "currency_name"]]
         new_tickers = set(new_df['ticker'].tolist())
         
         with self.cache_lock:
@@ -1331,7 +2356,7 @@ class PolygonTickerScanner:
                 # Store backtest results
                 tickers_data = new_df.to_dict('records')
                 # Use backtest_db instead of db
-                inserted = self.backtest_db.upsert_backtest_tickers(tickers_data, self.backtest_date)
+                inserted = await self.backtest_db.upsert_backtest_tickers(tickers_data, self.backtest_date)
                 logger.info(f"Stored {inserted} tickers in backtest database for {self.backtest_date}")
             else:
                 # Original logic for live mode
@@ -1343,11 +2368,11 @@ class PolygonTickerScanner:
                 tickers_data = new_df.to_dict('records')
                 
                 # Update database using main db
-                inserted, updated = self.db.upsert_tickers(tickers_data)
+                inserted, updated = await self.db.upsert_tickers(tickers_data)
                 
                 # Mark removed tickers as inactive
                 if removed:
-                    marked_inactive = self.db.mark_tickers_inactive(list(removed))
+                    marked_inactive = await self.db.mark_tickers_inactive(list(removed))
                     logger.info(f"Marked {marked_inactive} tickers as inactive")
                 
                 # Update in-memory cache
@@ -1358,12 +2383,12 @@ class PolygonTickerScanner:
                 rediscovered = added & self.known_missing_tickers
                 if rediscovered:
                     self.known_missing_tickers -= rediscovered
-                    self.db.update_metadata('known_missing_tickers', list(self.known_missing_tickers))
+                    await self.db.update_metadata('known_missing_tickers', list(self.known_missing_tickers))
             
         self.last_refresh_time = time.time()
         
         if not self.backtest_mode:
-            self.db.update_metadata('last_refresh_time', self.last_refresh_time)
+            await self.db.update_metadata('last_refresh_time', self.last_refresh_time)
         
         elapsed = time.time() - start_time
         logger.info(f"Ticker refresh completed in {elapsed:.2f}s")
@@ -1376,16 +2401,34 @@ class PolygonTickerScanner:
             
         return True
 
+    @handle_errors()
+    async def _fallback_to_database(self):
+        """Fallback to database if API fails"""
+        logger.info("Attempting database fallback")
+        
+        with self.cache_lock:
+            db_tickers = await self.db.get_all_active_tickers()
+            if db_tickers:
+                self.ticker_cache = pd.DataFrame(db_tickers)
+                self.current_tickers_set = set(self.ticker_cache['ticker'].tolist())
+                logger.info(f"Fallback to database: loaded {len(self.ticker_cache)} tickers")
+                return True
+            else:
+                logger.error("API failed and no fallback data available")
+                return False
+
+    @monitor_performance
+    @handle_errors(max_retries=config.MAX_RETRIES, retry_delay=config.RETRY_DELAY)
     async def refresh_all_tickers(self):
         """Public async method to refresh tickers"""
         with self.refresh_lock:
             return await self._refresh_all_tickers_async()
 
-    def start(self):
+    async def start(self):
         if not self.active:
             self.active = True
             self.shutdown_requested = False
-            self._init_cache()
+            await self._init_cache()
             self.initial_refresh_complete.set()
             logger.info("Ticker scanner started")
 
@@ -1397,1182 +2440,164 @@ class PolygonTickerScanner:
     async def shutdown(self):
         """Cleanup resources"""
         self.stop()
-        self.db.close_all_connections()
+        
+        # Cancel all running tasks
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        
+        # Wait for tasks to finish with timeout
+        if tasks:
+            try:
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Timeout waiting for tasks to complete during shutdown")
+        
+        # Close database connections asynchronously
+        await self.db.close_all_connections()
+        await self.backtest_db.close_all_connections()
+        
         logger.info("Ticker scanner shutdown complete")
 
+    @handle_errors()
     def get_current_tickers_list(self):
         with self.cache_lock:
             return self.ticker_cache['ticker'].tolist()
 
+    @handle_errors()
     def get_ticker_details(self, ticker):
         """Get details for a specific ticker from cache"""
         with self.cache_lock:
             result = self.ticker_cache[self.ticker_cache['ticker'] == ticker]
             return result.to_dict('records')[0] if not result.empty else None
             
-    def search_tickers_db(self, search_term: str, limit: int = 50) -> List[Dict]:
+    @handle_errors()
+    async def search_tickers_db(self, search_term: str, limit: int = 50) -> List[Dict]:
         """Search tickers in database by name or symbol"""
-        return self.db.search_tickers(search_term, limit)
+        return await self.db.search_tickers(search_term, limit)
         
-    def get_ticker_history_db(self, ticker: str, limit: int = 10) -> List[Dict]:
+    @handle_errors()
+    async def get_ticker_history_db(self, ticker: str, limit: int = 10) -> List[Dict]:
         """Get historical changes for a ticker from database"""
-        return self.db.get_ticker_history(ticker, limit)
+        return await self.db.get_ticker_history(ticker, limit)
         
-    def get_backtest_tickers(self, date_str: str) -> List[Dict]:
+    @handle_errors()
+    async def get_backtest_tickers(self, date_str: str) -> List[Dict]:
         """Get tickers for a specific backtest date"""
-        return self.backtest_db.get_backtest_tickers(date_str)  # Changed to backtest_db
+        return await self.backtest_db.get_backtest_tickers(date_str)
         
-    def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
+    @handle_errors()
+    async def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
         """Get tickers for a specific backtest year"""
-        return self.backtest_db.get_backtest_tickers_by_year(year)  # Changed to backtest_db
+        return await self.backtest_db.get_backtest_tickers_by_year(year)
         
-    def get_backtest_dates(self) -> List[str]:
+    @handle_errors()
+    async def get_backtest_dates(self) -> List[str]:
         """Get all available backtest dates"""
-        return self.backtest_db.get_backtest_dates()  # Changed to backtest_db
+        return await self.backtest_db.get_backtest_dates()
         
-    def get_backtest_years(self) -> List[int]:
+    @handle_errors()
+    async def get_backtest_years(self) -> List[int]:
         """Get all available backtest years"""
-        return self.backtest_db.get_backtest_years()  # Changed to backtest_db
+        return await self.backtest_db.get_backtest_years()
         
-    def get_backtest_final_results(self, start_date: str, end_date: str, run_id: str = "default") -> List[Dict]:
+    @handle_errors()
+    async def get_backtest_final_results(self, start_date: str, end_date: str, run_id: str = "default") -> List[Dict]:
         """Get final backtest results for a specific date range"""
-        return self.backtest_db.get_backtest_final_results(start_date, end_date, run_id)  # Changed to backtest_db
+        return await self.backtest_db.get_backtest_final_results(start_date, end_date, run_id)
         
-    def get_backtest_final_results_by_year(self, year: int, run_id: str = "default") -> List[Dict]:
+    @handle_errors()
+    async def get_backtest_final_results_by_year(self, year: int, run_id: str = "default") -> List[Dict]:
         """Get final backtest results for a specific year"""
-        return self.backtest_db.get_backtest_final_results_by_year(year, run_id)  # Changed to backtest_db
+        return await self.backtest_db.get_backtest_final_results_by_year(year, run_id)
         
-    def get_all_backtest_runs(self) -> List[Dict]:
+    @handle_errors()
+    async def get_all_backtest_runs(self) -> List[Dict]:
         """Get all backtest runs with their date ranges"""
-        return self.backtest_db.get_all_backtest_runs()  # Changed to backtest_db
+        return await self.backtest_db.get_all_backtest_runs()
         
-    def get_backtest_runs_by_date_range(self, start_date: str, end_date: str) -> List[Dict]:
+    @handle_errors()
+    async def get_backtest_runs_by_date_range(self, start_date: str, end_date: str) -> List[Dict]:
         """Get all backtest runs for a specific date range"""
-        return self.backtest_db.get_backtest_runs_by_date_range(start_date, end_date)  # Changed to backtest_db
+        return await self.backtest_db.get_backtest_runs_by_date_range(start_date, end_date)
+        
+    @handle_errors()
+    async def get_composite_availability(self, ticker: str = None, start_date: str = None, end_date: str = None) -> List[Dict]:
+        """Get composite availability for tickers"""
+        return await self.backtest_db.get_composite_availability(ticker, start_date, end_date)
     
-# ======================== MARKET REGIME SCANNER ======================== #
-class MarketRegimeScanner:
-    def __init__(self, ticker_scanner: PolygonTickerScanner):
-        self.ticker_scanner = ticker_scanner
-        self.api_key = config.POLYGON_API_KEY
-        self.base_url = "https://api.polygon.io/v2/aggs/ticker"
-        self.active = False
-        self.shutdown_requested = False
-        self.local_tz = get_localzone()
-        self.semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
-        self.db = DatabaseManager()  # Use main database for regular data
-        self.backtest_db = BacktestDatabaseManager()  # Use backtest database for backtest data
-        self.hmm_model = None
-        self.gmm_model = None
-        self.rf_model = None
-        self.anomaly_detector = None
-        self.pca = None
-        self.kmeans = None
-        self.training_data = None
-        self.scaler = StandardScaler()
-        self.model_version = config.MODEL_VERSION
-        self.min_data_points = 100  # Minimum data points required for reliable analysis
-        self.nan_threshold = 0.1    # Maximum allowed NaN percentage
+    @handle_errors()
+    async def get_tickers_available_in_range(self, start_date: str, end_date: str) -> List[Dict]:
+        """Get all tickers that were available in the composite during the entire date range"""
+        return await self.backtest_db.get_tickers_available_in_range(start_date, end_date)
         
-        # New models for enhanced regime detection
-        self.lstm_model = None
-        self.cnn_model = None
-        self.bayesian_model = None
-        self.transition_model = BayesianTransitionModel()
-        self.previous_regime = None  # This should already be here
-        
-        # Initialize with a default regime to avoid None issues
-        self.default_regime = 1  # Sideways market as default
-        
-        # Backtesting attributes
-        self.backtest_mode = False
-        self.backtest_date = None
-        
-        # Focus on Nasdaq Composite for regime analysis
-        self.market_indices = {
-            "^IXIC": "COMP",    # NASDAQ Composite (primary focus)
+    @handle_errors()
+    async def health_check(self):
+        """Comprehensive health check"""
+        status = {
+            'api_accessible': False,
+            'database_connected': False,
+            'cache_updated': False,
+            'last_refresh': self.last_refresh_time,
+            'ticker_count': len(self.current_tickers_set),
+            'shutdown_requested': self.shutdown_requested,
+            'circuit_open': self.circuit_open,
+            'api_error_count': self.api_error_count
         }
         
-        logger.info(f"Using PostgreSQL database: {config.POSTGRES_DB}")
-        
-    async def _fetch_historical_data(self, session, ticker: str, days: int, end_date: datetime = None) -> Optional[pd.DataFrame]:
-        """Fetch historical data for a ticker with optional end date for backtesting"""
-        if end_date is None:
-            end_date = datetime.now()
-        
-        start_date = end_date - timedelta(days=days)
-        
-        # Format dates for Polygon API
-        end_date_str = end_date.strftime("%Y-%m-%d")
-        start_date_str = start_date.strftime("%Y-%m-%d")
-        
-        # Use the correct symbol for Polygon API with I: prefix for indices
-        polygon_symbol = self.market_indices.get(ticker, ticker)
-        
-        # Construct the API URL
-        url = f"{self.base_url}/{polygon_symbol}/range/1/day/{start_date_str}/{end_date_str}?apiKey={self.api_key}"
-        
-        logger.debug(f"Fetching historical data from: {url}")
-        
-        async with self.semaphore:
-            try:
-                async with session.get(url, timeout=30) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if data.get('resultsCount', 0) > 0:
-                            df = pd.DataFrame(data['results'])
-                            df['t'] = pd.to_datetime(df['t'], unit='ms')
-                            df.set_index('t', inplace=True)
-                            df['ticker'] = ticker
-                            return df
-                        else:
-                            logger.warning(f"No results for {ticker} (Polygon: {polygon_symbol}): {data}")
-                            return None
-                    elif response.status == 429:
-                        retry_after = int(response.headers.get('Retry-After', 1))
-                        logger.warning(f"Rate limit hit for {ticker}, retrying after {retry_after} seconds")
-                        await asyncio.sleep(retry_after)
-                        return await self._fetch_historical_data(session, ticker, days, end_date)
-                    else:
-                        error_text = await response.text()
-                        logger.warning(f"Failed to fetch data for {ticker} (Polygon: {polygon_symbol}): {response.status} - {error_text}")
-                        return None
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout fetching data for {ticker}")
-                return None
-            except Exception as e:
-                logger.error(f"Error fetching data for {ticker}: {e}")
-                return None
-            
-    def robust_feature_combination(self, basic_features, quant_features):
-        """Robust method to combine features with enhanced NaN handling"""
-        # Align indices first
-        aligned_features = pd.concat([basic_features, quant_features], axis=1)
-        
-        # More aggressive NaN handling
-        aligned_features = aligned_features.replace([np.inf, -np.inf], np.nan)
-        
-        # Drop columns with too many NaNs
-        col_nan_threshold = len(aligned_features) * 0.3  # Keep columns with less than 30% NaN
-        aligned_features = aligned_features.dropna(axis=1, thresh=col_nan_threshold)
-        
-        # Drop rows with too many NaNs
-        row_nan_threshold = len(aligned_features.columns) * 0.7  # Keep rows with at least 70% data
-        aligned_features = aligned_features.dropna(axis=0, thresh=row_nan_threshold)
-        
-        # Fill remaining NaNs with more sophisticated methods
-        for col in aligned_features.columns:
-            if aligned_features[col].isnull().any():
-                # Use forward fill, then backward fill, then median
-                aligned_features[col] = aligned_features[col].fillna(method='ffill').fillna(method='bfill')
-                
-                # If still NaN, use rolling median
-                if aligned_features[col].isnull().any():
-                    aligned_features[col] = aligned_features[col].fillna(
-                        aligned_features[col].rolling(5, min_periods=1).median())
-                    
-                # If still NaN, use overall median
-                if aligned_features[col].isnull().any():
-                    aligned_features[col] = aligned_features[col].fillna(aligned_features[col].median())
-        
-        return aligned_features
-    
-    def validate_features(self, features: pd.DataFrame) -> pd.DataFrame:
-        """Validate and ensure feature quality before training/prediction"""
-        if features.empty:
-            logger.error("Empty features DataFrame")
-            return features
-        
-        # Check for and handle infinite values
-        features = features.replace([np.inf, -np.inf], np.nan)
-        
-        # Calculate NaN percentage
-        nan_percentage = features.isnull().sum().sum() / (features.shape[0] * features.shape[1])
-        
-        if nan_percentage > self.nan_threshold:
-            logger.warning(f"High NaN percentage: {nan_percentage:.2%}. Applying aggressive cleaning.")
-            
-            # Drop columns with too many NaNs
-            features = features.dropna(axis=1, thresh=int(features.shape[0] * 0.7))
-            
-            # Drop rows with too many NaNs
-            features = features.dropna(axis=0, thresh=int(features.shape[1] * 0.7))
-        
-        # Fill remaining NaNs
-        for col in features.columns:
-            if features[col].isnull().any():
-                # Try forward fill first
-                features[col] = features[col].fillna(method='ffill')
-                
-                # Then backward fill
-                features[col] = features[col].fillna(method='bfill')
-                
-                # Then use interpolation
-                features[col] = features[col].interpolate()
-                
-                # Finally, use median if still NaN
-                if features[col].isnull().any():
-                    features[col] = features[col].fillna(features[col].median())
-        
-        logger.info(f"Feature validation completed. Final shape: {features.shape}, NaNs: {features.isnull().sum().sum()}")
-        return features
-                
-    async def fetch_market_data(self, days: int = config.HISTORICAL_DATA_DAYS, end_date: datetime = None) -> pd.DataFrame:
-        """Fetch historical market data for all market indices with enhanced validation"""
-        logger.info(f"Fetching {days} days of market data for regime analysis")
-        
-        # Get the market indices
-        tickers = list(self.market_indices.keys())
-        
-        all_data = []
-        async with aiohttp.ClientSession() as session:
-            tasks = [self._fetch_historical_data(session, ticker, days, end_date) for ticker in tickers]
-            results = await asyncio.gather(*tasks)
-            
-            for result in results:
-                if result is not None and not result.empty:
-                    all_data.append(result)
-        
-        # Data validation
-        if not all_data:
-            logger.error("No market data fetched")
-            return pd.DataFrame()
-        
-        # Combine all data
-        combined_data = pd.concat(all_data)
-        
-        # Ensure no duplicate indices
-        combined_data = combined_data[~combined_data.index.duplicated(keep='first')]
-        
-        # Ensure data is sorted by date
-        combined_data = combined_data.sort_index()
-        
-        # Check if we have sufficient data
-        if len(combined_data) < self.min_data_points:
-            logger.warning(f"Insufficient data points: {len(combined_data)}. Minimum required: {self.min_data_points}")
-            # Consider implementing a fallback or expanding the date range
-        
-        # Pivot to get OHLCV data for each ticker
-        ohlcv_data = combined_data.pivot_table(index='t', columns='ticker', 
-                                            values=['o', 'h', 'l', 'c', 'v'])
-        
-        # Additional data validation
-        if ohlcv_data.isnull().sum().sum() > len(ohlcv_data) * 0.5:  # If more than 50% NaN
-            logger.error("Poor data quality: more than 50% NaN values")
-            # Consider implementing a fallback data source or retry mechanism
-        
-        logger.info(f"Fetched market data with shape: {ohlcv_data.shape}")
-        return ohlcv_data
-            
-    def calculate_advanced_features(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Calculate more sophisticated features for regime detection with enhanced NaN handling"""
-        # Extract close prices for returns calculation
-        close_prices = data.xs('c', axis=1, level=0) if isinstance(data.columns, pd.MultiIndex) else data
-        
-        features = pd.DataFrame(index=close_prices.index)
-        
-        for ticker in close_prices.columns:
-            # Use more robust pct_change with better NaN handling
-            returns = close_prices[ticker].pct_change().fillna(0)
-            
-            # Ensure we're working with the same index
-            if len(returns) != len(features.index):
-                returns = returns.reindex(features.index, fill_value=0)
-            
-            features[f'{ticker}_return'] = returns
-            
-            # Advanced volatility measures with increased min_periods
-            volatility_20 = returns.rolling(window=20, min_periods=10).std()  # Increased from 5 to 10
-            volatility_50 = returns.rolling(window=50, min_periods=20).std()  # Increased from 10 to 20
-            
-            # Safe division to avoid NaN/Inf
-            volatility_ratio = pd.Series(1.0, index=features.index)  # Default to 1.0
-            valid_mask = (volatility_50 > 1e-10) & (~volatility_20.isnull()) & (~volatility_50.isnull())
-            volatility_ratio[valid_mask] = volatility_20[valid_mask] / volatility_50[valid_mask]
-            
-            features[f'{ticker}_volatility_ratio'] = volatility_ratio.fillna(1.0)
-            
-            # Get OHLC data if available
-            if isinstance(data.columns, pd.MultiIndex):
-                try:
-                    highs = data.xs('h', axis=1, level=0)[ticker]
-                    lows = data.xs('l', axis=1, level=0)[ticker]
-                    opens = data.xs('o', axis=1, level=0)[ticker]
-                    volumes = data.xs('v', axis=1, level=0)[ticker]
-                    
-                    # True range calculation with enhanced NaN handling
-                    tr1 = highs - lows
-                    tr2 = abs(highs - close_prices[ticker].shift(1).fillna(method='bfill'))
-                    tr3 = abs(lows - close_prices[ticker].shift(1).fillna(method='bfill'))
-                    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-                    features[f'{ticker}_atr'] = true_range.rolling(14, min_periods=7).mean().fillna(method='bfill')
-                    
-                    # Volume features with enhanced NaN handling
-                    features[f'{ticker}_volume_ma'] = volumes.rolling(20, min_periods=10).mean().fillna(method='bfill')
-                    vol_ma_50 = volumes.rolling(50, min_periods=25).mean()
-                    features[f'{ticker}_volume_ratio'] = (volumes / vol_ma_50).fillna(1.0)
-                    
-                    # ADX (Average Directional Index) calculation
-                    # Calculate +DM and -DM
-                    plus_dm = highs.diff()
-                    minus_dm = -lows.diff()  # Negative of low difference
-                    
-                    # Make directional movements positive when appropriate
-                    plus_dm = plus_dm.where(plus_dm > minus_dm, 0)
-                    minus_dm = minus_dm.where(minus_dm > plus_dm, 0)
-                    
-                    # Calculate True Range
-                    tr1 = highs - lows
-                    tr2 = (highs - close_prices[ticker].shift(1)).abs()
-                    tr3 = (lows - close_prices[ticker].shift(1)).abs()
-                    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-                    
-                    # Calculate 14-period smoothed values
-                    atr = true_range.rolling(14, min_periods=7).mean()
-                    plus_di = 100 * (plus_dm.rolling(14, min_periods=7).mean() / atr)
-                    minus_di = 100 * (minus_dm.rolling(14, min_periods=7).mean() / atr)
-                    
-                    # Calculate ADX
-                    dx = (abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)) * 100  # Add small value to avoid division by zero
-                    adx = dx.rolling(14, min_periods=7).mean()
-                    features[f'{ticker}_adx'] = adx.fillna(0)
-                    
-                    # Add volume-price trend
-                    vpt = volumes * ((close_prices[ticker] - close_prices[ticker].shift(1)) / (close_prices[ticker].shift(1) + 1e-10))
-                    features[f'{ticker}_vpt'] = vpt.cumsum().fillna(0)
-                    
-                    # Add price acceleration
-                    features[f'{ticker}_acceleration'] = returns.diff().fillna(0)
-                    
-                except KeyError:
-                    logger.warning(f"OHLCV data not available for {ticker}")
-                    # Fill with default values
-                    features[f'{ticker}_atr'] = pd.Series(0, index=features.index)
-                    features[f'{ticker}_volume_ma'] = pd.Series(0, index=features.index)
-                    features[f'{ticker}_volume_ratio'] = pd.Series(1.0, index=features.index)
-                    features[f'{ticker}_adx'] = pd.Series(0, index=features.index)
-                    features[f'{ticker}_vpt'] = pd.Series(0, index=features.index)
-                    features[f'{ticker}_acceleration'] = pd.Series(0, index=features.index)
-            
-            # Advanced momentum indicators with increased min_periods
-            moving_avg_20 = close_prices[ticker].rolling(window=20, min_periods=10).mean().reindex(features.index)
-            moving_avg_50 = close_prices[ticker].rolling(window=50, min_periods=25).mean().reindex(features.index)
-            
-            # Safe division for momentum ratio
-            momentum_ratio = pd.Series(1.0, index=features.index)  # Default to 1.0
-            valid_mask = (moving_avg_50 > 1e-10) & (~moving_avg_20.isnull()) & (~moving_avg_50.isnull())
-            momentum_ratio[valid_mask] = moving_avg_20[valid_mask] / moving_avg_50[valid_mask]
-            
-            features[f'{ticker}_momentum_ratio'] = momentum_ratio.fillna(1.0)
-            
-            # Volatility clustering feature with error handling and increased min_periods
-            vol_clustering = returns.rolling(window=20, min_periods=10).apply(
-                lambda x: x.autocorr(lag=1) if len(x) > 2 and not np.isclose(x.std(), 0) else 0, 
-                raw=False
-            )
-            features[f'{ticker}_volatility_clustering'] = vol_clustering.reindex(features.index).fillna(0)
-            
-            # Add RSI with safe division and increased min_periods
-            delta = close_prices[ticker].diff().reindex(features.index).fillna(0)
-            gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=7).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=7).mean()
-            
-            # Safe RSI calculation
-            rs = pd.Series(1.0, index=features.index)  # Default to 1.0 (RSI 50)
-            valid_mask = (loss > 1e-10) & (~gain.isnull()) & (~loss.isnull())
-            rs[valid_mask] = gain[valid_mask] / loss[valid_mask]
-            rsi = np.where(rs > 0, 100 - (100 / (1 + rs)), 50)
-            features[f'{ticker}_rsi'] = pd.Series(rsi, index=features.index).fillna(50)
-            
-            # Add MACD with error handling and increased min_periods
-            try:
-                exp12 = close_prices[ticker].ewm(span=12, adjust=False, min_periods=6).mean().reindex(features.index)
-                exp26 = close_prices[ticker].ewm(span=26, adjust=False, min_periods=13).mean().reindex(features.index)
-                macd = exp12 - exp26
-                features[f'{ticker}_macd'] = macd.fillna(0)
-                features[f'{ticker}_macd_signal'] = macd.ewm(span=9, adjust=False, min_periods=5).mean().fillna(0)
-            except:
-                features[f'{ticker}_macd'] = pd.Series(0, index=features.index)
-                features[f'{ticker}_macd_signal'] = pd.Series(0, index=features.index)
-            
-            # Add Bollinger Bands with safe calculations and increased min_periods
-            rolling_mean = close_prices[ticker].rolling(window=20, min_periods=10).mean().reindex(features.index)
-            rolling_std = close_prices[ticker].rolling(window=20, min_periods=10).std().reindex(features.index)
-            
-            features[f'{ticker}_bollinger_upper'] = (rolling_mean + (rolling_std * 2)).fillna(method='bfill')
-            features[f'{ticker}_bollinger_lower'] = (rolling_mean - (rolling_std * 2)).fillna(method='bfill')
-            
-            # Safe Bollinger % calculation
-            denominator = features[f'{ticker}_bollinger_upper'] - features[f'{ticker}_bollinger_lower']
-            bollinger_pct = pd.Series(0.5, index=features.index)  # Default to 0.5 (middle of band)
-            valid_mask = (denominator > 1e-10) & (~denominator.isnull())
-            bollinger_pct[valid_mask] = (
-                (close_prices[ticker].reindex(features.index)[valid_mask] - 
-                features[f'{ticker}_bollinger_lower'][valid_mask]) / 
-                denominator[valid_mask]
-            )
-            features[f'{ticker}_bollinger_pct'] = bollinger_pct.fillna(0.5)
-        
-        # Enhanced NaN handling
-        nan_counts = features.isnull().sum()
-        if nan_counts.any():
-            logger.warning(f"NaN counts before final cleaning: {nan_counts.sum()}")
-            
-            # Replace inf/-inf with NaN first
-            features = features.replace([np.inf, -np.inf], np.nan)
-            
-            # Drop rows with excessive NaNs (more than 30% of columns)
-            features = features.dropna(thresh=len(features.columns) * 0.7)
-            
-            # Fill remaining NaNs with appropriate values using multiple strategies
-            for col in features.columns:
-                if features[col].isnull().any():
-                    # First try forward fill
-                    features[col] = features[col].fillna(method='ffill')
-                    
-                    # Then backward fill
-                    features[col] = features[col].fillna(method='bfill')
-                    
-                    # Then use interpolation
-                    features[col] = features[col].interpolate()
-                    
-                    # Finally, use median for numeric columns
-                    if features[col].isnull().any():
-                        if features[col].dtype in [np.float64, np.int64]:
-                            median_val = features[col].median()
-                            if not np.isnan(median_val):
-                                features[col] = features[col].fillna(median_val)
-                            else:
-                                features[col] = features[col].fillna(0)
-                        else:
-                            features[col] = features[col].fillna(0)
-        
-        logger.info(f"Calculated advanced features with shape: {features.shape}, NaNs: {features.isnull().sum().sum()}")
-        return features
-
-    def calculate_quant_features(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Advanced quantitative features for regime detection with NaN handling"""
-        # Extract close prices for returns calculation
-        close_prices = data.xs('c', axis=1, level=0) if isinstance(data.columns, pd.MultiIndex) else data
-        
-        features = pd.DataFrame(index=close_prices.index)
-        
-        for ticker in close_prices.columns:
-            returns = close_prices[ticker].pct_change().dropna()
-            
-            # Volatility features
-            features[f'{ticker}_realized_vol'] = returns.rolling(20, min_periods=5).std()
-            
-            # Parkinson volatility estimator (if we have OHLC data)
-            if isinstance(data.columns, pd.MultiIndex):
-                try:
-                    highs = data.xs('h', axis=1, level=0)[ticker]
-                    lows = data.xs('l', axis=1, level=0)[ticker]
-                    parkinson = np.log(highs / lows)
-                    features[f'{ticker}_parkinson_vol'] = parkinson.rolling(20, min_periods=5).std() * (1/(4*np.log(2)))
-                except KeyError:
-                    logger.warning(f"High/Low data not available for {ticker}")
-            
-            # Advanced momentum
-            features[f'{ticker}_ts_momentum'] = close_prices[ticker].pct_change(20)
-            features[f'{ticker}_cross_sectional_mom'] = (
-                returns.rolling(20, min_periods=5).mean() / 
-                returns.rolling(20, min_periods=5).std()
-            ).fillna(0)
-            
-            # Mean reversion features
-            features[f'{ticker}_hurst'] = self.calculate_hurst_exponent(close_prices[ticker])
-            features[f'{ticker}_half_life'] = self.calculate_mean_reversion_half_life(close_prices[ticker])
-            
-            # Jump detection
-            features[f'{ticker}_jump_ratio'] = self.calculate_jump_ratio(returns)
-            
-            # Tail risk measures
-            features[f'{ticker}_var_95'] = returns.rolling(100, min_periods=20).apply(
-                lambda x: np.percentile(x, 5) if len(x) > 0 else np.nan
-            )
-            features[f'{ticker}_expected_shortfall'] = returns.rolling(100, min_periods=20).apply(
-                lambda x: x[x <= np.percentile(x, 5)].mean() if len(x[x <= np.percentile(x, 5)]) > 0 else 0
-            )
-            
-            # Microstructure features (if available)
-            if isinstance(data.columns, pd.MultiIndex):
-                try:
-                    volumes = data.xs('v', axis=1, level=0)[ticker]
-                    features[f'{ticker}_volume_zscore'] = (
-                        volumes - volumes.rolling(50, min_periods=10).mean()
-                    ) / volumes.rolling(50, min_periods=10).std()
-                    
-                    # Volume-price relationship
-                    volume_pct_change = volumes.pct_change()
-                    features[f'{ticker}_volume_price_correlation'] = returns.rolling(
-                        20, min_periods=5
-                    ).corr(volume_pct_change)
-                except KeyError:
-                    logger.warning(f"Volume data not available for {ticker}")
-        
-        # Market structure features
-        returns_matrix = close_prices.pct_change().dropna()
-        if len(returns_matrix) > 0:
-            features['dispersion'] = returns_matrix.std(axis=1)
-            features['skewness'] = returns_matrix.skew(axis=1)
-            features['kurtosis'] = returns_matrix.kurtosis(axis=1)
-        
-        # Enhanced NaN handling
-        features = features.replace([np.inf, -np.inf], np.nan)
-        features = features.ffill().bfill().fillna(0)  # Forward then backward fill then zero fill
-        
-        return features
-    
-    def calculate_hurst_exponent(self, series, max_lag=50):
-        """Calculate Hurst exponent for mean reversion detection"""
-        lags = range(2, max_lag)
-        tau = [np.std(np.subtract(series[lag:], series[:-lag])) for lag in lags]
-        poly = np.polyfit(np.log(lags), np.log(tau), 1)
-        return poly[0] * 2.0
-    
-    def calculate_mean_reversion_half_life(self, series):
-        """Calculate half-life of mean reversion"""
-        series = series.dropna()
-        lagged = series.shift(1)
-        delta = series - lagged
-        beta = np.polyfit(lagged[1:], delta[1:], 1)[0]
-        half_life = -np.log(2) / beta
-        return half_life
-    
-    def calculate_jump_ratio(self, returns, window=20):
-        """Calculate jump ratio to detect large price movements"""
-        returns = returns.dropna()
-        jump_threshold = returns.rolling(window).std() * 3
-        jumps = (np.abs(returns) > jump_threshold).astype(int)
-        return jumps.rolling(window).mean()
-        
-    def train_enhanced_ensemble(self, features: pd.DataFrame):
-        """Train an enhanced ensemble of models for regime detection with robust NaN handling"""
-        # Comprehensive data validation
-        if features.empty:
-            logger.error("No features available for training")
-            return
-        
-        # Check for and handle NaN values
-        nan_count = features.isnull().sum().sum()
-        if nan_count > 0:
-            logger.warning(f"Found {nan_count} NaN values in features, cleaning...")
-            
-            # Drop rows with excessive NaNs
-            features = features.dropna(thresh=len(features.columns) * 0.8)
-            
-            # Fill remaining NaNs with appropriate values
-            for col in features.columns:
-                if features[col].isnull().any():
-                    if features[col].dtype in [np.float64, np.int64]:
-                        # Use median for numeric columns
-                        median_val = features[col].median()
-                        if not np.isnan(median_val):
-                            features[col] = features[col].fillna(median_val)
-                        else:
-                            features[col] = features[col].fillna(0)
-                    else:
-                        features[col] = features[col].fillna(0)
-        
-        # Check if we still have enough data
-        if len(features) < 50:
-            logger.error(f"Insufficient data for training: {len(features)} samples")
-            return
-        
-        # Prepare training data with clear examples
-        labeled_features = features.copy()
-        
-        # Identify clear bull/bear periods using multiple confirmation
-        returns = features['^IXIC_return'].rolling(30).sum()
-        volatility = features['^IXIC_volatility_ratio'].rolling(30).mean()
-        momentum = features['^IXIC_momentum_ratio'].rolling(30).mean()
-        adx = features['^IXIC_adx'].rolling(30).mean() if '^IXIC_adx' in features.columns else pd.Series(0, index=features.index)
-        
-        # Label clear trends
-        labeled_features['regime_label'] = 2  # Default to sideways
-        
-        # Strong bull: high returns, low volatility, strong momentum, strong trend
-        bull_conditions = (
-            (returns > 0.05) & 
-            (volatility < 1.2) & 
-            (momentum > 1.05) &
-            (adx > 25)
-        )
-        labeled_features.loc[bull_conditions, 'regime_label'] = 4
-        
-        # Strong bear: negative returns, high volatility, weak momentum, strong trend
-        bear_conditions = (
-            (returns < -0.05) & 
-            (volatility > 1.5) & 
-            (momentum < 0.95) &
-            (adx > 25)
-        )
-        labeled_features.loc[bear_conditions, 'regime_label'] = 0
-        
-        # Use the regime_label for supervised learning if we have enough labeled examples
-        if 'regime_label' in labeled_features.columns:
-            # Count labeled examples
-            bull_count = (labeled_features['regime_label'] == 4).sum()
-            bear_count = (labeled_features['regime_label'] == 0).sum()
-            sideways_count = (labeled_features['regime_label'] == 2).sum()
-            
-            logger.info(f"Training data: {bull_count} bull, {bear_count} bear, {sideways_count} sideways examples")
-            
-            # Only use supervised learning if we have enough examples
-            if bull_count > 10 and bear_count > 10:
-                # Separate features and labels
-                labels = labeled_features['regime_label']
-                features_for_training = labeled_features.drop('regime_label', axis=1)
-                
-                scaled_features = self.scaler.fit_transform(features_for_training)
-                
-                # Train Random Forest with labeled data
-                self.rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
-                self.rf_model.fit(scaled_features, labels)
-                
-                logger.info("Trained Random Forest with labeled examples")
-            else:
-                # Fallback to unsupervised training
-                scaled_features = self.scaler.fit_transform(features)
-        else:
-            # Fallback to unsupervised training
-            scaled_features = self.scaler.fit_transform(features)
-        
-        # Store training data for rolling updates
-        self.training_data = scaled_features
-        
-        # Dimensionality reduction
-        self.pca = PCA(n_components=min(config.PCA_COMPONENTS, scaled_features.shape[1]))
-        pca_features = self.pca.fit_transform(scaled_features)
-        
-        # HMM Model
-        self.hmm_model = hmm.GaussianHMM(
-            n_components=config.HMM_N_COMPONENTS,
-            covariance_type=config.HMM_COVARIANCE_TYPE,
-            n_iter=config.HMM_N_ITER,
-            random_state=42
-        )
-        self.hmm_model.fit(pca_features)
-        
-        # GMM Model
-        self.gmm_model = GaussianMixture(
-            n_components=config.HMM_N_COMPONENTS,
-            covariance_type=config.HMM_COVARIANCE_TYPE,
-            max_iter=config.HMM_N_ITER,
-            random_state=42
-        )
-        self.gmm_model.fit(pca_features)
-        
-        # K-means clustering
-        self.kmeans = KMeans(n_clusters=config.N_CLUSTERS, random_state=42)
-        self.kmeans.fit(pca_features)
-        
-        # Create consensus labels
-        hmm_labels = self.hmm_model.predict(pca_features)
-        gmm_labels = self.gmm_model.predict(pca_features)
-        
-        consensus_labels = []
-        for i in range(len(hmm_labels)):
-            votes = [hmm_labels[i], gmm_labels[i], self.kmeans.labels_[i]]
-            consensus_labels.append(max(set(votes), key=votes.count))
-        
-        # If we didn't use supervised learning earlier, train RF with consensus labels
-        if not hasattr(self, 'rf_model') or self.rf_model is None:
-            self.rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
-            self.rf_model.fit(scaled_features, consensus_labels)
-        
-        # Anomaly detection
-        self.anomaly_detector = IsolationForest(contamination=0.05, random_state=42)
-        self.anomaly_detector.fit(scaled_features)
-        
-        # Train deep learning models if enabled
-        if config.USE_DEEP_LEARNING:
-            self._train_deep_learning_models(scaled_features, consensus_labels)
-        
-        # Train Bayesian model for uncertainty estimation
-        if config.UNCERTAINTY_ESTIMATION:
-            try:
-                self.bayesian_model = BayesianMarketRegime(n_regimes=config.HMM_N_COMPONENTS)
-                self.bayesian_model.fit(scaled_features)
-            except Exception as e:
-                logger.warning(f"Bayesian model training failed: {e}")
-                self.bayesian_model = None
-        
-        logger.info("Enhanced ensemble model training completed")
-        logger.info(f"PCA explained variance ratio: {self.pca.explained_variance_ratio_.sum():.3f}")
-        
-    def _train_deep_learning_models(self, features, labels):
-        """Train deep learning models for regime detection"""
-        # Convert to PyTorch tensors
-        X_tensor = torch.FloatTensor(features)
-        y_tensor = torch.LongTensor(labels)
-        
-        # Reshape for sequence models (add time dimension)
-        seq_length = 10  # Use 10-day sequences
-        n_samples = len(features) - seq_length + 1
-        X_seq = np.zeros((n_samples, seq_length, features.shape[1]))
-        y_seq = np.zeros(n_samples, dtype=int)
-        
-        for i in range(n_samples):
-            X_seq[i] = features[i:i+seq_length]
-            y_seq[i] = labels[i+seq_length-1]
-        
-        X_seq_tensor = torch.FloatTensor(X_seq)
-        y_seq_tensor = torch.LongTensor(y_seq)
-        
-        # Train LSTM model
-        self.lstm_model = MarketRegimeLSTM(
-            input_size=features.shape[1],
-            hidden_size=64,
-            num_layers=2,
-            num_classes=len(np.unique(labels))
-        )
-        
-        # Train CNN model
-        self.cnn_model = MarketRegimeCNN(
-            input_channels=features.shape[1],
-            num_classes=len(np.unique(labels))
-        )
-        
-        # Simple training loop (in practice, you'd want proper validation)
-        criterion = nn.CrossEntropyLoss()
-        optimizer_lstm = optim.Adam(self.lstm_model.parameters(), lr=0.001)
-        optimizer_cnn = optim.Adam(self.cnn_model.parameters(), lr=0.001)
-        
-        # Train LSTM
-        for epoch in range(10):  # Just a few epochs for demonstration
-            optimizer_lstm.zero_grad()
-            outputs = self.lstm_model(X_seq_tensor)
-            loss = criterion(outputs, y_seq_tensor)
-            loss.backward()
-            optimizer_lstm.step()
-            
-        # Train CNN
-        for epoch in range(10):
-            optimizer_cnn.zero_grad()
-            outputs = self.cnn_model(X_seq_tensor)
-            loss = criterion(outputs, y_seq_tensor)
-            loss.backward()
-            optimizer_cnn.step()
-            
-        logger.info("Deep learning models trained")
-        
-    def predict_enhanced_regime(self, features: pd.DataFrame) -> Tuple[int, float, Dict]:
-        """Predict using enhanced ensemble approach with NaN handling and validation"""
-        # Check for and handle NaN values in prediction data
-        if features.isnull().any().any():
-            logger.warning(f"Prediction features contain {features.isnull().sum().sum()} NaN values, filling with zeros")
-            features = features.fillna(0)
-        
-        scaled_features = self.scaler.transform(features)
-        pca_features = self.pca.transform(scaled_features)
-        
-        # Get predictions from all models
-        hmm_pred = self.hmm_model.predict(pca_features[-5:])  # Use last 5 days
-        gmm_pred = self.gmm_model.predict(pca_features[-5:])
-        kmeans_pred = self.kmeans.predict(pca_features[-5:])
-        rf_pred = self.rf_model.predict(scaled_features[-5:])
-        anomaly_score = self.anomaly_detector.score_samples(scaled_features[-5:])
-        
-        # Get probabilities for confidence calculation
-        hmm_probs = self.hmm_model.predict_proba(pca_features[-5:])
-        gmm_probs = self.gmm_model.predict_proba(pca_features[-5:])
-        rf_probs = self.rf_model.predict_proba(scaled_features[-5:])
-        
-        # Use the most recent predictions
-        recent_hmm = hmm_pred[-1]
-        recent_gmm = gmm_pred[-1]
-        recent_kmeans = kmeans_pred[-1]
-        recent_rf = rf_pred[-1]
-        
-        # Calculate confidence based on model agreement and probabilities
-        model_agreement = np.mean([
-            recent_hmm == recent_gmm,
-            recent_hmm == recent_kmeans,
-            recent_hmm == recent_rf,
-            recent_gmm == recent_kmeans,
-            recent_gmm == recent_rf,
-            recent_kmeans == recent_rf
-        ])
-        
-        # Average the probabilities from models that support the final decision
-        final_regime = recent_hmm  # Start with HMM as base
-        regime_votes = [recent_hmm, recent_gmm, recent_kmeans, recent_rf]
-        final_regime = max(set(regime_votes), key=regime_votes.count)
-        
-        supporting_probs = []
-        if recent_hmm == final_regime:
-            supporting_probs.append(np.max(hmm_probs, axis=1)[-1])
-        if recent_gmm == final_regime:
-            supporting_probs.append(np.max(gmm_probs, axis=1)[-1])
-        if recent_rf == final_regime:
-            supporting_probs.append(np.max(rf_probs, axis=1)[-1])
-        
-        confidence = np.mean(supporting_probs) if supporting_probs else 0.5
-        confidence = confidence * (0.7 + 0.3 * model_agreement)  # Scale by agreement
-        
-        # Adjust confidence for anomalies
-        anomaly_factor = 1.0 - min(1.0, max(0.0, (1.0 - np.mean(anomaly_score)) * 2))  # Map [-1, 1] to [0, 1]
-        confidence = confidence * (0.8 + 0.2 * anomaly_factor)  # Reduce confidence in anomalous conditions
-        
-        # Bayesian uncertainty estimation
-        bayesian_uncertainty = 0.5  # Default uncertainty
-        if config.UNCERTAINTY_ESTIMATION and self.bayesian_model:
-            try:
-                bayesian_probs, bayesian_uncert, _ = self.bayesian_model.predict_proba(scaled_features[-1:])
-                bayesian_confidence = 1.0 - bayesian_uncert[0]
-                # Blend traditional confidence with Bayesian confidence
-                confidence = 0.7 * confidence + 0.3 * bayesian_confidence
-                bayesian_uncertainty = bayesian_uncert[0]
-            except Exception as e:
-                logger.warning(f"Bayesian prediction failed: {e}")
-        
-        # Deep learning predictions
-        if config.USE_DEEP_LEARNING and self.lstm_model and self.cnn_model:
-            # Prepare sequence data for deep learning models
-            seq_length = 10
-            if len(scaled_features) >= seq_length:
-                try:
-                    X_seq = scaled_features[-seq_length:].reshape(1, seq_length, -1)
-                    X_seq_tensor = torch.FloatTensor(X_seq)
-                    
-                    # LSTM prediction
-                    lstm_output = self.lstm_model(X_seq_tensor)
-                    lstm_probs = torch.softmax(lstm_output, dim=1).detach().numpy()[0]
-                    lstm_pred = np.argmax(lstm_probs)
-                    
-                    # CNN prediction
-                    cnn_output = self.cnn_model(X_seq_tensor)
-                    cnn_probs = torch.softmax(cnn_output, dim=1).detach().numpy()[0]
-                    cnn_pred = np.argmax(cnn_probs)
-                    
-                    # Add to voting
-                    regime_votes.extend([lstm_pred, cnn_pred])
-                    
-                    # Update final regime based on all models
-                    final_regime = max(set(regime_votes), key=regime_votes.count)
-                    
-                    # Update confidence with deep learning models
-                    if lstm_pred == final_regime:
-                        supporting_probs.append(lstm_probs[lstm_pred])
-                    if cnn_pred == final_regime:
-                        supporting_probs.append(cnn_probs[cnn_pred])
-                    
-                    if supporting_probs:
-                        confidence = np.mean(supporting_probs)
-                except Exception as e:
-                    logger.warning(f"Deep learning prediction failed: {e}")
-        
-        # Initialize transition probability variables with defaults
-        transition_prob = 0.5  # Default probability
-        transition_uncertainty = 1.0  # Maximum uncertainty
-        
-        # Transition probability adjustment (only if we have a previous regime)
-        if config.REGIME_TRANSITION_PROBABILITIES:
-            if self.previous_regime is not None:
-                try:
-                    transition_prob = self.transition_model.get_transition_prob(self.previous_regime, final_regime)
-                    transition_uncertainty = self.transition_model.get_transition_uncertainty(self.previous_regime)
-                    
-                    # Adjust confidence based on transition probability
-                    # Low probability transitions reduce confidence
-                    confidence = confidence * (0.5 + 0.5 * transition_prob)
-                    
-                    # High uncertainty about transitions also reduces confidence
-                    confidence = confidence * (1.0 - 0.3 * transition_uncertainty)
-                    
-                    # Update transition model
-                    self.transition_model.update(self.previous_regime, final_regime)
-                except Exception as e:
-                    logger.warning(f"Transition probability calculation failed: {e}")
-            else:
-                # First prediction, initialize with default values
-                transition_prob = 0.25  # Equal probability for 4 regimes
-                transition_uncertainty = 1.0  # Maximum uncertainty
-        
-        # Validate the prediction using ADX and momentum
-        is_valid = True
-        adx_value = features['^IXIC_adx'].iloc[-1] if '^IXIC_adx' in features.columns else 0
-        momentum = features['^IXIC_momentum_ratio'].iloc[-1] if '^IXIC_momentum_ratio' in features.columns else 1.0
-        
-        # Check for conflicting signals
-        if final_regime in [0, 1] and momentum > 1.02 and adx_value < 20:  # Bear market but positive momentum and weak trend
-            logger.warning("Invalid bear market prediction: positive momentum and weak trend")
-            is_valid = False
-        elif final_regime in [3, 4] and momentum < 0.98 and adx_value < 20:  # Bull market but negative momentum and weak trend
-            logger.warning("Invalid bull market prediction: negative momentum and weak trend")
-            is_valid = False
-            
-        # Require higher confidence for trend regimes
-        if final_regime in [0, 4] and confidence < 0.7:  # Strong bear or bull but low confidence
-            logger.warning(f"Low confidence for strong regime prediction: {confidence}")
-            is_valid = False
-        
-        # If invalid, default to sideways market
-        if not is_valid:
-            final_regime = 2  # Sideways market
-            confidence = max(0.5, confidence * 0.8)  # Reduce confidence
-        
-        # Store current regime for next prediction
-        self.previous_regime = final_regime
-        
-        # Prepare feature values for storage
-        feature_values = {
-            col: features[col].iloc[-1] for col in features.columns
-        }
-        feature_values['anomaly_score'] = np.mean(anomaly_score)
-        feature_values['model_agreement'] = model_agreement
-        
-        # Add uncertainty measures
-        if config.UNCERTAINTY_ESTIMATION:
-            feature_values['bayesian_uncertainty'] = bayesian_uncertainty
-        
-        # Add transition probabilities if available
-        if config.REGIME_TRANSITION_PROBABILITIES:
-            feature_values['transition_probability'] = transition_prob
-            feature_values['transition_uncertainty'] = transition_uncertainty
-        
-        return final_regime, confidence, feature_values
-    
-    def prepare_training_data(self, features: pd.DataFrame) -> pd.DataFrame:
-        """Prepare training data with labeled examples of clear market regimes"""
-        # Add labeled examples based on clear market periods
-        labeled_features = features.copy()
-        
-        # Identify clear bull/bear periods using multiple confirmation
-        returns = features['^IXIC_return'].rolling(30).sum()
-        volatility = features['^IXIC_volatility_ratio'].rolling(30).mean()
-        momentum = features['^IXIC_momentum_ratio'].rolling(30).mean()
-        adx = features['^IXIC_adx'].rolling(30).mean()
-        
-        # Label clear trends
-        labeled_features['regime_label'] = 2  # Default to sideways
-        
-        # Strong bull: high returns, low volatility, strong momentum, strong trend
-        bull_conditions = (
-            (returns > 0.05) & 
-            (volatility < 1.2) & 
-            (momentum > 1.05) &
-            (adx > 25)
-        )
-        labeled_features.loc[bull_conditions, 'regime_label'] = 4
-        
-        # Strong bear: negative returns, high volatility, weak momentum, strong trend
-        bear_conditions = (
-            (returns < -0.05) & 
-            (volatility > 1.5) & 
-            (momentum < 0.95) &
-            (adx > 25)
-        )
-        labeled_features.loc[bear_conditions, 'regime_label'] = 0
-        
-        return labeled_features
-        
-    def interpret_regime(self, regime: int, features: Dict) -> Dict:
-        """Enhanced regime interpretation with trend confirmation"""
-        base_interpretation = {
-            0: {"label": "Strong Bear", "color": "darkred", "description": "Strong downward trend with high volatility"},
-            1: {"label": "Weak Bear", "color": "red", "description": "Moderate downward pressure"},
-            2: {"label": "Sideways", "color": "gray", "description": "Range-bound with neutral momentum"},
-            3: {"label": "Weak Bull", "color": "lightgreen", "description": "Moderate upward momentum"},
-            4: {"label": "Strong Bull", "color": "green", "description": "Strong upward trend with low volatility"}
-        }
-        
-        # Default to unknown if regime not in interpretation
-        interpretation = base_interpretation.get(regime, {
-            "label": f"Unknown Regime {regime}",
-            "color": "purple",
-            "description": "Unclassified market regime"
-        })
-        
-        # Use ADX to confirm trend strength
-        adx_value = features.get('^IXIC_adx', 0)
-        momentum = features.get('^IXIC_momentum_ratio', 1.0)
-        volatility = features.get('^IXIC_volatility_ratio', 1.0)
-        
-        # Adjust interpretation based on trend strength
-        if regime in [0, 4]:  # Strong regimes
-            if adx_value < 25:  # Weak trend
-                # Downgrade to weak regime
-                interpretation = base_interpretation.get(regime-1 if regime == 0 else regime+1, interpretation)
-        
-        # Add momentum confirmation
-        if regime in [0, 1] and momentum > 1.02:  # Bear market but positive momentum
-            interpretation = base_interpretation.get(2, interpretation)  # Reclassify as sideways
-        elif regime in [3, 4] and momentum < 0.98:  # Bull market but negative momentum
-            interpretation = base_interpretation.get(2, interpretation)  # Reclassify as sideways
-            
-        # Add contextual details based on features
-        details = []
-        
-        if volatility > 1.5:
-            details.append("High volatility environment")
-        elif volatility < 0.8:
-            details.append("Low volatility environment")
-            
-        if momentum > 1.05:
-            details.append("Strong upward momentum")
-        elif momentum < 0.95:
-            details.append("Strong downward momentum")
-            
-        if adx_value > 25:
-            details.append("Strong trend")
-        elif adx_value < 20:
-            details.append("Weak or ranging market")
-            
-        if details:
-            interpretation["details"] = ", ".join(details)
-        
-        return interpretation
-
-    def validate_regime_prediction(self, regime: int, confidence: float, features: Dict) -> bool:
-        """Validate regime prediction based on multiple factors"""
-        adx_value = features.get('^IXIC_adx', 0)
-        momentum = features.get('^IXIC_momentum_ratio', 1.0)
-        volatility = features.get('^IXIC_volatility_ratio', 1.0)
-        
-        # Check for conflicting signals
-        if regime in [0, 1] and momentum > 1.02 and adx_value < 20:
-            return False  # Likely false bear signal
-        elif regime in [3, 4] and momentum < 0.98 and adx_value < 20:
-            return False  # Likely false bull signal
-            
-        # Require higher confidence for trend regimes
-        if regime in [0, 4] and confidence < 0.7:
-            return False
-            
-        return True
-
-    async def scan_market_regime(self):
-        """Perform a complete market regime scan with enhanced data validation"""
-        if self.shutdown_requested:
-            return False
-            
-        logger.info("Starting market regime scan")
-        start_time = time.time()
-        
+        # Check API accessibility
         try:
-            # Determine end date for data fetching
-            end_date = None
-            if self.backtest_mode and self.backtest_date:
-                end_date = datetime.strptime(self.backtest_date, "%Y-%m-%d")
-            
-            # Fetch market data
-            market_data = await self.fetch_market_data(end_date=end_date)
-            if market_data.empty:
-                logger.error("No market data available for regime analysis")
-                return False
-                
-            # Data validation
-            if market_data.isnull().sum().sum() > len(market_data) * 0.5:  # If more than 50% NaN
-                logger.error("Insufficient quality data for regime detection")
-                return False
-                
-            # Calculate features
-            basic_features = self.calculate_advanced_features(market_data)
-            quant_features = self.calculate_quant_features(market_data)
-            
-            # Validate features before combining
-            basic_features = self.validate_features(basic_features)
-            quant_features = self.validate_features(quant_features)
-            
-            # Check if we have enough data
-            if basic_features.empty or quant_features.empty or len(basic_features) < 50:
-                logger.error("Not enough data to calculate features")
-                return False
-                
-            # Combine features with robust method
-            features = self.robust_feature_combination(basic_features, quant_features)
-            
-            # Final validation
-            features = self.validate_features(features)
-            
-            # Final NaN check and handling
-            if features.isnull().any().any():
-                logger.warning(f"Final features contain {features.isnull().sum().sum()} NaN values, cleaning...")
-                features = features.replace([np.inf, -np.inf], np.nan)
-                features = features.ffill().bfill().fillna(0)
-                
-            if features.empty:
-                logger.error("No features calculated for regime analysis")
-                return False
-                
-            # Train models if not already trained
-            if self.hmm_model is None:
-                self.train_enhanced_ensemble(features)
-                
-            # Predict current regime
-            regime, confidence, feature_values = self.predict_enhanced_regime(features)
-                
-            interpretation = self.interpret_regime(regime, feature_values)
-            regime_label = interpretation["label"]
-            
-            # Save to appropriate database
-            timestamp = datetime.now()
-            
-            if self.backtest_mode and self.backtest_date:
-                self.backtest_db.save_backtest_market_regime(
-                    self.backtest_date, timestamp, regime, regime_label, confidence, feature_values, self.model_version
-                )
-            else:
-                self.db.save_market_regime(
-                    timestamp, regime, regime_label, confidence, feature_values, self.model_version
-                )
-                logger.info(f"Current market regime: {regime_label} (confidence: {confidence:.2f})")
-            
-            elapsed = time.time() - start_time
-            logger.info(f"Market regime scan completed in {elapsed:.2f}s")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error during market regime scan: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return False
-            
-    def start(self):
-        if not self.active:
-            self.active = True
-            self.shutdown_requested = False
-            logger.info("Market regime scanner started")
-            
-    def stop(self):
-        self.active = False
-        self.shutdown_requested = True
-        logger.info("Market regime scanner stopped")
+            async with aiohttp.ClientSession() as session:
+                test_url = f"https://api.polygon.io/v3/reference/tickers?ticker=AAPL&apiKey={self.api_key}"
+                async with session.get(test_url, timeout=5) as response:
+                    status['api_accessible'] = response.status == 200
+        except:
+            status['api_accessible'] = False
         
-    async def shutdown(self):
-        """Cleanup resources"""
-        self.stop()
-        self.db.close_all_connections()
-        self.backtest_db.close_all_connections()
-        logger.info("Market regime scanner shutdown complete")
+        # Check database connection
+        try:
+            async with self.db.get_connection() as conn:
+                await conn.execute("SELECT 1")
+                status['database_connected'] = True
+        except:
+            status['database_connected'] = False
         
-    def get_backtest_regimes_by_date(self, backtest_date: str) -> List[Dict]:
-        """Get backtest market regimes for a specific date"""
-        return self.backtest_db.get_backtest_regimes_by_date(backtest_date)
+        # Check cache freshness
+        status['cache_updated'] = time.time() - self.last_refresh_time < 86400  # 24 hours
         
-    def get_backtest_dates(self) -> List[str]:
-        """Get all available backtest dates"""
-        return self.backtest_db.get_backtest_dates()
+        return status
+
+    async def initialize_strategy_engine(self, config: Dict[str, Any] = None) -> StrategyExecutionEngine:
+        """Initialize the strategy execution engine"""
+        if self.strategy_engine is None:
+            self.strategy_engine = StrategyExecutionEngine(self, config)
+        return self.strategy_engine
+
+    async def run_hybrid_strategy(self, config: Dict[str, Any] = None, live_trading: bool = False) -> Dict[str, Any]:
+        """Run the hybrid strategy using the scanner"""
+        strategy_engine = await self.initialize_strategy_engine(config)
+        return await strategy_engine.execute_strategy(live_trading)
+
+    async def run_strategy_backtest(self, symbols: List[str], start_date: str, end_date: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Run backtest for the hybrid strategy"""
+        strategy_engine = await self.initialize_strategy_engine(config)
+        return await strategy_engine.run_backtest(symbols, start_date, end_date)
 
 # ======================== BACKTESTER ======================== #
 class Backtester:
-    def __init__(self, ticker_scanner, regime_scanner=None):
+    def __init__(self, ticker_scanner):
         self.ticker_scanner = ticker_scanner
-        self.regime_scanner = regime_scanner
         self.run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-    async def run_backtest(self, start_date, end_date=None, test_tickers=True, test_regime=True):
+    @monitor_performance
+    @handle_errors()
+    async def run_backtest(self, start_date, end_date=None, test_tickers=True):
         """
         Run backtest for a specific date range
         Args:
             start_date: datetime object or string in YYYY-MM-DD format
             end_date: datetime object or string in YYYY-MM-DD format (optional)
             test_tickers: Whether to test ticker fetching
-            test_regime: Whether to test market regime detection
         """
         if end_date is None:
             end_date = start_date
@@ -2584,7 +2609,7 @@ class Backtester:
             end_date = datetime.strptime(end_date, "%Y-%m-%d")
             
         logger.info(f"Starting backtest from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
-        logger.info(f"Testing: Tickers={test_tickers}, Market Regime={test_regime}")
+        logger.info(f"Testing: Tickers={test_tickers}")
         logger.info(f"Run ID: {self.run_id}")
         
         # Dictionary to track ticker availability across all dates
@@ -2592,32 +2617,28 @@ class Backtester:
         
         current_date = start_date
         while current_date <= end_date:
-            if current_date.weekday() < 5:  # Only weekdays
+            # Only process trading days
+            if self.ticker_scanner.is_trading_day(current_date):
                 date_str = current_date.strftime("%Y-%m-%d")
                 
                 if test_tickers:
                     # Use the ticker_scanner's method, not the db directly
-                    existing_ticker_data = self.ticker_scanner.get_backtest_tickers(date_str)
+                    existing_ticker_data = await self.ticker_scanner.get_backtest_tickers(date_str)
                     if not existing_ticker_data:
                         await self.run_single_day_ticker_backtest(current_date)
-                
-                if test_regime and self.regime_scanner:
-                    # Use the regime_scanner's method, not the db directly
-                    existing_regime_data = self.regime_scanner.get_backtest_regimes_by_date(date_str)
-                    if not existing_regime_data:
-                        await self.run_single_day_regime_backtest(current_date)
             
             current_date += timedelta(days=1)
         
         # If testing tickers, filter tickers to only those available for the entire period
         if test_tickers:
             # Get all dates in the range
-            all_dates = [d.strftime("%Y-%m-%d") for d in self._date_range(start_date, end_date) if d.weekday() < 5]
+            all_dates = [d.strftime("%Y-%m-%d") for d in self._date_range(start_date, end_date) 
+                        if self.ticker_scanner.is_trading_day(d)]
             
             # Track which tickers were available on each date
             for date_str in all_dates:
                 # Use the ticker_scanner's method, not the db directly
-                ticker_data = self.ticker_scanner.get_backtest_tickers(date_str)
+                ticker_data = await self.ticker_scanner.get_backtest_tickers(date_str)
                 if ticker_data:
                     for ticker in ticker_data:
                         ticker_availability[ticker['ticker']].append(date_str)
@@ -2630,9 +2651,9 @@ class Backtester:
                     # Get the most recent data for this ticker
                     latest_date = max(available_dates)
                     # Use the backtest_db directly for this query
-                    ticker_data = self.ticker_scanner.backtest_db.execute_query(
-                        "SELECT * FROM backtest_tickers WHERE ticker = %s AND date = %s",
-                        (ticker, latest_date)
+                    ticker_data = await self.ticker_scanner.backtest_db.execute_query(
+                        "SELECT * FROM backtest_tickers WHERE ticker = $1 AND date = $2",
+                        ticker, latest_date
                     )
                     if ticker_data:
                         full_period_tickers.append(ticker_data[0])
@@ -2642,10 +2663,15 @@ class Backtester:
                 start_str = start_date.strftime("%Y-%m-%d")
                 end_str = end_date.strftime("%Y-%m-%d")
                 # Use the ticker_scanner's method, not the db directly
-                inserted = self.ticker_scanner.backtest_db.upsert_backtest_final_results(
+                inserted = await self.ticker_scanner.backtest_db.upsert_backtest_final_results(
                     full_period_tickers, start_str, end_str, self.run_id
                 )
-                logger.info(f"Saved {inserted} tickers to database that were active throughout the entire period")
+                
+                # Update the composite availability table
+                updated = await self.ticker_scanner.backtest_db.update_availability_period(
+                    start_str, end_str, self.run_id
+                )
+                logger.info(f"Saved {inserted} tickers to database and updated availability for {updated} tickers")
             else:
                 logger.warning("No tickers were active throughout the entire period")
             
@@ -2656,17 +2682,24 @@ class Backtester:
         for n in range(int((end_date - start_date).days) + 1):
             yield start_date + timedelta(n)
         
+    @monitor_performance
+    @handle_errors()
     async def run_single_day_ticker_backtest(self, target_date):
         """
         Run ticker backtest for a single day
         """
+        # Skip non-trading days
+        if not self.ticker_scanner.is_trading_day(target_date):
+            logger.info(f"Skipping non-trading day: {target_date.strftime('%Y-%m-%d')}")
+            return False
+            
         logger.info(f"Running ticker backtest for {target_date.strftime('%Y-%m-%d')}")
         
         # Format date for API
         date_str = target_date.strftime("%Y-%m-%d")
         
         # Use the ticker_scanner's method, not the db directly
-        existing_data = self.ticker_scanner.get_backtest_tickers(date_str)
+        existing_data = await self.ticker_scanner.get_backtest_tickers(date_str)
         if existing_data:
             logger.info(f"Using cached ticker data for {date_str} ({len(existing_data)} tickers)")
             return True
@@ -2692,49 +2725,10 @@ class Backtester:
             # Restore original mode
             self.ticker_scanner.backtest_mode = original_mode
             self.ticker_scanner.backtest_date = None
-            
-    async def run_single_day_regime_backtest(self, target_date):
-        """
-        Run market regime backtest for a single day
-        """
-        if not self.regime_scanner:
-            logger.error("No regime scanner provided for backtesting")
-            return False
-            
-        logger.info(f"Running market regime backtest for {target_date.strftime('%Y-%m-%d')}")
-        
-        # Format date for API
-        date_str = target_date.strftime("%Y-%m-%d")
-        
-        # Check if we already have data for this date
-        existing_data = self.regime_scanner.get_backtest_regimes_by_date(date_str)
-        if existing_data:
-            logger.info(f"Using cached regime data for {date_str}")
-            return True
-        
-        # Temporarily set scanner to backtest mode
-        original_mode = self.regime_scanner.backtest_mode
-        self.regime_scanner.backtest_mode = True
-        self.regime_scanner.backtest_date = date_str
-        
-        try:
-            # Use the existing scan method but with historical date
-            success = await self.regime_scanner.scan_market_regime()
-            if success:
-                logger.info(f"Successfully fetched regime data for {date_str}")
-                return True
-            else:
-                logger.warning(f"Failed to fetch regime data for {date_str}")
-                return False
-        except Exception as e:
-            logger.error(f"Error during regime backtest for {date_str}: {e}")
-            return False
-        finally:
-            # Restore original mode
-            self.regime_scanner.backtest_mode = original_mode
-            self.regime_scanner.backtest_date = None
 
 # ======================== SCHEDULER ======================== #
+@monitor_performance
+@handle_errors()
 async def run_scheduled_ticker_refresh(scanner):
     """Run immediate scan on startup and then daily at scheduled time"""
     # Run immediate scan on startup
@@ -2787,6 +2781,11 @@ async def run_scheduled_ticker_refresh(scanner):
         if not scanner.active or scanner.shutdown_requested:
             break
             
+        # Skip non-trading days
+        if not scanner.is_trading_day(datetime.now()):
+            logger.info("Skipping refresh on non-trading day")
+            continue
+            
         # Run the refresh
         logger.info("Starting scheduled ticker refresh")
         try:
@@ -2801,107 +2800,156 @@ async def run_scheduled_ticker_refresh(scanner):
         except Exception as e:
             logger.error(f"Error during scheduled ticker refresh: {e}")
 
-async def run_scheduled_regime_scan(regime_scanner, wait_for_ticker=True):
-    """Run immediate regime scan on startup and then at scheduled intervals aligned with local clock"""
-    # Wait for ticker scan to complete if requested
-    if wait_for_ticker:
-        logger.info("Waiting for initial ticker scan to complete before starting market regime scan")
-        await asyncio.sleep(5)  # Give ticker scan a head start
+# ======================== ENHANCED MAIN FUNCTION ======================== #
+async def enhanced_main():
+    """Enhanced main function with strategy capabilities"""
+    parser = argparse.ArgumentParser(description='Stock Ticker Fetcher with Hybrid Strategy')
     
-    # Run immediate scan on startup
-    logger.info("Starting immediate market regime scan")
-    try:
-        success = await regime_scanner.scan_market_regime()
-        if success:
-            logger.info("Initial market regime scan completed successfully")
-        else:
-            logger.warning("Initial market regime scan encountered errors")
-    except asyncio.CancelledError:
-        logger.info("Initial market regime scan cancelled")
-        return
-    except Exception as e:
-        logger.error(f"Error during initial market regime scan: {e}")
-    
-    # Continue with scheduled scans aligned to local clock
-    while regime_scanner.active and not regime_scanner.shutdown_requested:
-        now = datetime.now(regime_scanner.local_tz)
-        
-        # Calculate next full hour
-        next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-        sleep_seconds = (next_hour - now).total_seconds()
-        
-        hours = sleep_seconds // 3600
-        minutes = (sleep_seconds % 3600) // 60
-
-        logger.info(f"Next market regime scan at {next_hour.strftime('%H:%M:%S')} ({hours} hours and {minutes} minutes from now)")
-        
-        # Wait until scheduled time, but check every second if we should stop
-        while sleep_seconds > 0 and regime_scanner.active and not regime_scanner.shutdown_requested:
-            try:
-                # Sleep in small increments to be responsive to shutdown requests
-                await asyncio.sleep(min(1, sleep_seconds))
-                sleep_seconds -= 1
-            except asyncio.CancelledError:
-                logger.info("Sleep interrupted by shutdown")
-                return
-            
-        if not regime_scanner.active or regime_scanner.shutdown_requested:
-            break
-            
-        # Run the scan
-        logger.info("Starting scheduled market regime scan")
-        try:
-            success = await regime_scanner.scan_market_regime()
-            if success:
-                logger.info("Scheduled market regime scan completed successfully")
-            else:
-                logger.warning("Scheduled market regime scan encountered errors")
-        except asyncio.CancelledError:
-            logger.info("Market regime scan cancelled")
-            return
-        except Exception as e:
-            logger.error(f"Error during scheduled market regime scan: {e}")
-
-# ======================== MAIN EXECUTION ======================== #
-async def main():
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Stock Ticker Fetcher and Market Regime Scanner with Backtesting')
+    # Existing arguments
     parser.add_argument('--search', type=str, help='Search for a ticker by name or symbol')
     parser.add_argument('--history', type=str, help='Get history for a specific ticker')
     parser.add_argument('--list', action='store_true', help='List all active tickers')
-    parser.add_argument('--regime', action='store_true', help='Get current market regime')
-    parser.add_argument('--regime-history', type=int, nargs='?', const=7, help='Get market regime history for past N days (default: 7)')
     
     # Backtesting arguments
     parser.add_argument('--backtest', type=str, help='Run backtest for a specific date (YYYY-MM-DD)')
     parser.add_argument('--backtest-range', type=str, help='Run backtest for a date range (YYYY-MM-DD:YYYY-MM-DD)')
     parser.add_argument('--backtest-year', type=int, help='Run backtest for a specific year')
-    parser.add_argument('--backtest-tickers-only', action='store_true', help='Run backtest for tickers only')
-    parser.add_argument('--backtest-regime-only', action='store_true', help='Run backtest for market regime only')
     parser.add_argument('--list-backtests', action='store_true', help='List available backtest dates')
     parser.add_argument('--list-backtest-years', action='store_true', help='List available backtest years')
     parser.add_argument('--list-backtest-runs', action='store_true', help='List available backtest runs')
     parser.add_argument('--show-backtest-results', type=str, help='Show results for a specific backtest run (format: YYYY-MM-DD:YYYY-MM-DD)')
     parser.add_argument('--show-year-results', type=int, help='Show results for a specific year')
-    parser.add_argument('--show-regime-backtest', type=str, help='Show regime backtest results for a specific date (YYYY-MM-DD)')
-    parser.add_argument('--list-regime-backtests', action='store_true', help='List available regime backtest dates')
     parser.add_argument('--run-id', type=str, default="default", help='Specify a run ID for backtest results')
+    
+    # Composite availability arguments
+    parser.add_argument('--composite-availability', type=str, help='Get composite availability for a ticker (optional: specify ticker)')
+    parser.add_argument('--available-in-range', type=str, help='Get tickers available in a date range (format: YYYY-MM-DD:YYYY-MM-DD)')
+    
+    # Strategy arguments
+    parser.add_argument('--run-strategy', action='store_true', help='Run the hybrid trading strategy (paper trading)')
+    parser.add_argument('--live-trading', action='store_true', help='Run strategy with live trading (use with caution)')
+    parser.add_argument('--strategy-backtest', type=str, help='Run strategy backtest for date range (YYYY-MM-DD:YYYY-MM-DD)')
+    parser.add_argument('--strategy-symbols', type=str, help='Comma-separated list of symbols for strategy backtest')
+    parser.add_argument('--strategy-config', type=str, help='Path to strategy config JSON file')
+    
+    # Alpaca account arguments
+    parser.add_argument('--account-info', action='store_true', help='Get Alpaca account information')
+    parser.add_argument('--positions', action='store_true', help='Get current positions from Alpaca')
+    
+    # Health check argument
+    parser.add_argument('--health', action='store_true', help='Run health check')
     
     args = parser.parse_args()
     
     ticker_scanner = PolygonTickerScanner()
-    regime_scanner = MarketRegimeScanner(ticker_scanner)
+    
+    # Health check
+    if args.health:
+        health_status = await ticker_scanner.health_check()
+        print("Health Check Results:")
+        for key, value in health_status.items():
+            print(f"  {key}: {value}")
+        return
+    
+    # Handle Alpaca account commands
+    if args.account_info:
+        logger.info("Fetching Alpaca account information")
+        trading = AlpacaTrading()
+        try:
+            account_info = await trading.get_account_info()
+            print("Alpaca Account Information:")
+            for key, value in account_info.items():
+                print(f"  {key}: {value}")
+        except Exception as e:
+            logger.error(f"Error fetching account info: {e}")
+        return
+    
+    if args.positions:
+        logger.info("Fetching current positions")
+        trading = AlpacaTrading()
+        try:
+            positions = await trading.get_positions()
+            if positions:
+                print("Current Positions:")
+                for pos in positions:
+                    print(f"  {pos['symbol']}: {pos['qty']} shares at ${pos['avg_entry_price']:.2f} "
+                          f"(Current: ${pos['current_price']:.2f}, P&L: ${pos['unrealized_pl']:.2f})")
+            else:
+                print("No positions found")
+        except Exception as e:
+            logger.error(f"Error fetching positions: {e}")
+        return
+    
+    # Handle strategy commands
+    if args.run_strategy or args.live_trading:
+        logger.info("Running hybrid trading strategy")
+        config = {}
+        if args.strategy_config:
+            try:
+                with open(args.strategy_config, 'r') as f:
+                    config = json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading strategy config: {e}")
+        
+        result = await ticker_scanner.run_hybrid_strategy(config, live_trading=args.live_trading)
+        print("Strategy Execution Results:")
+        print(json.dumps(result, indent=2, default=str))
+        return
+    
+    elif args.strategy_backtest:
+        logger.info("Running strategy backtest")
+        
+        # Parse symbols
+        symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA']  # Default symbols
+        if args.strategy_symbols:
+            symbols = [s.strip() for s in args.strategy_symbols.split(',')]
+        
+        start_date, end_date = args.strategy_backtest.split(':')
+        config = {}
+        if args.strategy_config:
+            try:
+                with open(args.strategy_config, 'r') as f:
+                    config = json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading strategy config: {e}")
+        
+        result = await ticker_scanner.run_strategy_backtest(symbols, start_date, end_date, config)
+        print("Strategy Backtest Results:")
+        print(json.dumps(result, indent=2, default=str))
+        return
     
     # Check if we're running in backtest mode
     if (args.backtest or args.backtest_range or args.backtest_year or 
         args.list_backtests or args.list_backtest_years or args.list_backtest_runs or 
         args.show_backtest_results or args.show_year_results or
-        args.show_regime_backtest or args.list_regime_backtests or
-        args.backtest_tickers_only or args.backtest_regime_only):
+        args.composite_availability or args.available_in_range):
+        
+        if args.composite_availability:
+            # Get composite availability for a ticker
+            results = await ticker_scanner.get_composite_availability(args.composite_availability)
+            if results:
+                print(f"Composite availability for {args.composite_availability}:")
+                for result in results:
+                    print(f"  {result['available_from']} to {result['available_until'] or 'Present'}")
+            else:
+                print(f"No composite availability data found for {args.composite_availability}")
+            return
+            
+        if args.available_in_range:
+            # Get tickers available in a date range
+            start_date, end_date = args.available_in_range.split(':')
+            results = await ticker_scanner.get_tickers_available_in_range(start_date, end_date)
+            if results:
+                print(f"Tickers available from {start_date} to {end_date}:")
+                for result in results:
+                    print(f"  {result['ticker']}: {result['name']} (From {result['available_from']} to {result['available_until'] or 'Present'})")
+            else:
+                print(f"No tickers found available from {start_date} to {end_date}")
+            return
         
         if args.list_backtests:
             # List available backtest dates
-            dates = ticker_scanner.get_backtest_dates()
+            dates = await ticker_scanner.get_backtest_dates()
             if dates:
                 print("Available backtest dates:")
                 for date in dates:
@@ -2912,7 +2960,7 @@ async def main():
         
         if args.list_backtest_years:
             # List available backtest years
-            years = ticker_scanner.get_backtest_years()
+            years = await ticker_scanner.get_backtest_years()
             if years:
                 print("Available backtest years:")
                 for year in years:
@@ -2923,7 +2971,7 @@ async def main():
             
         if args.list_backtest_runs:
             # List available backtest runs
-            runs = ticker_scanner.get_all_backtest_runs()
+            runs = await ticker_scanner.get_all_backtest_runs()
             if runs:
                 print("Available backtest runs:")
                 for run in runs:
@@ -2935,7 +2983,7 @@ async def main():
         if args.show_backtest_results:
             # Show results for a specific backtest run
             start_date, end_date = args.show_backtest_results.split(':')
-            results = ticker_scanner.get_backtest_final_results(start_date, end_date, args.run_id)
+            results = await ticker_scanner.get_backtest_final_results(start_date, end_date, args.run_id)
             if results:
                 print(f"Backtest results for {start_date} to {end_date} (Run ID: {args.run_id}):")
                 print(f"Found {len(results)} tickers that were active throughout the period")
@@ -2950,7 +2998,7 @@ async def main():
         if args.show_year_results:
             # Show results for a specific year
             year = args.show_year_results
-            results = ticker_scanner.get_backtest_final_results_by_year(year, args.run_id)
+            results = await ticker_scanner.get_backtest_final_results_by_year(year, args.run_id)
             if results:
                 print(f"Backtest results for year {year} (Run ID: {args.run_id}):")
                 print(f"Found {len(results)} tickers that were active in this year")
@@ -2962,58 +3010,31 @@ async def main():
                 print(f"No results found for year {year} with run ID {args.run_id}")
             return
                 
-        if args.show_regime_backtest:
-            # Show regime backtest results for a specific date
-            date_str = args.show_regime_backtest
-            results = regime_scanner.get_backtest_regimes_by_date(date_str)
-            if results:
-                print(f"Regime backtest results for {date_str}:")
-                for result in results:
-                    interpretation = regime_scanner.interpret_regime(result['regime'], json.loads(result['features']))
-                    print(f"  {result['timestamp']}: {interpretation['label']} (confidence: {result['confidence']:.2f})")
-            else:
-                print(f"No regime backtest results found for {date_str}")
-            return
-                
-        if args.list_regime_backtests:
-            # List available regime backtest dates
-            dates = regime_scanner.get_backtest_dates()
-            if dates:
-                print("Available regime backtest dates:")
-                for date in dates:
-                    print(f"  {date}")
-            else:
-                print("No regime backtest data available")
-            return
-        
-        backtester = Backtester(ticker_scanner, regime_scanner)
+        backtester = Backtester(ticker_scanner)
         backtester.run_id = args.run_id  # Use the provided run ID
         
         # Determine what to test
-        test_tickers = not args.backtest_regime_only
-        test_regime = not args.backtest_tickers_only
+        test_tickers = True
         
         if args.backtest:
             # Single date backtest
             if test_tickers:
                 await backtester.run_single_day_ticker_backtest(datetime.strptime(args.backtest, "%Y-%m-%d"))
-            if test_regime:
-                await backtester.run_single_day_regime_backtest(datetime.strptime(args.backtest, "%Y-%m-%d"))
         elif args.backtest_range:
             # Date range backtest
             start_str, end_str = args.backtest_range.split(':')
             start_date = datetime.strptime(start_str, "%Y-%m-%d")
             end_date = datetime.strptime(end_str, "%Y-%m-%d")
-            await backtester.run_backtest(start_date, end_date, test_tickers, test_regime)
+            await backtester.run_backtest(start_date, end_date, test_tickers)
         elif args.backtest_year:
             # Year backtest
             start_date = datetime(args.backtest_year, 1, 1)
             end_date = datetime(args.backtest_year, 12, 31)
-            await backtester.run_backtest(start_date, end_date, test_tickers, test_regime)
+            await backtester.run_backtest(start_date, end_date, test_tickers)
     else:
         # Handle other command line arguments
         if args.search:
-            results = ticker_scanner.search_tickers_db(args.search)
+            results = await ticker_scanner.search_tickers_db(args.search)
             if results:
                 print(f"Found {len(results)} matching tickers:")
                 for result in results:
@@ -3023,7 +3044,7 @@ async def main():
             return
         
         if args.history:
-            results = ticker_scanner.get_ticker_history_db(args.history)
+            results = await ticker_scanner.get_ticker_history_db(args.history)
             if results:
                 print(f"History for {args.history}:")
                 for result in results:
@@ -3033,7 +3054,7 @@ async def main():
             return
         
         if args.list:
-            results = ticker_scanner.db.get_all_active_tickers()
+            results = await ticker_scanner.db.get_all_active_tickers()
             if results:
                 print(f"Found {len(results)} active tickers:")
                 for result in results:
@@ -3041,52 +3062,15 @@ async def main():
             else:
                 print("No active tickers found")
             return
-            
-        if args.regime:
-            regime_scanner.start()
-            await regime_scanner.scan_market_regime()
-            latest_regime = regime_scanner.regime_db.get_latest_regime()
-            if latest_regime:
-                interpretation = regime_scanner.interpret_regime(latest_regime['regime'], json.loads(latest_regime['features']))
-                print(f"Current market regime: {interpretation['label']}")
-                print(f"Confidence: {latest_regime['confidence']:.2f}")
-                print(f"Description: {interpretation['description']}")
-                if 'details' in interpretation:
-                    print(f"Details: {interpretation['details']}")
-                print(f"Timestamp: {latest_regime['timestamp']}")
-            else:
-                print("No market regime data available")
-            await regime_scanner.shutdown()
-            return
-            
-        if args.regime_history is not None:
-            days = args.regime_history if args.regime_history > 0 else 7
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=days)
-            results = regime_scanner.regime_db.get_regimes_by_date_range(start_date, end_date)
-            if results:
-                print(f"Market regime history for the past {days} days:")
-                for result in results:
-                    interpretation = regime_scanner.interpret_regime(result['regime'], json.loads(result['features']))
-                    print(f"{result['timestamp']}: {interpretation['label']} (confidence: {result['confidence']:.2f})")
-            else:
-                print("No market regime history available")
-            return
         
-        # Normal operation - run both scanners
-        ticker_scanner.start()
-        regime_scanner.start()
+        # Normal operation - run scanner
+        await ticker_scanner.start()
         
         # Wait for initial cache load
         await asyncio.get_event_loop().run_in_executor(None, ticker_scanner.initial_refresh_complete.wait)
         
-        # Create tasks for the schedulers - ticker first, then regime with a delay
+        # Create tasks for the scheduler
         ticker_scheduler_task = asyncio.create_task(run_scheduled_ticker_refresh(ticker_scanner))
-        
-        # Wait a moment for the ticker scan to start
-        await asyncio.sleep(2)
-        
-        regime_scheduler_task = asyncio.create_task(run_scheduled_regime_scan(regime_scanner))
         
         # Set up signal handlers
         loop = asyncio.get_event_loop()
@@ -3096,7 +3080,6 @@ async def main():
             """Handle shutdown signals immediately"""
             print("\nReceived interrupt signal, shutting down...")
             ticker_scanner.stop()
-            regime_scanner.stop()
             stop_event.set()
             # Cancel all tasks
             for task in asyncio.all_tasks(loop):
@@ -3117,7 +3100,7 @@ async def main():
             
             # Wait for either shutdown event or task completion
             done, pending = await asyncio.wait(
-                [ticker_scheduler_task, regime_scheduler_task, stop_task], 
+                [ticker_scheduler_task, stop_task], 
                 return_when=asyncio.FIRST_COMPLETED
             )
             
@@ -3126,13 +3109,6 @@ async def main():
                 ticker_scheduler_task.cancel()
                 try:
                     await ticker_scheduler_task
-                except asyncio.CancelledError:
-                    pass
-                    
-            if not regime_scheduler_task.done():
-                regime_scheduler_task.cancel()
-                try:
-                    await regime_scheduler_task
                 except asyncio.CancelledError:
                     pass
                     
@@ -3147,9 +3123,8 @@ async def main():
         except asyncio.CancelledError:
             logger.info("Main task cancelled")
         finally:
-            # Shutdown the scanners
+            # Shutdown the scanner
             await ticker_scanner.shutdown()
-            await regime_scanner.shutdown()
 
 if __name__ == "__main__":
     # Windows event loop policy
@@ -3157,7 +3132,7 @@ if __name__ == "__main__":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     
     try:
-        asyncio.run(main())
+        asyncio.run(enhanced_main())
     except KeyboardInterrupt:
         logger.info("Application terminated by user")
     except Exception as e:

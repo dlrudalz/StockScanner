@@ -1,0 +1,6 @@
+2025-10-15 11:08:25,749 - TickerScanner - ERROR - Database connection failed: 
+2025-10-15 11:08:25,755 - TickerScanner - ERROR - Database query error: Database connection failed: , Query: SELECT value FROM metadata WHERE key = $1, Params: ('last_refresh_time',)
+2025-10-15 11:09:26,785 - TickerScanner - ERROR - Database connection failed: 
+2025-10-15 11:09:26,786 - TickerScanner - ERROR - Database query error: Database connection failed: , Query: SELECT value FROM metadata WHERE key = $1, Params: ('last_refresh_time',)
+2025-10-15 11:10:28,795 - TickerScanner - ERROR - Database connection failed: 
+2025-10-15 11:10:28,805 - TickerScanner - ERROR - Database query error: Database connection failed: , Query: SELECT value FROM metadata WHERE key = $1, Params: ('last_refresh_time',)
