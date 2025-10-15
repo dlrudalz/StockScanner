@@ -93,8 +93,8 @@ class Config:
     # API Configuration - Use environment variables with fallbacks
     POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "ld1Poa63U6t4Y2MwOCA2JeKQyHVrmyg8")
     
-    # Scanner Configuration - Using ONLY ONEQ (NASDAQ Composite ETF)
-    COMPOSITE_INDICES = json.loads(os.getenv("COMPOSITE_INDICES", '["ONEQ"]'))  # ONEQ only
+    # Scanner Configuration - Using ONLY Nasdaq Composite
+    COMPOSITE_INDICES = json.loads(os.getenv("COMPOSITE_INDICES", '["^IXIC"]'))  # NASDAQ Composite only
     MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "100"))
     RATE_LIMIT_DELAY = float(os.getenv("RATE_LIMIT_DELAY", "0.02"))
     SCAN_TIME = os.getenv("SCAN_TIME", "08:30")
@@ -1082,7 +1082,7 @@ class PolygonTickerScanner:
     def __init__(self):
         self.api_key = config.POLYGON_API_KEY
         self.base_url = "https://api.polygon.io/v3/reference/tickers"
-        # Use ONLY ONEQ (NASDAQ Composite ETF)
+        # Use ONLY Nasdaq Composite
         self.composite_indices = config.COMPOSITE_INDICES
         self.active = False
         self.cache_lock = RLock()
@@ -1117,7 +1117,7 @@ class PolygonTickerScanner:
         
         logger.info(f"Using local timezone: {self.local_tz}")
         logger.info(f"Using PostgreSQL database: {config.POSTGRES_DB}")
-        logger.info(f"Using composite index: ONEQ (NASDAQ Composite ETF)")
+        logger.info(f"Using composite indices: {', '.join(self.composite_indices)}")
         logger.info(f"Using market calendar: {config.MARKET_CALENDAR}")
         
     async def _init_cache(self):
@@ -1304,49 +1304,49 @@ class PolygonTickerScanner:
             date_param = datetime.now().strftime("%Y-%m-%d")
             
         # Different API endpoint for composite indices
-        if composite_index == "ONEQ":  # NASDAQ Composite ETF - get NASDAQ-listed stocks
-            exchange = "XNAS"  # NASDAQ exchange code
-            
-            params = {
-                "market": "stocks",
-                "exchange": exchange,
-                "active": "true",
-                "limit": 1000,  # Maximum allowed by Polygon
-                "apiKey": self.api_key,
-                "date": date_param  # Add date parameter for historical data
-            }
-            
-            # Initial URL construction
-            url = f"{self.base_url}?{urlencode(params)}"
-            
-            while url and page_count < max_pages and not self.shutdown_requested:
-                data = await self._call_polygon_api(session, url)
-                if not data or self.shutdown_requested:
-                    break
-                    
-                results = data.get("results", [])
-                if not results:
-                    logger.warning(f"No results in page {page_count + 1} for {composite_index}")
-                    break
-                    
-                # Filter for common stocks only and add composite index info
-                stock_results = [
-                    {**r, "composite_index": composite_index} 
-                    for r in results 
-                    if r.get('type', '').upper() == 'CS'
-                ]
-                all_results.extend(stock_results)
-                
-                next_url = data.get("next_url", None)
-                url = f"{next_url}&apiKey={self.api_key}" if next_url else None
-                page_count += 1
-                
-                # Add progressive delay to avoid rate limiting
-                delay = config.RATE_LIMIT_DELAY * (1 + page_count / 10)
-                await asyncio.sleep(min(delay, 5.0))  # Cap at 5 seconds
+        if composite_index == "^IXIC":  # NASDAQ Composite
+            exchange = "XNAS"
         else:
             logger.error(f"Unknown composite index: {composite_index}")
             raise ConfigurationError(f"Unknown composite index: {composite_index}")
+            
+        params = {
+            "market": "stocks",
+            "exchange": exchange,
+            "active": "true",
+            "limit": 1000,  # Maximum allowed by Polygon
+            "apiKey": self.api_key,
+            "date": date_param  # Add date parameter for historical data
+        }
+        
+        # Initial URL construction
+        url = f"{self.base_url}?{urlencode(params)}"
+        
+        while url and page_count < max_pages and not self.shutdown_requested:
+            data = await self._call_polygon_api(session, url)
+            if not data or self.shutdown_requested:
+                break
+                
+            results = data.get("results", [])
+            if not results:
+                logger.warning(f"No results in page {page_count + 1} for {composite_index}")
+                break
+                
+            # Filter for common stocks only and add composite index info
+            stock_results = [
+                {**r, "composite_index": composite_index} 
+                for r in results 
+                if r.get('type', '').upper() == 'CS'
+            ]
+            all_results.extend(stock_results)
+            
+            next_url = data.get("next_url", None)
+            url = f"{next_url}&apiKey={self.api_key}" if next_url else None
+            page_count += 1
+            
+            # Add progressive delay to avoid rate limiting
+            delay = config.RATE_LIMIT_DELAY * (1 + page_count / 10)
+            await asyncio.sleep(min(delay, 5.0))  # Cap at 5 seconds
         
         if page_count >= max_pages:
             logger.warning(f"Reached maximum page limit ({max_pages}) for {composite_index}")
