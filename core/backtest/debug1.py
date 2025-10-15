@@ -1165,6 +1165,7 @@ class PolygonTickerScanner:
         self.local_tz = get_localzone()
         self.semaphore = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
         self.db = DatabaseManager()  # Updated to use PostgreSQL
+        self.backtest_db = BacktestDatabaseManager() 
         self.shutdown_requested = False
         # Backtesting attributes
         self.backtest_mode = False
@@ -1329,7 +1330,8 @@ class PolygonTickerScanner:
             if self.backtest_mode and self.backtest_date:
                 # Store backtest results
                 tickers_data = new_df.to_dict('records')
-                inserted = self.db.upsert_backtest_tickers(tickers_data, self.backtest_date)
+                # Use backtest_db instead of db
+                inserted = self.backtest_db.upsert_backtest_tickers(tickers_data, self.backtest_date)
                 logger.info(f"Stored {inserted} tickers in backtest database for {self.backtest_date}")
             else:
                 # Original logic for live mode
@@ -1340,7 +1342,7 @@ class PolygonTickerScanner:
                 # Convert DataFrame to list of dictionaries for database storage
                 tickers_data = new_df.to_dict('records')
                 
-                # Update database
+                # Update database using main db
                 inserted, updated = self.db.upsert_tickers(tickers_data)
                 
                 # Mark removed tickers as inactive
@@ -1418,35 +1420,35 @@ class PolygonTickerScanner:
         
     def get_backtest_tickers(self, date_str: str) -> List[Dict]:
         """Get tickers for a specific backtest date"""
-        return self.db.get_backtest_tickers(date_str)
+        return self.backtest_db.get_backtest_tickers(date_str)  # Changed to backtest_db
         
     def get_backtest_tickers_by_year(self, year: int) -> List[Dict]:
         """Get tickers for a specific backtest year"""
-        return self.db.get_backtest_tickers_by_year(year)
+        return self.backtest_db.get_backtest_tickers_by_year(year)  # Changed to backtest_db
         
     def get_backtest_dates(self) -> List[str]:
         """Get all available backtest dates"""
-        return self.db.get_backtest_dates()
+        return self.backtest_db.get_backtest_dates()  # Changed to backtest_db
         
     def get_backtest_years(self) -> List[int]:
         """Get all available backtest years"""
-        return self.db.get_backtest_years()
+        return self.backtest_db.get_backtest_years()  # Changed to backtest_db
         
     def get_backtest_final_results(self, start_date: str, end_date: str, run_id: str = "default") -> List[Dict]:
         """Get final backtest results for a specific date range"""
-        return self.db.get_backtest_final_results(start_date, end_date, run_id)
+        return self.backtest_db.get_backtest_final_results(start_date, end_date, run_id)  # Changed to backtest_db
         
     def get_backtest_final_results_by_year(self, year: int, run_id: str = "default") -> List[Dict]:
         """Get final backtest results for a specific year"""
-        return self.db.get_backtest_final_results_by_year(year, run_id)
+        return self.backtest_db.get_backtest_final_results_by_year(year, run_id)  # Changed to backtest_db
         
     def get_all_backtest_runs(self) -> List[Dict]:
         """Get all backtest runs with their date ranges"""
-        return self.db.get_all_backtest_runs()
+        return self.backtest_db.get_all_backtest_runs()  # Changed to backtest_db
         
     def get_backtest_runs_by_date_range(self, start_date: str, end_date: str) -> List[Dict]:
         """Get all backtest runs for a specific date range"""
-        return self.db.get_backtest_runs_by_date_range(start_date, end_date)
+        return self.backtest_db.get_backtest_runs_by_date_range(start_date, end_date)  # Changed to backtest_db
     
 # ======================== MARKET REGIME SCANNER ======================== #
 class MarketRegimeScanner:
@@ -1710,12 +1712,47 @@ class MarketRegimeScanner:
                     vol_ma_50 = volumes.rolling(50, min_periods=25).mean()
                     features[f'{ticker}_volume_ratio'] = (volumes / vol_ma_50).fillna(1.0)
                     
+                    # ADX (Average Directional Index) calculation
+                    # Calculate +DM and -DM
+                    plus_dm = highs.diff()
+                    minus_dm = -lows.diff()  # Negative of low difference
+                    
+                    # Make directional movements positive when appropriate
+                    plus_dm = plus_dm.where(plus_dm > minus_dm, 0)
+                    minus_dm = minus_dm.where(minus_dm > plus_dm, 0)
+                    
+                    # Calculate True Range
+                    tr1 = highs - lows
+                    tr2 = (highs - close_prices[ticker].shift(1)).abs()
+                    tr3 = (lows - close_prices[ticker].shift(1)).abs()
+                    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                    
+                    # Calculate 14-period smoothed values
+                    atr = true_range.rolling(14, min_periods=7).mean()
+                    plus_di = 100 * (plus_dm.rolling(14, min_periods=7).mean() / atr)
+                    minus_di = 100 * (minus_dm.rolling(14, min_periods=7).mean() / atr)
+                    
+                    # Calculate ADX
+                    dx = (abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)) * 100  # Add small value to avoid division by zero
+                    adx = dx.rolling(14, min_periods=7).mean()
+                    features[f'{ticker}_adx'] = adx.fillna(0)
+                    
+                    # Add volume-price trend
+                    vpt = volumes * ((close_prices[ticker] - close_prices[ticker].shift(1)) / (close_prices[ticker].shift(1) + 1e-10))
+                    features[f'{ticker}_vpt'] = vpt.cumsum().fillna(0)
+                    
+                    # Add price acceleration
+                    features[f'{ticker}_acceleration'] = returns.diff().fillna(0)
+                    
                 except KeyError:
                     logger.warning(f"OHLCV data not available for {ticker}")
                     # Fill with default values
                     features[f'{ticker}_atr'] = pd.Series(0, index=features.index)
                     features[f'{ticker}_volume_ma'] = pd.Series(0, index=features.index)
                     features[f'{ticker}_volume_ratio'] = pd.Series(1.0, index=features.index)
+                    features[f'{ticker}_adx'] = pd.Series(0, index=features.index)
+                    features[f'{ticker}_vpt'] = pd.Series(0, index=features.index)
+                    features[f'{ticker}_acceleration'] = pd.Series(0, index=features.index)
             
             # Advanced momentum indicators with increased min_periods
             moving_avg_20 = close_prices[ticker].rolling(window=20, min_periods=10).mean().reindex(features.index)
@@ -1943,7 +1980,64 @@ class MarketRegimeScanner:
             logger.error(f"Insufficient data for training: {len(features)} samples")
             return
         
-        scaled_features = self.scaler.fit_transform(features)
+        # Prepare training data with clear examples
+        labeled_features = features.copy()
+        
+        # Identify clear bull/bear periods using multiple confirmation
+        returns = features['^IXIC_return'].rolling(30).sum()
+        volatility = features['^IXIC_volatility_ratio'].rolling(30).mean()
+        momentum = features['^IXIC_momentum_ratio'].rolling(30).mean()
+        adx = features['^IXIC_adx'].rolling(30).mean() if '^IXIC_adx' in features.columns else pd.Series(0, index=features.index)
+        
+        # Label clear trends
+        labeled_features['regime_label'] = 2  # Default to sideways
+        
+        # Strong bull: high returns, low volatility, strong momentum, strong trend
+        bull_conditions = (
+            (returns > 0.05) & 
+            (volatility < 1.2) & 
+            (momentum > 1.05) &
+            (adx > 25)
+        )
+        labeled_features.loc[bull_conditions, 'regime_label'] = 4
+        
+        # Strong bear: negative returns, high volatility, weak momentum, strong trend
+        bear_conditions = (
+            (returns < -0.05) & 
+            (volatility > 1.5) & 
+            (momentum < 0.95) &
+            (adx > 25)
+        )
+        labeled_features.loc[bear_conditions, 'regime_label'] = 0
+        
+        # Use the regime_label for supervised learning if we have enough labeled examples
+        if 'regime_label' in labeled_features.columns:
+            # Count labeled examples
+            bull_count = (labeled_features['regime_label'] == 4).sum()
+            bear_count = (labeled_features['regime_label'] == 0).sum()
+            sideways_count = (labeled_features['regime_label'] == 2).sum()
+            
+            logger.info(f"Training data: {bull_count} bull, {bear_count} bear, {sideways_count} sideways examples")
+            
+            # Only use supervised learning if we have enough examples
+            if bull_count > 10 and bear_count > 10:
+                # Separate features and labels
+                labels = labeled_features['regime_label']
+                features_for_training = labeled_features.drop('regime_label', axis=1)
+                
+                scaled_features = self.scaler.fit_transform(features_for_training)
+                
+                # Train Random Forest with labeled data
+                self.rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+                self.rf_model.fit(scaled_features, labels)
+                
+                logger.info("Trained Random Forest with labeled examples")
+            else:
+                # Fallback to unsupervised training
+                scaled_features = self.scaler.fit_transform(features)
+        else:
+            # Fallback to unsupervised training
+            scaled_features = self.scaler.fit_transform(features)
         
         # Store training data for rolling updates
         self.training_data = scaled_features
@@ -1983,9 +2077,10 @@ class MarketRegimeScanner:
             votes = [hmm_labels[i], gmm_labels[i], self.kmeans.labels_[i]]
             consensus_labels.append(max(set(votes), key=votes.count))
         
-        # Random Forest classifier
-        self.rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
-        self.rf_model.fit(scaled_features, consensus_labels)
+        # If we didn't use supervised learning earlier, train RF with consensus labels
+        if not hasattr(self, 'rf_model') or self.rf_model is None:
+            self.rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+            self.rf_model.fit(scaled_features, consensus_labels)
         
         # Anomaly detection
         self.anomaly_detector = IsolationForest(contamination=0.05, random_state=42)
@@ -2064,7 +2159,7 @@ class MarketRegimeScanner:
         logger.info("Deep learning models trained")
         
     def predict_enhanced_regime(self, features: pd.DataFrame) -> Tuple[int, float, Dict]:
-        """Predict using enhanced ensemble approach with NaN handling"""
+        """Predict using enhanced ensemble approach with NaN handling and validation"""
         # Check for and handle NaN values in prediction data
         if features.isnull().any().any():
             logger.warning(f"Prediction features contain {features.isnull().sum().sum()} NaN values, filling with zeros")
@@ -2196,6 +2291,29 @@ class MarketRegimeScanner:
                 transition_prob = 0.25  # Equal probability for 4 regimes
                 transition_uncertainty = 1.0  # Maximum uncertainty
         
+        # Validate the prediction using ADX and momentum
+        is_valid = True
+        adx_value = features['^IXIC_adx'].iloc[-1] if '^IXIC_adx' in features.columns else 0
+        momentum = features['^IXIC_momentum_ratio'].iloc[-1] if '^IXIC_momentum_ratio' in features.columns else 1.0
+        
+        # Check for conflicting signals
+        if final_regime in [0, 1] and momentum > 1.02 and adx_value < 20:  # Bear market but positive momentum and weak trend
+            logger.warning("Invalid bear market prediction: positive momentum and weak trend")
+            is_valid = False
+        elif final_regime in [3, 4] and momentum < 0.98 and adx_value < 20:  # Bull market but negative momentum and weak trend
+            logger.warning("Invalid bull market prediction: negative momentum and weak trend")
+            is_valid = False
+            
+        # Require higher confidence for trend regimes
+        if final_regime in [0, 4] and confidence < 0.7:  # Strong bear or bull but low confidence
+            logger.warning(f"Low confidence for strong regime prediction: {confidence}")
+            is_valid = False
+        
+        # If invalid, default to sideways market
+        if not is_valid:
+            final_regime = 2  # Sideways market
+            confidence = max(0.5, confidence * 0.8)  # Reduce confidence
+        
         # Store current regime for next prediction
         self.previous_regime = final_regime
         
@@ -2216,14 +2334,49 @@ class MarketRegimeScanner:
             feature_values['transition_uncertainty'] = transition_uncertainty
         
         return final_regime, confidence, feature_values
+    
+    def prepare_training_data(self, features: pd.DataFrame) -> pd.DataFrame:
+        """Prepare training data with labeled examples of clear market regimes"""
+        # Add labeled examples based on clear market periods
+        labeled_features = features.copy()
+        
+        # Identify clear bull/bear periods using multiple confirmation
+        returns = features['^IXIC_return'].rolling(30).sum()
+        volatility = features['^IXIC_volatility_ratio'].rolling(30).mean()
+        momentum = features['^IXIC_momentum_ratio'].rolling(30).mean()
+        adx = features['^IXIC_adx'].rolling(30).mean()
+        
+        # Label clear trends
+        labeled_features['regime_label'] = 2  # Default to sideways
+        
+        # Strong bull: high returns, low volatility, strong momentum, strong trend
+        bull_conditions = (
+            (returns > 0.05) & 
+            (volatility < 1.2) & 
+            (momentum > 1.05) &
+            (adx > 25)
+        )
+        labeled_features.loc[bull_conditions, 'regime_label'] = 4
+        
+        # Strong bear: negative returns, high volatility, weak momentum, strong trend
+        bear_conditions = (
+            (returns < -0.05) & 
+            (volatility > 1.5) & 
+            (momentum < 0.95) &
+            (adx > 25)
+        )
+        labeled_features.loc[bear_conditions, 'regime_label'] = 0
+        
+        return labeled_features
         
     def interpret_regime(self, regime: int, features: Dict) -> Dict:
-        """Enhanced regime interpretation with contextual information"""
+        """Enhanced regime interpretation with trend confirmation"""
         base_interpretation = {
-            0: {"label": "Bear Market", "color": "red", "description": "Declining prices, high volatility"},
-            1: {"label": "Sideways Market", "color": "gray", "description": "Range-bound prices, moderate volatility"},
-            2: {"label": "Bull Market", "color": "green", "description": "Rising prices, low to moderate volatility"},
-            3: {"label": "High Volatility", "color": "orange", "description": "Extreme price movements in both directions"}
+            0: {"label": "Strong Bear", "color": "darkred", "description": "Strong downward trend with high volatility"},
+            1: {"label": "Weak Bear", "color": "red", "description": "Moderate downward pressure"},
+            2: {"label": "Sideways", "color": "gray", "description": "Range-bound with neutral momentum"},
+            3: {"label": "Weak Bull", "color": "lightgreen", "description": "Moderate upward momentum"},
+            4: {"label": "Strong Bull", "color": "green", "description": "Strong upward trend with low volatility"}
         }
         
         # Default to unknown if regime not in interpretation
@@ -2233,13 +2386,24 @@ class MarketRegimeScanner:
             "description": "Unclassified market regime"
         })
         
-        # Add contextual details based on features
-        volatility = features.get('^IXIC_volatility_ratio', 1.0)
+        # Use ADX to confirm trend strength
+        adx_value = features.get('^IXIC_adx', 0)
         momentum = features.get('^IXIC_momentum_ratio', 1.0)
-        rsi = features.get('^IXIC_rsi', 50)
-        anomaly_score = features.get('anomaly_score', 0)
+        volatility = features.get('^IXIC_volatility_ratio', 1.0)
         
-        # Enhanced description based on market conditions
+        # Adjust interpretation based on trend strength
+        if regime in [0, 4]:  # Strong regimes
+            if adx_value < 25:  # Weak trend
+                # Downgrade to weak regime
+                interpretation = base_interpretation.get(regime-1 if regime == 0 else regime+1, interpretation)
+        
+        # Add momentum confirmation
+        if regime in [0, 1] and momentum > 1.02:  # Bear market but positive momentum
+            interpretation = base_interpretation.get(2, interpretation)  # Reclassify as sideways
+        elif regime in [3, 4] and momentum < 0.98:  # Bull market but negative momentum
+            interpretation = base_interpretation.get(2, interpretation)  # Reclassify as sideways
+            
+        # Add contextual details based on features
         details = []
         
         if volatility > 1.5:
@@ -2252,37 +2416,34 @@ class MarketRegimeScanner:
         elif momentum < 0.95:
             details.append("Strong downward momentum")
             
-        if rsi > 70:
-            details.append("Overbought conditions")
-        elif rsi < 30:
-            details.append("Oversold conditions")
+        if adx_value > 25:
+            details.append("Strong trend")
+        elif adx_value < 20:
+            details.append("Weak or ranging market")
             
-        if anomaly_score < -0.5:
-            details.append("Anomalous market behavior detected")
-            
-        # Add uncertainty information
-        if 'bayesian_uncertainty' in features:
-            uncertainty = features['bayesian_uncertainty']
-            if uncertainty > 0.7:
-                details.append("High prediction uncertainty")
-            elif uncertainty > 0.4:
-                details.append("Moderate prediction uncertainty")
-            else:
-                details.append("Low prediction uncertainty")
-                
-        # Add transition information
-        if 'transition_probability' in features:
-            trans_prob = features['transition_probability']
-            if trans_prob < 0.2:
-                details.append("Rare regime transition")
-            elif trans_prob < 0.4:
-                details.append("Uncommon regime transition")
-                
         if details:
             interpretation["details"] = ", ".join(details)
         
         return interpretation
+
+    def validate_regime_prediction(self, regime: int, confidence: float, features: Dict) -> bool:
+        """Validate regime prediction based on multiple factors"""
+        adx_value = features.get('^IXIC_adx', 0)
+        momentum = features.get('^IXIC_momentum_ratio', 1.0)
+        volatility = features.get('^IXIC_volatility_ratio', 1.0)
+        
+        # Check for conflicting signals
+        if regime in [0, 1] and momentum > 1.02 and adx_value < 20:
+            return False  # Likely false bear signal
+        elif regime in [3, 4] and momentum < 0.98 and adx_value < 20:
+            return False  # Likely false bull signal
             
+        # Require higher confidence for trend regimes
+        if regime in [0, 4] and confidence < 0.7:
+            return False
+            
+        return True
+
     async def scan_market_regime(self):
         """Perform a complete market regime scan with enhanced data validation"""
         if self.shutdown_requested:
@@ -2435,13 +2596,13 @@ class Backtester:
                 date_str = current_date.strftime("%Y-%m-%d")
                 
                 if test_tickers:
-                    # Check if we already have ticker data for this date
-                    existing_ticker_data = self.ticker_scanner.db.get_backtest_tickers(date_str)
+                    # Use the ticker_scanner's method, not the db directly
+                    existing_ticker_data = self.ticker_scanner.get_backtest_tickers(date_str)
                     if not existing_ticker_data:
                         await self.run_single_day_ticker_backtest(current_date)
                 
                 if test_regime and self.regime_scanner:
-                    # Check if we already have regime data for this date
+                    # Use the regime_scanner's method, not the db directly
                     existing_regime_data = self.regime_scanner.get_backtest_regimes_by_date(date_str)
                     if not existing_regime_data:
                         await self.run_single_day_regime_backtest(current_date)
@@ -2455,7 +2616,8 @@ class Backtester:
             
             # Track which tickers were available on each date
             for date_str in all_dates:
-                ticker_data = self.ticker_scanner.db.get_backtest_tickers(date_str)
+                # Use the ticker_scanner's method, not the db directly
+                ticker_data = self.ticker_scanner.get_backtest_tickers(date_str)
                 if ticker_data:
                     for ticker in ticker_data:
                         ticker_availability[ticker['ticker']].append(date_str)
@@ -2467,8 +2629,9 @@ class Backtester:
                 if len(available_dates) == len(all_dates):
                     # Get the most recent data for this ticker
                     latest_date = max(available_dates)
-                    ticker_data = self.ticker_scanner.db.execute_query(
-                        "SELECT * FROM backtest_tickers WHERE ticker = ? AND date = ?",
+                    # Use the backtest_db directly for this query
+                    ticker_data = self.ticker_scanner.backtest_db.execute_query(
+                        "SELECT * FROM backtest_tickers WHERE ticker = %s AND date = %s",
                         (ticker, latest_date)
                     )
                     if ticker_data:
@@ -2478,7 +2641,10 @@ class Backtester:
             if full_period_tickers:
                 start_str = start_date.strftime("%Y-%m-%d")
                 end_str = end_date.strftime("%Y-%m-%d")
-                inserted = self.ticker_scanner.db.upsert_backtest_final_results(full_period_tickers, start_str, end_str, self.run_id)
+                # Use the ticker_scanner's method, not the db directly
+                inserted = self.ticker_scanner.backtest_db.upsert_backtest_final_results(
+                    full_period_tickers, start_str, end_str, self.run_id
+                )
                 logger.info(f"Saved {inserted} tickers to database that were active throughout the entire period")
             else:
                 logger.warning("No tickers were active throughout the entire period")
@@ -2499,8 +2665,8 @@ class Backtester:
         # Format date for API
         date_str = target_date.strftime("%Y-%m-%d")
         
-        # Check if we already have data for this date
-        existing_data = self.ticker_scanner.db.get_backtest_tickers(date_str)
+        # Use the ticker_scanner's method, not the db directly
+        existing_data = self.ticker_scanner.get_backtest_tickers(date_str)
         if existing_data:
             logger.info(f"Using cached ticker data for {date_str} ({len(existing_data)} tickers)")
             return True

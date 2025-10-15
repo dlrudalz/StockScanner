@@ -1,0 +1,3 @@
+python debug1.py --backtest-range 2023-01-01:2023-12-31
+python tickerfetch.py --backtest-range 2023-01-01:2023-12-31
+python DEBUG.py --backtest-range 2023-01-01:2023-12-31
